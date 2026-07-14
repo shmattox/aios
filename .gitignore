@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.superpowers/
+
+# A65 — derived, machine-local, regenerable embedding cache (rebuilds from content hashes)
+state/garden/embeddings/

@@ -1,0 +1,5 @@
+[
+  {"id":"e2e-bun-runtime","verdict":"PASS","reason":"Faithful to raw; no invented numbers; low-stakes dev note, no economic terms."},
+  {"id":"e2e-bayview-bridge-term","verdict":"PASS","reason":"Correctly marks 8%/18mo/$1.75M as verbal, pending term sheet, not papered per Paper-Governs."},
+  {"id":"e2e-supabase-advisory","verdict":"PASS","reason":"Faithful to raw advisory; no invented facts; correctly flagged security-sensitive, holds for approval."}
+]

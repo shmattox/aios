@@ -1,0 +1,218 @@
+<!-- Stage 1 (knowledge-base processing) widget — the canonical, FACT-FREE engine template for the
+     brief's `widget` / `hybrid` surface. It renders ONLY the held drafts classified kb_class:"hygiene"
+     (faithful wiki merges + reciprocity); kb_class:"decision" items are Stage-2 task cards, NOT here.
+     The brief lifts this boilerplate UNCHANGED and regenerates ONLY the <script id="phase-a-data">
+     block below from those held items (one entry per held hygiene unit; never fabricate one the queue
+     lacks). Each item MAY carry an optional `body` (the staged draft text) so the owner can expand and READ
+     the draft before approving — seeing the item is the point of Stage 1. Buttons compose an id-based
+     command and fire it via sendPrompt — the panel WRITES NOTHING (the brief never ships; gate
+     is the only writer). This file is engine-tracked (ships with every install) — no person's data here. -->
+<style>
+:root{
+  --sans:'Poppins',system-ui,sans-serif; --serif:'Lora',Georgia,serif;
+  --bg:#faf8f4; --surface:#ffffff; --band:#f4f0ea; --ink:#211f1b; --muted:#5d574d;
+  --faint:#938c80; --rule:#e4ded3; --line:#ece7dd; --accentA:#d4733a; --accentSoft:#fbeee4;
+  --accentSystem:#2d6fa8; --accentSystemSoft:#e8f0f8;  /* system = blue */
+  --accentClaude:#d4733a; --accentClaudeSoft:#fbeee4;  /* claude = orange */
+}
+.pa-panel{margin:14px 0;padding:20px 22px;background:var(--surface);border:1px solid var(--accentA);border-radius:10px;font-family:var(--serif);color:var(--ink)}
+.pa-kicker{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--accentA);margin-bottom:6px}
+.pa-title{font-family:var(--sans);font-weight:700;font-size:18px;margin:0 0 6px;color:var(--ink);display:flex;align-items:center;gap:9px}
+.pa-lead{margin:4px 0 12px;color:var(--muted);font-size:14px}
+.pa-bar{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.pa-chip{font-family:var(--sans);font-size:11px;font-weight:600;border-radius:999px;padding:5px 12px;border:1px solid var(--rule);background:var(--band);color:var(--muted)}
+.pa-chip b{color:var(--ink);font-weight:800}
+.pa-bulk{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:4px}
+.pa-tally{font-family:var(--sans);font-size:11.5px;color:var(--faint);margin-left:auto}
+.pa-items{margin:6px 0 4px}
+.pa-item{padding:12px 0;border-top:1px solid var(--line)}
+.pa-item:first-child{border-top:none}
+.pa-itop{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pa-tag{font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:5px;padding:3px 8px;white-space:nowrap;background:var(--band);color:var(--muted);border:1px solid var(--rule)}
+.pa-label{font-family:var(--sans);font-weight:600;font-size:14px;color:var(--ink);flex:1;min-width:160px}
+.pa-controls{display:flex;gap:6px}
+.pa-mini{font-family:var(--sans);font-size:11.5px;font-weight:600;cursor:pointer;border-radius:999px;padding:4px 12px;border:1px solid var(--rule);background:var(--surface);color:var(--muted);transition:all .12s}
+.pa-mini.ap.on{background:#eef3ea;border-color:#9cb47e;color:#4f6a34}
+.pa-mini.rj.on{background:#fbeae4;border-color:#e0a892;color:#a9492c}
+.pa-sum{font-size:13.5px;color:var(--muted);margin-top:6px}
+.pa-target{font-family:var(--sans);font-size:11.5px;color:var(--faint);margin-top:4px}
+.pa-rec{font-size:12.5px;color:var(--ink);margin-top:4px}
+.pa-rec b{font-family:var(--sans);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--accentA);margin-right:5px}
+.pa-voice-system{border-left:3px solid var(--accentSystem);background:var(--accentSystemSoft);padding:4px 8px;margin-top:5px;border-radius:0 4px 4px 0;font-size:12.5px}
+.pa-voice-claude{border-left:3px solid var(--accentClaude);background:var(--accentClaudeSoft);padding:4px 8px;margin-top:5px;border-radius:0 4px 4px 0;font-size:12.5px}
+.pa-foot{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.pa-cmd{font-family:var(--sans);font-size:12px;color:var(--muted);margin-bottom:10px;word-break:break-word}
+.pa-cmd code{font-family:'Courier New',monospace;background:var(--band);padding:2px 6px;border-radius:4px;color:var(--ink)}
+.pa-actions{display:flex;flex-wrap:wrap;gap:8px}
+.pa-btn{font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;border-radius:999px;padding:8px 16px;border:1px solid var(--rule);background:var(--surface);color:var(--ink);transition:all .12s}
+.pa-btn.primary{background:var(--accentA);border-color:var(--accentA);color:#fff}
+.pa-btn:disabled{opacity:.45;cursor:not-allowed}
+.pa-note{font-family:var(--sans);font-size:11px;color:var(--faint);margin:10px 0 0;line-height:1.6}
+.pa-expand{font-family:var(--sans);font-size:11.5px;font-weight:600;cursor:pointer;color:var(--accentSystem);background:none;border:none;padding:4px 0;margin-top:4px}
+.pa-draft{display:none;white-space:pre-wrap;font-family:var(--serif);font-size:12.5px;color:var(--ink);background:var(--band);border:1px solid var(--rule);border-radius:6px;padding:10px 12px;margin-top:6px;max-height:320px;overflow:auto}
+.pa-draft.open{display:block}
+</style>
+
+<section class="pa-panel" id="pa-panel" hidden>
+  <div class="pa-kicker">Stage 1 &middot; awaiting your approval</div>
+  <h2 class="pa-title">&#128451;&#65039; Knowledge-base processing <span class="pa-tag">Stage 1 &middot; file into wiki</span></h2>
+  <p class="pa-lead" id="pa-lead"></p>
+  <div class="pa-bar" id="pa-bar"></div>
+  <div class="pa-bulk" id="pa-bulk">
+    <button class="pa-mini" data-bulk="approve">Approve all shown</button>
+    <button class="pa-mini" data-bulk="reject">Reject all shown</button>
+    <button class="pa-mini" data-bulk="clear">Clear</button>
+    <span class="pa-tally" id="pa-tally"></span>
+  </div>
+  <div class="pa-items" id="pa-items"></div>
+  <div class="pa-foot">
+    <div class="pa-cmd">Will send: <code id="pa-cmd"></code></div>
+    <div class="pa-actions">
+      <button class="pa-btn primary" id="pa-run">Approve selected &rarr; ship to vault</button>
+      <button class="pa-btn" id="pa-rejectsel">Reject selected</button>
+      <button class="pa-btn" id="pa-copy">Copy command</button>
+    </div>
+    <p class="pa-note">Clicking a button sends a chat message you can see before it runs &mdash; the actual vault write happens in that chat session under full discipline (Paper-Governs, conflict handling) via <code>gate</code>. Nothing is written from this page. Rows you leave untoggled stay <b>held</b>. Your selections persist on this device.</p>
+  </div>
+</section>
+
+<!-- REGENERATE THIS BLOCK PER RUN from the held queue items (queue_tx.py select --stage awaiting,
+     lane review|confirm, kb_class:"hygiene" ONLY). The example below is an empty placeholder — the
+     engine ships zero facts. One items[] entry per held hygiene unit:
+     {id,kb,lane,tag,label,target,summary,recommended,rec, body?} — `body` is the optional staged
+     draft text; when present a "Show draft" toggle reveals it so the owner can read before approving. -->
+<script type="application/json" id="phase-a-data">
+{
+  "date": "YYYY-MM-DD",
+  "items_count": 0,
+  "lead": "one-sentence orientation; say how many hold vs approve",
+  "bar": [["Held", 0], ["Rec: hold", 0], ["Rec: approve", 0], ["Conflicts", 0]],
+  "items": []
+}
+</script>
+
+<script>
+/* ===== Phase A interactive approval panel — aios review gate (id-based -> gate) ===== */
+(function () {
+  var el = document.getElementById("phase-a-data");
+  var panel = document.getElementById("pa-panel");
+  if (!el || !panel) return;
+  var data;
+  try { data = JSON.parse(el.textContent); } catch (e) { return; }
+  if (!data || (data.items_count === 0 && (!data.items || !data.items.length))) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  var KEY = "aiosReview:" + data.date;
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+  var items = data.items || [];
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function setText(id, v) { var n = document.getElementById(id); if (n) n.textContent = v; }
+
+  setText("pa-lead", data.lead || "");
+  var bar = document.getElementById("pa-bar");
+  if (bar && data.bar) bar.innerHTML = data.bar.map(function (p) { return '<span class="pa-chip">' + esc(p[0]) + " <b>" + esc(p[1]) + "</b></span>"; }).join("");
+
+  var list = document.getElementById("pa-items");
+  if (list) {
+    list.innerHTML = items.map(function (it) {
+      var st = state[it.id] || "";
+      return '<div class="pa-item" data-id="' + esc(it.id) + '">' +
+        '<div class="pa-itop">' +
+          '<span class="pa-tag">' + esc(it.tag || "item") + '</span>' +
+          '<span class="pa-label">' + esc(it.label) + '</span>' +
+          '<span class="pa-controls">' +
+            '<button class="pa-mini ap' + (st === "approve" ? " on" : "") + '" data-act="approve" data-id="' + esc(it.id) + '">Approve</button>' +
+            '<button class="pa-mini rj' + (st === "reject" ? " on" : "") + '" data-act="reject" data-id="' + esc(it.id) + '">Reject</button>' +
+          '</span></div>' +
+        (it.summary ? '<div class="pa-sum">' + esc(it.summary) + '</div>' : "") +
+        (it.target ? '<div class="pa-target">&rarr; lands at ' + esc(it.target) + '</div>' : "") +
+        (it.rec ? '<div class="pa-rec"><b>rec: ' + esc(it.recommended || "") + '</b>' + esc(it.rec) + '</div>' : "") +
+        (it.body ? '<button class="pa-expand" data-expand="' + esc(it.id) + '">Show draft &#9662;</button><div class="pa-draft" data-draft="' + esc(it.id) + '">' + esc(it.body) + '</div>' : "") +
+      '</div>';
+    }).join("");
+  }
+
+  function approvedItems() { return items.filter(function (it) { return state[it.id] === "approve"; }); }
+  function rejectedItems() { return items.filter(function (it) { return state[it.id] === "reject"; }); }
+
+  function approveCmd(ap) { return "Approve and ship these held aios drafts to the vault — my explicit approval; run the aios gate for these ids: " + ap.map(function (it) { return it.id + " (" + it.label + ")"; }).join("; ") + "."; }
+  function rejectCmd(rj) { return "Reject these held aios drafts (drop from the queue, with a reason): " + rj.map(function (it) { return it.id + " (" + it.label + ")"; }).join("; ") + "."; }
+
+  function buildCommand() {
+    var ap = approvedItems(), rj = rejectedItems(), parts = [];
+    if (ap.length) parts.push(approveCmd(ap));
+    if (rj.length) parts.push(rejectCmd(rj));
+    return parts.join(" ");
+  }
+
+  function tally() {
+    var ap = approvedItems().length, rj = rejectedItems().length, pend = items.length - ap - rj;
+    setText("pa-tally", items.length ? (ap + " approve · " + rj + " reject · " + pend + " hold") : "");
+  }
+
+  function refresh() {
+    var cmd = buildCommand();
+    var codeEl = document.getElementById("pa-cmd");
+    if (codeEl) codeEl.textContent = cmd || "— toggle Approve / Reject on the rows you want to action —";
+    var run = document.getElementById("pa-run"); if (run) run.disabled = !approvedItems().length;
+    var rej = document.getElementById("pa-rejectsel"); if (rej) rej.disabled = !rejectedItems().length;
+    var copy = document.getElementById("pa-copy"); if (copy) copy.disabled = !cmd;
+    tally();
+  }
+
+  function paint(id) {
+    var row = list && list.querySelector('.pa-item[data-id="' + CSS.escape(id) + '"]');
+    if (row) { row.querySelector(".ap").classList.toggle("on", state[id] === "approve"); row.querySelector(".rj").classList.toggle("on", state[id] === "reject"); }
+  }
+
+  function send(cmd) {
+    if (!cmd) return;
+    if (typeof sendPrompt === "function") sendPrompt(cmd);
+    else if (window.cowork && typeof window.cowork.sendPrompt === "function") window.cowork.sendPrompt(cmd);
+    else { try { navigator.clipboard.writeText(cmd); } catch (e) {} alert("Command copied — paste it into chat:\n\n" + cmd); }
+  }
+
+  if (list) list.addEventListener("click", function (e) {
+    var x = e.target.closest("[data-expand]");
+    if (x) {
+      var did = x.getAttribute("data-expand");
+      var draft = list.querySelector('.pa-draft[data-draft="' + CSS.escape(did) + '"]');
+      if (draft) { var open = draft.classList.toggle("open"); x.innerHTML = open ? "Hide draft ▴" : "Show draft ▾"; }
+      return;
+    }
+    var b = e.target.closest("[data-act]"); if (!b) return;
+    var id = b.getAttribute("data-id"), act = b.getAttribute("data-act");
+    state[id] = (state[id] === act) ? "" : act;
+    if (!state[id]) delete state[id];
+    save(); paint(id); refresh();
+  });
+
+  var bulkWrap = document.getElementById("pa-bulk");
+  if (bulkWrap) bulkWrap.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-bulk]"); if (!b) return;
+    var act = b.getAttribute("data-bulk");
+    items.forEach(function (it) {
+      if (act === "approve") state[it.id] = "approve";
+      else if (act === "reject") state[it.id] = "reject";
+      else delete state[it.id];
+    });
+    save(); items.forEach(function (it) { paint(it.id); }); refresh();
+  });
+
+  var runBtn = document.getElementById("pa-run");
+  if (runBtn) runBtn.addEventListener("click", function () { var ap = approvedItems(); if (ap.length) send(approveCmd(ap)); });
+  var rejBtn = document.getElementById("pa-rejectsel");
+  if (rejBtn) rejBtn.addEventListener("click", function () { var rj = rejectedItems(); if (rj.length) send(rejectCmd(rj)); });
+  var copyBtn = document.getElementById("pa-copy");
+  if (copyBtn) copyBtn.addEventListener("click", function () {
+    var cmd = buildCommand(); if (!cmd) return;
+    try { navigator.clipboard.writeText(cmd); } catch (e) {}
+    copyBtn.textContent = "Copied"; setTimeout(function () { copyBtn.textContent = "Copy command"; }, 1400);
+  });
+
+  refresh();
+})();
+</script>

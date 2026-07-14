@@ -1,0 +1,11 @@
+{
+  "name": "aios",
+  "owner": { "name": "Seth Mattox", "url": "https://github.com/shmattox" },
+  "plugins": [
+    {
+      "name": "aios",
+      "source": "./",
+      "description": "Install-and-go personal knowledge OS: review-gated pipeline + daily brief over your own vault. Run /aios:setup after installing."
+    }
+  ]
+}

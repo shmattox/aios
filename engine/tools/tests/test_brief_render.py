@@ -1,0 +1,430 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import brief_render as R  # noqa: E402
+
+FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "brief-cache.sample.json")
+
+
+# --- Task 1: voice lines + resolver ---
+
+def test_system_line_grade1():
+    sv = {"grade": "1", "text": "Ship it.", "cite": "decisions.md#x"}
+    assert R.render_system_line(sv) == \
+        "🔵 **Your system says** *(Grade 1 — solid)*: Ship it. — cite: decisions.md#x"
+
+
+def test_system_line_grade2a():
+    sv = {"grade": "2a", "text": "Probably hold.", "cite": "your 2026-06 call"}
+    assert R.render_system_line(sv) == \
+        "🔵 *Your system's logic implies* *(Grade 2a — precedent)*: Probably hold. — by your 2026-06 call"
+
+
+def test_system_line_grade2b_uses_cite_as_rule():
+    sv = {"grade": "2b", "text": "Lean conservative.", "cite": "Paper-Governs"}
+    assert R.render_system_line(sv) == \
+        "🔵 *Loosely, by your Paper-Governs* *(Grade 2b — principle)*: Lean conservative."
+
+
+def test_system_line_grade0_and_null_are_silent():
+    assert R.render_system_line(None) == "— *your system is silent* —"
+    assert R.render_system_line({"grade": None}) == "— *your system is silent* —"
+
+
+def test_claude_line_always_present():
+    assert R.render_claude_line({"text": "Industry default is X."}) == \
+        "🟠 **Claude**: Industry default is X."
+
+
+def test_voice_resolves_item_level_then_recommended():
+    station_item = {"system_voice": {"grade": "1", "text": "a", "cite": "c"}}
+    assert R._voice(station_item, "system_voice")["text"] == "a"
+    act_item = {"recommended": {"system_voice": {"grade": "1", "text": "b", "cite": "c"}}}
+    assert R._voice(act_item, "system_voice")["text"] == "b"
+    assert R._voice({}, "system_voice") is None
+
+
+# --- Task 2: render_card ---
+
+def test_render_card_station_item_minimal():
+    item = {
+        "item_id": "sys-1", "title": "Fix the sorter taxonomy", "domain": "System",
+        "system_voice": {"grade": "1", "text": "Hold, then re-drive.", "cite": "decisions.md#taxo"},
+        "claude_voice": {"text": "Batch the 8 stubs."},
+    }
+    out = R.render_card(item)
+    assert out.splitlines()[0] == "**Fix the sorter taxonomy**  [System]"
+    assert "🔵 **Your system says**" in out
+    assert out.strip().endswith("🟠 **Claude**: Batch the 8 stubs.")
+    assert "Urgency:" not in out
+
+
+def test_render_card_act_item_full_and_nested_voice():
+    item = {
+        "id": "fo-2", "title": "Refi decision", "domain": "Family Office",
+        "urgency": "closes Fri", "your_playbook": "sale leads, nothing locked",
+        "flags": ["Paper-Governs"],
+        "recommended": {
+            "system_voice": {"grade": "2a", "text": "Wait.", "cite": "your May call"},
+            "claude_voice": {"text": "Lock the rate."},
+        },
+    }
+    out = R.render_card(item)
+    assert "**Refi decision**  [Family Office]" in out
+    assert "- Urgency: closes Fri" in out
+    assert "- Your playbook: sale leads, nothing locked" in out
+    assert "- Flags: Paper-Governs" in out
+    assert "🔵 *Your system's logic implies*" in out
+    assert "🟠 **Claude**: Lock the rate." in out
+
+
+def test_render_card_maps_lowercase_domain_key_to_display_name():
+    # fact-free (A26): pretty names come from the cache's domain_display map...
+    item = {"title": "T", "domain": "familyoffice", "system_voice": None,
+            "claude_voice": {"text": "c"}}
+    assert R.render_card(item, {"familyoffice": "Family Office"}).splitlines()[0] \
+        == "**T**  [Family Office]"
+    # ...with a Title Case fallback when no map is present
+    assert R.render_card(item).splitlines()[0] == "**T**  [Familyoffice]"
+    # already-display values pass through unchanged
+    item2 = {"title": "U", "domain": "Family Office", "system_voice": None,
+             "claude_voice": {"text": "c"}}
+    assert R.render_card(item2).splitlines()[0] == "**U**  [Family Office]"
+
+
+def test_display_acronymizes_short_consonant_domain_keys():
+    # A42 (fact-free): a short all-consonant slug reads as an acronym -> uppercase (`gm` -> `GM`),
+    # fixing the `Gm` title-case leak; vowelled/long words still title-case; profile map still wins.
+    assert R._display("gm") == "GM"                   # all-consonant slug -> acronym (the leak fix)
+    assert R._display("kb") == "KB"
+    assert R._display("hr") == "HR"
+    assert R._display("dev") == "Dev"                 # has a vowel -> title-case (unchanged)
+    assert R._display("fo") == "Fo"                   # vowel present -> title-case; profile map sets "FO"
+    assert R._display("familyoffice") == "Familyoffice"
+    assert R._display("family_office") == "Family Office"
+    assert R._display("gm", {"gm": "GM Ventures"}) == "GM Ventures"   # profile display_map wins
+
+
+def test_render_card_silent_system_still_has_claude():
+    item = {"title": "T", "domain": "Dev", "system_voice": None,
+            "claude_voice": {"text": "c"}}
+    out = R.render_card(item)
+    assert "— *your system is silent* —" in out
+    assert "🟠 **Claude**: c" in out
+
+
+# --- Task 3: CLI + cache walking ---
+
+def test_render_station_emits_all_cards():
+    cache = R._load(FIX)
+    out = R.render_station(cache, "system")
+    assert "**Fix sorter taxonomy**  [System]" in out
+    assert "🔵 **Your system says**" in out
+    assert "🟠 **Claude**: Batch the 8 stubs." in out
+
+
+def test_render_card_by_id_found_and_missing():
+    import pytest
+    cache = R._load(FIX)
+    assert "Renderer build" in R.render_card_by_id(cache, "dev-1")
+    with pytest.raises(KeyError):
+        R.render_card_by_id(cache, "nope")
+
+
+def test_render_station_is_byte_stable():
+    cache = R._load(FIX)
+    a = R.render_station(cache, "system")
+    b = R.render_station(cache, "system")
+    assert a == b
+
+
+def test_fixture_matches_real_cache_shape():
+    """Guard against shape drift: the fixture must be a cache validate_cache accepts,
+    and render_station must actually emit cards from it (not silently return '')."""
+    import brief_session as B
+    cache = R._load(FIX)
+    ok, errs = B.validate_cache(cache)
+    assert ok, errs
+    assert R.render_station(cache, "system").strip() != ""
+
+
+def test_cli_station_does_not_crash_on_windows_stdout():
+    """Regression: the card emits 🔵/🟠; Windows stdout defaults to cp1252 and
+    would crash on print(). The CLI must force UTF-8 and exit 0."""
+    import subprocess
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    proc = subprocess.run(
+        [sys.executable, tool, "station", FIX, "system"],
+        capture_output=True,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert "🔵".encode("utf-8") in proc.stdout
+
+
+# --- A11: Act-vs-Track overview through the renderer ---
+
+ACT_ITEM = {
+    "id": "OI-901", "title": "Pay the Bayview taxes", "domain": "familyoffice",
+    "urgency": "due 2026-07-03, 2 days ago",
+    "recommended": {
+        "system_voice": {"grade": "1", "text": "Pay the 2024 bill.", "cite": "Decision #34"},
+        "claude_voice": {"text": "Wire cutoffs are 17:00 ET."},
+    },
+}
+
+
+def test_overview_row_compact_two_layer_blockquote():
+    out = R.render_overview_row(ACT_ITEM)
+    lines = out.splitlines()
+    assert lines[0] == "**Pay the Bayview taxes**  [Familyoffice]"
+    assert lines[1] == "- Urgency: due 2026-07-03, 2 days ago"
+    assert lines[2].startswith("> 🔵 **Your system says**") and "Decision #34" in lines[2]
+    assert lines[3] == "> 🟠 **Claude**: Wire cutoffs are 17:00 ET."
+
+
+def test_overview_row_silent_system_still_carries_claude():
+    item = {"title": "T", "recommended": {"claude_voice": {"text": "x"}}}
+    out = R.render_overview_row(item)
+    assert "> — *your system is silent* —" in out
+    assert "> 🟠 **Claude**: x" in out
+
+
+def test_overview_uses_domain_display_map():
+    out = R.render_overview({"domain_display": {"familyoffice": "Family Office"},
+                             "needs_you": [ACT_ITEM]})
+    assert "[Family Office]" in out
+
+
+def test_overview_limit_and_empty():
+    cache = {"needs_you": [dict(ACT_ITEM, id=f"i{i}", title=f"t{i}") for i in range(4)]}
+    assert R.render_overview(cache, limit=2).count("🟠") == 2
+    assert R.render_overview({}) == ""
+
+
+def test_overview_legacy_layers_list_shape_still_two_layer():
+    # the pre-A11 live-cache shape: recommended is a LIST of {layer, action}
+    item = {"title": "Pay taxes", "domain": "familyoffice",
+            "recommended": [
+                {"layer": "your_system", "action": "Confirm the payment posts Monday."},
+                {"layer": "claude", "action": "Get the paper into Drive same-day."}]}
+    out = R.render_overview_row(item)
+    assert "> 🔵 **Your system**: Confirm the payment posts Monday." in out
+    assert "> 🟠 **Claude**: Get the paper into Drive same-day." in out
+
+
+def test_overview_legacy_layers_missing_system_is_silent_not_fabricated():
+    item = {"title": "T", "recommended": [{"layer": "claude", "action": "x"}]}
+    out = R.render_overview_row(item)
+    assert "> — *your system is silent* —" in out
+    assert "> 🟠 **Claude**: x" in out
+
+
+def test_cli_overview_exits_zero_even_without_needs_you():
+    import subprocess
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    proc = subprocess.run([sys.executable, tool, "overview", FIX], capture_output=True)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+
+
+# --- C3: render_settle (Stage-0 settle panel) ---
+
+def test_render_settle_groups_and_heals():
+    cache = {"settle": {
+        "auto_healed": [{"item_id": "OI-901", "title": "Pay tax", "to": "Done"}],
+        "candidates": [
+            {"task_id": "S1", "title": "SEAMS 1065", "proposed_transition": "in_progress"},
+            {"task_id": "S2", "title": "Ship page", "proposed_transition": "done"},
+            {"task_id": "S3", "title": "Call vendor", "proposed_transition": "done"},
+        ]}}
+    out = R.render_settle(cache)
+    assert "Healed" in out and "Pay tax" in out          # auto-heal reported
+    assert "2× → done" in out                            # two 'done' candidates grouped
+    assert "SEAMS 1065" in out                            # candidate surfaced
+
+
+def test_render_settle_empty_is_clear():
+    out = R.render_settle({"settle": {"auto_healed": [], "candidates": []}})
+    assert "clear" in out.lower() or "nothing to settle" in out.lower()
+
+
+def test_render_settle_domain_filter_scopes_candidates():
+    """Regression: a scoped brief (e.g. dev) must not leak other silos' settle candidates."""
+    cache = {"settle": {
+        "auto_healed": [{"item_id": "OI-901", "title": "Pay tax", "to": "Done"}],
+        "candidates": [
+            {"task_id": "D1", "title": "Renderer build", "proposed_transition": "in_progress",
+             "domain": "dev"},
+            {"task_id": "F1", "title": "SEAMS 1065", "proposed_transition": "done",
+             "domain": "familyoffice"},
+        ]}}
+    scoped = R.render_settle(cache, domains={"dev"})
+    assert "Renderer build" in scoped
+    assert "SEAMS 1065" not in scoped
+    assert "Healed" in scoped and "Pay tax" in scoped  # auto_healed always shown
+
+    unscoped = R.render_settle(cache)
+    assert "Renderer build" in unscoped and "SEAMS 1065" in unscoped
+
+
+# --- GM2 Task 5: render_factory_health ---
+
+def test_render_factory_health_counts_findings():
+    md = "# Factory health\n\n- **[high] failed-run** — x\n- **[medium] recurring-failure** — y\n"
+    assert R.render_factory_health(md) == "🔧 **Factory health:** 2 open — see `state/factory-health/latest.md`"
+
+
+def test_render_factory_health_clear_when_absent_or_healthy():
+    assert R.render_factory_health(None) == "🔧 **Factory health:** clear ✓"
+    assert R.render_factory_health("# Factory health\n\n✅ No open loops-not-closing — healthy.\n") == "🔧 **Factory health:** clear ✓"
+
+
+# --- Plan C Task 2: render_factory_standup (Dev-slice panel) ---
+
+def test_render_factory_standup_groups():
+    data = {"generated":"2026-07-11","groups":{
+        "veto":[{"repo":"claude-env","id":"H20","title":"retire backup path","date":"2026-07-11"}],
+        "needs_you":[{"repo":"claude-env","id":"H19","title":"SSOT flip","reason":"hard-to-reverse / [GATE: human]"}],
+        "handed_off":[{"repo":"claude-env","id":"H30","title":"cowork re-sync"}],
+        "stuck":[{"repo":"aios","id":"H31","title":"ordinary work","reason":"pytest import error"}]},
+      "totals":{"veto":1,"needs_you":1,"handed_off":1,"stuck":1}}
+    out = R.render_factory_standup(data)
+    assert "Factory Standup" in out
+    assert "✅" in out and "H20" in out and "VETO" in out.upper()
+    assert "⚠" in out and "H19" in out
+    assert "↪" in out and "H30" in out
+    assert "✖" in out and "H31" in out and "pytest import error" in out
+
+
+def test_render_factory_standup_empty_is_one_clean_line():
+    data = {"generated":"2026-07-11","groups":{"veto":[],"needs_you":[],"handed_off":[],"stuck":[]},
+            "totals":{"veto":0,"needs_you":0,"handed_off":0,"stuck":0}}
+    out = R.render_factory_standup(data)
+    assert "Factory Standup" in out and "nothing waiting" in out.lower()
+    assert "\n\n" not in out.strip()      # a single clean line, never an empty multi-panel
+
+
+def test_render_factory_standup_renders_spend_line():
+    # H62: the rolling unattended-tier spend figure appears in the Factory panel
+    data = {"groups": {"veto": [], "needs_you": [], "handed_off": [], "stuck": []},
+            "totals": {"veto": 0, "needs_you": 0, "handed_off": 0, "stuck": 0},
+            "spend": {"output_tokens": 425000, "cost_usd": 5.75, "cap": 8_000_000, "over_cap": False}}
+    out = R.render_factory_standup(data)
+    assert "425,000" in out and "$5.75" in out and "soft cap 8,000,000" in out
+    assert "OVER SOFT-CAP" not in out           # under cap -> no alarm
+
+
+def test_render_factory_standup_spend_over_cap_alarms():
+    # H62 (3): an over-budget window renders the fail-loud flag (no kill — display only)
+    data = {"groups": {"veto": [], "needs_you": [], "handed_off": [], "stuck": []},
+            "totals": {"veto": 0, "needs_you": 0, "handed_off": 0, "stuck": 0},
+            "spend": {"output_tokens": 9_000_000, "cost_usd": 130.0, "cap": 8_000_000, "over_cap": True}}
+    out = R.render_factory_standup(data)
+    assert "OVER SOFT-CAP" in out and "⚠" in out
+
+
+def test_render_factory_standup_tolerates_missing_item_fields():
+    data = {"groups": {"veto": [{"repo": "r", "id": "X1"}],   # no title, no date
+                       "needs_you": [], "handed_off": [], "stuck": []},
+            "totals": {"veto": 1, "needs_you": 0, "handed_off": 0, "stuck": 0}}
+    out = R.render_factory_standup(data)            # must not raise
+    assert "X1" in out and "(untitled)" in out
+
+
+if __name__ == "__main__":
+    import pytest
+    raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- Thread reconciliation: in_motion partition + reframe (2026-07-11) ---
+
+def _cache_in_motion():
+    return {
+        "needs_you": [
+            {"id": "OI-1000", "title": "NOTICE-A Northwind", "domain": "familyoffice",
+             "urgency": "26d overdue", "claude_voice": {"text": "pull transcript"},
+             "in_motion": {"thread_id": "OI-1000", "status": "open", "court": "you",
+                           "next_action": "pull the IRS account transcript (EIN XX-XXXXXXX)"}},
+            {"id": "OI-997", "title": "Acme extension", "domain": "familyoffice",
+             "urgency": "28d overdue, awaiting send", "claude_voice": {"text": "x"},
+             "in_motion": {"thread_id": "acme-loan-extension", "status": "parked", "court": "others",
+                           "next_action": "DocuSigned; awaiting Sam's signature"}},
+            {"id": "OI-958", "title": "Contoso Staking dissolve", "domain": "familyoffice",
+             "urgency": "43d overdue", "claude_voice": {"text": "decide"}},
+        ],
+    }
+
+
+def test_render_overview_keeps_act_items_only():
+    # Act = no in_motion OR court == "you"; the parked (court=others) item is excluded
+    out = R.render_overview(_cache_in_motion())
+    assert "NOTICE-A Northwind" in out          # court you -> stays
+    assert "Contoso Staking dissolve" in out  # no in_motion -> stays
+    assert "Acme extension" not in out       # court others -> moved to in-motion track
+
+
+def test_render_overview_row_open_thread_shows_reframe_line():
+    out = R.render_overview(_cache_in_motion())
+    assert "↻ In motion — pull the IRS account transcript (EIN XX-XXXXXXX)" in out
+
+
+def test_render_in_motion_lists_waiting_items():
+    out = R.render_in_motion(_cache_in_motion())
+    assert "In motion" in out
+    assert "· Acme extension — DocuSigned; awaiting Sam's signature" in out
+    # Act items are NOT in the waiting track
+    assert "NOTICE-A Northwind" not in out
+
+
+def test_render_in_motion_empty_is_one_clean_line():
+    out = R.render_in_motion({"needs_you": [{"id": "x", "title": "t", "domain": "d",
+                                             "claude_voice": {"text": "c"}}]})
+    assert out == "⏳ In motion: nothing waiting"
+
+
+def test_render_card_shows_reframe_line_when_in_motion():
+    item = {"id": "OI-997", "title": "Acme", "domain": "familyoffice",
+            "claude_voice": {"text": "x"},
+            "in_motion": {"thread_id": "acme-loan-extension", "status": "parked",
+                          "court": "others", "next_action": "awaiting signature"}}
+    out = R.render_card(item)
+    assert "↻ In motion — awaiting signature" in out
+
+
+def test_render_card_unchanged_without_in_motion():
+    item = {"title": "T", "domain": "d", "system_voice": None, "claude_voice": {"text": "c"}}
+    assert "↻" not in R.render_card(item)
+
+
+def test_render_resolved_item_not_in_waiting_track_and_not_in_act():
+    # a resolved thread (court "done") is neither in Act nor labelled "waiting on others" (#3)
+    cache = {"needs_you": [
+        {"id": "OI-1032", "title": "STRC done", "domain": "familyoffice",
+         "claude_voice": {"text": "x"},
+         "in_motion": {"thread_id": "OI-1032", "status": "resolved", "court": "done",
+                       "next_action": "done"}},
+    ]}
+    act = R.render_overview(cache)
+    inm = R.render_in_motion(cache)
+    assert "STRC done" not in act                      # not an actionable Act row
+    assert "waiting on others" not in inm.lower() or "STRC done" not in inm.split("resolved")[0]
+    assert "cleared by their thread" in inm            # acknowledged, not silently dropped
+
+
+def test_render_overview_unknown_court_degrades_to_visible_in_act():
+    # defense-in-depth: an unrecognized court must NOT vanish from both surfaces — Act is the catch-all
+    cache = {"needs_you": [
+        {"id": "OI-901", "title": "Weird court", "domain": "d", "claude_voice": {"text": "x"},
+         "in_motion": {"thread_id": "t", "status": "?", "court": "foo", "next_action": "n"}},
+    ]}
+    assert "Weird court" in R.render_overview(cache)
+    assert "Weird court" not in R.render_in_motion(cache)
+
+def test_render_factory_standup_surfaces_parse_errors():
+    # H56.4: a backlog parse error alone still renders the panel (not "nothing waiting")
+    data = {"groups": {"veto": [], "needs_you": [], "handed_off": [], "stuck": []},
+            "totals": {"veto": 0, "needs_you": 0, "handed_off": 0, "stuck": 0},
+            "errors": [{"repo": "aios", "backlog": "x/BACKLOG.md", "error": "ValueError: boom"}]}
+    out = R.render_factory_standup(data)
+    assert "Factory Standup" in out and "parse errors" in out and "boom" in out
+    assert "nothing waiting" not in out

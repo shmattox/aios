@@ -1,0 +1,140 @@
+"""notion_gather.py offline tests (A18) — pure functions + token resolution.
+No network: the query path is exercised only up to argument/token handling."""
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import notion_gather as ng  # noqa: E402
+
+
+# ── normalize_id ─────────────────────────────────────────────────────────────
+
+def test_normalize_id_accepts_collection_ref():
+    assert (ng.normalize_id("collection://11111111-1111-1111-1111-111111111111")
+            == "11111111-1111-1111-1111-111111111111")
+
+
+def test_normalize_id_accepts_bare_undashed_and_uppercases_down():
+    assert (ng.normalize_id("11111111111111111111111111111111")
+            == "11111111-1111-1111-1111-111111111111")
+
+
+def test_normalize_id_rejects_garbage():
+    for bad in ("", "not-an-id", "collection://short", "1111111111111111111111111111111"):
+        with pytest.raises(ValueError):
+            ng.normalize_id(bad)
+
+
+# ── property collapse + page normalization ───────────────────────────────────
+
+CANNED_PAGE = {
+    "id": "page-1",
+    "url": "https://notion.so/page-1",
+    "last_edited_time": "2026-07-04T12:00:00.000Z",
+    "properties": {
+        "Name": {"type": "title", "title": [
+            {"plain_text": "Confirm the Lakeside "}, {"plain_text": "2024 property-tax payment"}]},
+        "Status": {"type": "status", "status": {"name": "In progress"}},
+        "Priority": {"type": "select", "select": {"name": "Urgent"}},
+        "Due": {"type": "date", "date": {"start": "2026-07-03"}},
+        "Notes": {"type": "rich_text", "rich_text": [{"plain_text": "banks reopen Monday"}]},
+        "Done?": {"type": "checkbox", "checkbox": False},
+        "Empty": {"type": "select", "select": None},
+    },
+}
+
+
+def test_normalize_page_extracts_core_fields():
+    rec = ng.normalize_page(CANNED_PAGE)
+    assert rec["title"] == "Confirm the Lakeside 2024 property-tax payment"
+    assert rec["status"] == "In progress"
+    assert rec["priority"] == "Urgent"
+    assert rec["due"] == "2026-07-03"
+    assert rec["url"] == "https://notion.so/page-1"
+    assert rec["props"]["Notes"] == "banks reopen Monday"
+    assert "Empty" not in rec["props"]  # None values dropped
+
+
+def test_normalize_page_status_from_select_named_status():
+    page = {"id": "p", "properties": {
+        "Task": {"type": "title", "title": [{"plain_text": "t"}]},
+        "Task Status": {"type": "select", "select": {"name": "Open"}},
+    }}
+    assert ng.normalize_page(page)["status"] == "Open"
+
+
+def test_filter_items_is_case_insensitive_and_keeps_statusless():
+    items = [{"status": "Done"}, {"status": "done"}, {"status": "Open"}, {"status": None}]
+    kept = ng.filter_items(items, ["Done"])
+    assert [i["status"] for i in kept] == ["Open", None]
+    assert ng.filter_items(items, []) == items
+
+
+# ── token resolution ─────────────────────────────────────────────────────────
+
+def test_resolve_token_prefers_env(monkeypatch):
+    monkeypatch.setenv("AIOS_NG_TEST_TOKEN", "  secret_abc  ")
+    tok, source = ng.resolve_token("AIOS_NG_TEST_TOKEN")
+    assert tok == "secret_abc" and source == "env"
+
+
+def test_no_token_exits_2_with_setup_hint(monkeypatch, capsys):
+    name = "AIOS_NG_TEST_TOKEN_ABSENT_ZZZ"  # never set; CredMan lookup misses too
+    monkeypatch.delenv(name, raising=False)
+    with pytest.raises(SystemExit) as e:
+        ng.main(["--token-env", name, "check"])
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "cmdkey /generic:" in err and name in err
+
+
+def test_query_source_clamps_page_size_to_api_max(monkeypatch):
+    sent = {}
+
+    def fake_request(method, url, token, version, body=None, timeout=30):
+        sent["page_size"] = body["page_size"]
+        return 200, {"results": [], "has_more": False}
+
+    monkeypatch.setattr(ng, "_request", fake_request)
+    endpoint, pages, err = ng._query_source("11111111-1111-1111-1111-111111111111", "tok", 500)
+    assert sent["page_size"] == 100 and err is None
+
+
+def test_query_source_reports_midpagination_error_not_fallback_404(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_request(method, url, token, version, body=None, timeout=30):
+        calls["n"] += 1
+        if calls["n"] == 1:  # page 1 OK on the data-source endpoint
+            return 200, {"results": [{"id": "p1"}], "has_more": True, "next_cursor": "c2"}
+        return 429, {"message": "rate limited"}  # page 2 fails
+
+    monkeypatch.setattr(ng, "_request", fake_request)
+    endpoint, pages, err = ng._query_source("11111111-1111-1111-1111-111111111111", "tok", 200)
+    assert endpoint is None and pages == []
+    assert "429" in err and "rate limited" in err and "after 1 pages" in err
+    assert calls["n"] == 2  # never fell through to the database endpoint
+
+
+def test_tasks_output_shape_offline(monkeypatch, capsys):
+    """tasks with a live token but an unreachable network path must still emit the
+    JSON envelope (ok:false + error) and exit 1 — per-source errors never raise."""
+    monkeypatch.setenv("AIOS_NG_TEST_TOKEN", "secret_abc")
+    monkeypatch.setattr(ng, "_request", lambda *a, **k: (0, {"message": "network error: offline"}))
+    rc = ng.main(["--token-env", "AIOS_NG_TEST_TOKEN", "tasks",
+                  "--db", "collection://11111111-1111-1111-1111-111111111111"])
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["live"] is False
+    assert out["sources"][0]["ok"] is False
+    assert "network error" in out["sources"][0]["error"]
+
+
+if __name__ == "__main__":
+    # suite_test.py runs each test_*.py as a subprocess and asserts exit 0 - without this
+    # block a pytest-style file passes VACUOUSLY (defines functions, exits 0; A7 finding).
+    sys.exit(pytest.main([__file__, "-q"]))

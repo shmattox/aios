@@ -1,0 +1,23 @@
+
+# --- resolve: default block, seeded by /aios:setup into <env_root>/profile/domains.yaml (A33) ---
+# The task-resolution layer (resolve_sweep / resolve_fetch / resolve_verdict) reads these fields
+# FROM THE PROFILE — the engine never hardcodes them (fact-free). Edit freely: tune the keyword
+# list to the economic vocabulary your domains actually use, swap the model tiers, or point
+# cache_dir elsewhere. To QUIET keyword flagging, empty the list (`economic_keywords: []`) rather
+# than deleting the block — an emptied block survives a setup Refresh (a deleted one gets
+# re-seeded), and the money-figure regex still flags figures either way.
+resolve:
+  # High-recall economic vocabulary. A task whose title/body contains any of these (or a money
+  # figure) is flagged for cross-system resolution before it is acted on blind. Generic starter
+  # set — extend it with terms specific to your domains. NOTE: matching is case-insensitive
+  # SUBSTRING (resolve_sweep), so prefer distinctive tokens — short ones collide (e.g. "rent"
+  # would hit "parent"/"current", "lien" would hit "client"/"resilient").
+  economic_keywords: [insurance, premium, policy, loan, interest, tax, wire, payoff, guaranty,
+                      escrow, mortgage, invoice, payment, deposit, refinance, principal, renew]
+  leaf_model: "claude-haiku-4-5-20251001"   # cheap per-source extractor (reads a figure off a page)
+  deep_model: "claude-opus-4-8"             # per-task orchestrator (align, select governing doc, decide)
+  cache_dir: "state/resolve-cache"          # env_root-relative; pre-scraped evidence + dossiers
+  # Optional (A34 overnight sweep): DATA-SOURCE ids the headless gather can query — your Notion task
+  # DBs' `collection://<id>` (or a Notion data-source id). NOT a `view://` id (the REST API 404s on
+  # views). Absent -> the sweep degrades to a clean no-op. Uncomment + fill with your task DBs:
+  # task_source_dbs: ["collection://<your-tasks-db-id>"]

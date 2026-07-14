@@ -1,0 +1,27 @@
+{
+  "generated_utc": "2026-07-02T00:00:00Z",
+  "station_counts": {"kb": 0, "system": 1, "personal": 0, "familyoffice": 0, "dev": 1},
+  "stations": {
+    "system": [
+      {"item_id": "sys-1", "title": "Fix sorter taxonomy", "domain": "System",
+       "system_voice": {"grade": "1", "text": "Hold, then re-drive.", "cite": "decisions.md#taxo"},
+       "claude_voice": {"text": "Batch the 8 stubs."}}
+    ],
+    "personal": [],
+    "familyoffice": [],
+    "dev": [
+      {"item_id": "dev-1", "title": "Renderer build", "domain": "Dev",
+       "system_voice": null,
+       "claude_voice": {"text": "Pure function, golden-file it."}}
+    ]
+  },
+  "settle": {
+    "auto_healed": [],
+    "candidates": [
+      {"task_id": "dev-1", "title": "Renderer build",
+       "proposed_transition": "in_progress",
+       "evidence": [{"source": "git", "ref": "a1b2c3d", "quote": "wip: brief_render settle op"}],
+       "confidence": "high", "domain": "dev"}
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+# A65 semantic connect oracle (garden_neighbors.py) — the engine's only third-party dep.
+# Contained to the garden stage; every other tool is stdlib-only. Optional at runtime:
+# garden_neighbors.py SKIPs cleanly (exit 0) when this is absent, so the lexical connect
+# pass still runs. Local/offline embedder — no hosted API, no vault content leaves the machine.
+fastembed>=0.3
