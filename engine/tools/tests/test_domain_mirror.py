@@ -482,6 +482,14 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
             _body_ok += 1
         else:
             _body_bad.append((_tbl, _gen.name))
+    # HONEST SCOPE: this is a TRIPWIRE, not a positive proof of body composition. Every compared
+    # record is empty-body on BOTH sides today — no mapped export carries a `Description` property,
+    # so build_record's body path is never actually exercised here. What it DOES guard is the real
+    # risk: a body the retired migrators rendered and the engine drops, changing without a signal.
+    # (Proven to fail when broken.) It does NOT prove `Description` passthrough — the first mapped
+    # table that has that property will be the first to exercise it. Note also that the skipped set
+    # is currently 100% of `entities` (all 11 carry generated view blocks), so that table has no
+    # body coverage at all.
     check("fo_body_substance_preserved", not _body_bad)
     print(f"FO body contract: {_body_ok} substance-equal, {len(_body_bad)} divergent, "
           f"{_body_skipped} skipped (generated view blocks)")
