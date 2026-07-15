@@ -403,8 +403,9 @@ check("a80_sibling_still_updates", "status: new" in _txt80)
 # and it lands in the COMPUTED SLOT: after the notion_fields, before the derived trio
 _keys80 = list(dm._extract_frontmatter(_txt80))
 check("a80_emitted_in_computed_slot",
-      _keys80.index("curated") > _keys80.index("status")
-      and _keys80.index("curated") < _keys80.index("notion_id"))
+      "curated" in _keys80                          # guard: a dropped key must FAIL, not abort the
+      and _keys80.index("curated") > _keys80.index("status")   # run on .index() and hide the checks
+      and _keys80.index("curated") < _keys80.index("notion_id"))  # that follow it
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── A72/A53 REAL regression, HERMETIC: frozen exports -> records == frozen golden ──
@@ -485,12 +486,28 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         print("  regenerate: python Projects/family-office/state-mirror/migration/extract_golden.py")
 
     _out = Path(tempfile.mkdtemp()) / "tables"
-    dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out, last_synced="2026-06-30")
+    # A80: seed the DESTINATION from the golden so state_native carry-forward has a real record to
+    # read — without this, `wiki` has nothing to carry and would have to stay excluded, which is the
+    # very blind spot that hid this class. Still hermetic: the seed is the FROZEN golden, never the
+    # live record tree. Copied per-table so golden/README.md is not swept in.
+    for _t in _cfg["tables"]:
+        _src = _GOLDEN / _t["source_db"]
+        if not _src.is_dir():
+            continue
+        _dst = _out / _t["source_db"]
+        _dst.mkdir(parents=True, exist_ok=True)
+        for _p in _src.glob("*.md"):
+            (_dst / _p.name).write_text(_p.read_text(encoding="utf-8"), encoding="utf-8")
+    # Iterate what the import actually WROTE, not the directory: the seed above means a record the
+    # import did not regenerate would otherwise be compared against itself and pass trivially.
+    _written = dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out, last_synced="2026-06-30")
 
-    _REQUIRED = {"entities", "notes"}      # must reach equivalence (scope-narrowed)
-    _CURATED = {"wiki", "owner_entity", "asset"}    # golden-only state-native curation, out of scope
+    _REQUIRED = {"entities", "notes"}                # must reach equivalence (scope-narrowed)
+    _CURATED = {"owner_entity", "asset"}             # still golden-only: A80 covers `wiki`, and
+                                                     # these two are REPRODUCIBLE (a ruleset / a
+                                                     # decode) so they are Plan 2b's, not A80's.
     _mism, _bad_extra, _counts = [], [], {}
-    for _gen in _out.rglob("*.md"):
+    for _gen in _written:
         # The table is the record's parent dir relative to _out, as a posix string — this yields
         # "logs/change-log" for a nested source_db and still "tasks" for a flat one. Using parts[0]
         # would truncate a nested source_db to just its first segment ("logs").
@@ -531,7 +548,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         return "\n".join(keep).strip()
 
     _body_ok, _body_bad, _body_skipped = 0, [], 0
-    for _gen in _out.rglob("*.md"):
+    for _gen in _written:
         # Same fix as the frontmatter loop above: the table is the record's PARENT DIR relative to
         # _out (not just its first path segment), so a nested source_db like "logs/change-log"
         # resolves correctly instead of truncating to "logs" and silently missing its golden dir.
@@ -567,6 +584,12 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     for _tbl in sorted(_counts):
         _n, _ok = _counts[_tbl]
         print(f"FO golden equivalence {_tbl}: {_ok}/{_n} compared")
+    # A80: with `wiki` out of _CURATED, the _unexpected check above would flag it as an unmapped
+    # golden field on all 18 records if carry-forward were broken — so FAILURES: [] already IS the
+    # proof. Count it explicitly so it is visible rather than inferred.
+    _wiki_n = sum(1 for _g in _written if "wiki" in _load_fm(_g.read_text(encoding="utf-8")))
+    check("a80_wiki_carried_on_real_data", _wiki_n == 18)
+    print(f"A80 state_native: wiki carried forward on {_wiki_n} real records (entities 11 + people 7)")
     if _mism:
         print("FO mismatches (first 6):", _mism[:6])
     if _bad_extra:
