@@ -382,7 +382,9 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _snap = Path(tempfile.mkdtemp())
     for _t in _cfg["tables"]:
         _db = _t["source_db"]
-        _fs = _glob.glob(str(_FO_MIG / f"{_db}-notion-export-*.json"))
+        # source_db may be a nested path (e.g. "logs/change-log") but the Notion export filename
+        # is always flat — glob on the basename, not the full (possibly nested) _db.
+        _fs = _glob.glob(str(_FO_MIG / f"{Path(_db).name}-notion-export-*.json"))
         if not _fs:
             continue
         _f = _fs[0]
@@ -400,7 +402,10 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
                     _n2s[str(_nid)] = _p.stem
             _u2s = {r["url"]: _n2s.get(dm.notion_id_from_url(r["url"]), dm.notion_id_from_url(r["url"]))
                     for r in _rows}
-        (_snap / f"{_db}-export.json").write_text(
+        _snap_target = _snap / f"{_db}-export.json"
+        # _db may be nested ("logs/change-log") — make sure the parent dir exists before writing.
+        _snap_target.parent.mkdir(parents=True, exist_ok=True)
+        _snap_target.write_text(
             json.dumps({"_meta": _meta, "url_to_slug": _u2s, "rows": _rows}), encoding="utf-8")
 
     # A mapped table with no golden dir is a STALE fixture (a new mapping landed — Plan 2). Fail
@@ -421,7 +426,10 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _CURATED = {"wiki", "owner_entity", "asset"}    # golden-only state-native curation, out of scope
     _mism, _bad_extra, _counts = [], [], {}
     for _gen in _out.rglob("*.md"):
-        _tbl = _gen.relative_to(_out).parts[0]
+        # The table is the record's parent dir relative to _out, as a posix string — this yields
+        # "logs/change-log" for a nested source_db and still "tasks" for a flat one. Using parts[0]
+        # would truncate a nested source_db to just its first segment ("logs").
+        _tbl = _gen.parent.relative_to(_out).as_posix()
         _gold = _GOLDEN / _tbl / _gen.name
         _c = _counts.setdefault(_tbl, [0, 0])        # [n, equal]
         _c[0] += 1
