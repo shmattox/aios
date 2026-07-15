@@ -378,6 +378,16 @@ try:
 except ValueError as _e80:
     check("a80_collision_raises", "status" in str(_e80))
 
+# ...and the same for a RESERVED key build_record emits itself. `type` is the worst case: it would
+# be carried from disk and override the schema-derived value that state_validate dispatches on.
+for _res80 in ("type", "notion_id"):
+    _rr80, _ = _a80_silo(f"  state_native: [{_res80}]")
+    try:
+        dm.load_silo_config(_rr80, "keep")
+        check(f"a80_reserved_{_res80}_raises", False)
+    except ValueError as _e80r:
+        check(f"a80_reserved_{_res80}_raises", _res80 in str(_e80r))
+
 # carry-forward end-to-end on the fixture
 _snap80 = _sd80 / "_snap"; _snap80.mkdir()
 _write_export(_snap80 / "things-export.json",

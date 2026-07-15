@@ -102,6 +102,11 @@ def find_env_root(start: Path) -> Path:
     raise FileNotFoundError(f"no profile/domains.yaml above {start}")
 
 
+# Emitted by build_record itself, never read off the snapshot: `type` opens the record and the
+# notion_* trio closes it. A schema cannot hand these to `state_native:` (see load_silo_config).
+_RESERVED = frozenset({"type", "notion_id", "notion_url", "last_synced"})
+
+
 def load_silo_config(env_root: Path, silo: str) -> dict:
     state_dir = (Path(env_root) / "state" / "domains" / silo).resolve()
     schema_path = state_dir / "schema.yaml"
@@ -130,7 +135,11 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
         # snapshot property and not derivable from one), so the importer must carry them forward
         # rather than rebuild them away. Fact-free: which fields qualify is the silo's call.
         state_native = list(tdef.get("state_native") or [])
-        derived = {f[0] for f in fields} | {c[0] for c in computed}
+        # `_RESERVED` are emitted by build_record itself, so declaring one state_native is always a
+        # schema error — and a silently BROKEN one either way: `type` is carried from disk and then
+        # overrides the schema-derived value (and state_validate dispatches on `type`), while the
+        # notion_* trio is rebuilt AFTER the carry-forward and silently ignores the declaration.
+        derived = ({f[0] for f in fields} | {c[0] for c in computed} | _RESERVED)
         clash = sorted(set(state_native) & derived)
         if clash:
             raise ValueError(f"[{tname}] state_native fields are also derived from the snapshot: "
@@ -174,7 +183,11 @@ def _read_state_native(dest, keys) -> dict:
     deliberate and evidence-led: a table's state-native field is routinely present on only SOME of
     its records, and emitting `null` for the rest would rewrite records that are already correct.
     A genuinely unreadable file raises out of read_text — failing loud is right, because carrying
-    nothing from a corrupt record is exactly the silent deletion this exists to prevent."""
+    nothing from a corrupt record is exactly the silent deletion this exists to prevent. The limit
+    of that guarantee: `_parse_yaml` is permissive, so a TORN write that leaves a colonless line
+    inside intact `---` fences parses to {} and the key is dropped silently rather than loudly. That
+    is the reader's pre-existing behaviour across the whole pipeline, not a rule this function can
+    fix locally — stated here so the guarantee is not read as stronger than it is."""
     if not keys or not dest.is_file():
         return {}
     fm = _extract_frontmatter(dest.read_text(encoding="utf-8"))
