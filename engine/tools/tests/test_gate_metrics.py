@@ -94,7 +94,7 @@ def _mkqueue(tmp_path, items):
 
 def _run(argv):
     return subprocess.run([sys.executable, os.path.join(TOOLS, "gate_metrics.py")] + argv,
-                          capture_output=True, text=True)
+                          capture_output=True, encoding="utf-8")
 
 
 def test_cli_report_writes_out_and_prints_json(tmp_path):
@@ -118,16 +118,15 @@ def test_cli_render_fixed_format(tmp_path):
     q = _mkqueue(tmp_path, [it1, it2])
     r = _run(["render", "--queue", q, "--today", "2026-07-15"])
     assert r.returncode == 0
-    assert "Gate acceptance (30d): 50% accepted (n=2: 1 ship / 1 reject / 0 revert)" in r.stdout
+    assert "📊 Gate acceptance (30d): 50% accepted (n=2: 1 ship / 1 reject / 0 revert)" in r.stdout
     assert "human 1 / auto 1 / sched 0 / unk 0" in r.stdout
-    assert "recommendation overrides (30d): 1" in r.stdout
-    assert "y" in r.stdout
+    assert "recommendation overrides (30d): 1 — y" in r.stdout
 
 
 def test_cli_render_missing_queue_is_loud_not_zeros(tmp_path):
     r = _run(["render", "--queue", str(tmp_path / "absent.json"), "--today", "2026-07-15"])
     assert r.returncode == 0
-    assert "metrics unavailable" in r.stdout
+    assert "📊 Gate acceptance: metrics unavailable" in r.stdout
     assert "0%" not in r.stdout
 
 
