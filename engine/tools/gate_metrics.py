@@ -125,3 +125,68 @@ def rollup(items, today):
 def report(queue_path, today):
     data = queue_tx.load(queue_path)
     return rollup(data.get("queue", []), today)
+
+
+def _render_lines(rep):
+    w = rep["windows"]["30d"]
+    n = w["n"]
+    if n == 0:
+        head = "📊 Gate acceptance (30d): no terminal decisions in window"
+    else:
+        t = w["totals"]
+        pct = round(100 * t["accepted"] / n)
+        d = w["deciders"]
+        head = (f"📊 Gate acceptance (30d): {pct}% accepted "
+                f"(n={n}: {t['accepted']} ship / {t['rejected']} reject / {t['reverted']} revert) · "
+                f"human {d['human']} / auto {d['auto']} / sched {d['scheduled']} / unk {d['unknown']}")
+    lines = [head]
+    ov = w["agreement"]["override"]
+    if ov:
+        ids = ", ".join(w["override_ids"])
+        more = "" if ov <= len(w["override_ids"]) else f" (+{ov - len(w['override_ids'])} more)"
+        lines.append(f"   recommendation overrides (30d): {ov} — {ids}{more}")
+    if w["unknown_ts"] or rep["windows"]["all"]["unknown_ts"]:
+        lines.append(f"   ℹ {rep['windows']['all']['unknown_ts']} decisions lack a terminal timestamp (all-time bucket only)")
+    return lines
+
+
+def main(argv=None):
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+    ap = argparse.ArgumentParser(prog="gate_metrics.py",
+                                 description="A73 read-only gate acceptance metrics.")
+    sub = ap.add_subparsers(dest="op", required=True)
+    for name in ("report", "render"):
+        p = sub.add_parser(name)
+        p.add_argument("--queue", required=True)
+        p.add_argument("--today", required=True, help="YYYY-MM-DD (injected; no wall-clock)")
+        if name == "report":
+            p.add_argument("--out", default=None, help="also write the JSON here (Task-4 env leg reads it)")
+    args = ap.parse_args(argv)
+
+    if not os.path.isfile(args.queue):
+        if args.op == "render":
+            print("📊 Gate acceptance: metrics unavailable (queue not found)")
+            return 0
+        print(json.dumps({"error": f"queue not found: {args.queue}"}), file=sys.stderr)
+        return 1
+    rep = report(args.queue, args.today)
+    if args.op == "report":
+        text = json.dumps(rep, indent=2, ensure_ascii=False)
+        if args.out:
+            d = os.path.dirname(args.out)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        print(text)
+    else:
+        print("\n".join(_render_lines(rep)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

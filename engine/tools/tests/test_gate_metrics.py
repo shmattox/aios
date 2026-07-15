@@ -6,8 +6,8 @@ sys.path.insert(0, TOOLS)
 import gate_metrics as gm  # noqa: E402
 
 
-def _item(stage="shipped", history=None, recommended="approve", kb="demo", lane="auto-ship"):
-    return {"id": "x", "stage": stage, "recommended": recommended, "kb": kb, "lane": lane,
+def _item(stage="shipped", history=None, recommended="approve", kb="demo", lane="auto-ship", id="x"):
+    return {"id": id, "stage": stage, "recommended": recommended, "kb": kb, "lane": lane,
             "history": history if history is not None else []}
 
 
@@ -82,3 +82,55 @@ def test_rollup_windows_and_by_kb_lane():
 def test_rollup_ignores_non_terminal_stages():
     r = gm.rollup([_item(stage="awaiting"), _item(stage="sorted")], today="2026-07-15")
     assert r["windows"]["all"]["n"] == 0
+
+
+# --- CLI: report + render ---
+
+def _mkqueue(tmp_path, items):
+    p = tmp_path / "queue.json"
+    p.write_text(json.dumps({"queue": items}), encoding="utf-8")
+    return str(p)
+
+
+def _run(argv):
+    return subprocess.run([sys.executable, os.path.join(TOOLS, "gate_metrics.py")] + argv,
+                          capture_output=True, text=True)
+
+
+def test_cli_report_writes_out_and_prints_json(tmp_path):
+    it = _item(id="x", history=[{"ts": "2026-07-14T00:00:00Z", "stage": "shipped",
+                                 "approved_by": "auto-ship"}])
+    it["conflict_key"] = "demo/wiki/item/x"
+    q = _mkqueue(tmp_path, [it])
+    out = str(tmp_path / "gate-metrics.json")
+    r = _run(["report", "--queue", q, "--today", "2026-07-15", "--out", out])
+    assert r.returncode == 0
+    payload = json.loads(r.stdout)
+    assert payload["windows"]["7d"]["totals"]["accepted"] == 1
+    assert json.load(open(out, encoding="utf-8")) == payload
+
+
+def test_cli_render_fixed_format(tmp_path):
+    it1 = _item(id="x", history=[{"ts": "2026-07-14T00:00:00Z", "stage": "shipped", "approved_by": "auto-ship"}])
+    it1["conflict_key"] = "demo/wiki/item/x"
+    it2 = _item(id="y", stage="rejected", recommended="approve",
+                history=[{"ts": "2026-07-13T00:00:00Z", "stage": "rejected", "decided_by": "human"}])
+    q = _mkqueue(tmp_path, [it1, it2])
+    r = _run(["render", "--queue", q, "--today", "2026-07-15"])
+    assert r.returncode == 0
+    assert "Gate acceptance (30d): 50% accepted (n=2: 1 ship / 1 reject / 0 revert)" in r.stdout
+    assert "human 1 / auto 1 / sched 0 / unk 0" in r.stdout
+    assert "recommendation overrides (30d): 1" in r.stdout
+    assert "y" in r.stdout
+
+
+def test_cli_render_missing_queue_is_loud_not_zeros(tmp_path):
+    r = _run(["render", "--queue", str(tmp_path / "absent.json"), "--today", "2026-07-15"])
+    assert r.returncode == 0
+    assert "metrics unavailable" in r.stdout
+    assert "0%" not in r.stdout
+
+
+def test_cli_report_missing_queue_exits_nonzero(tmp_path):
+    r = _run(["report", "--queue", str(tmp_path / "absent.json"), "--today", "2026-07-15"])
+    assert r.returncode == 1
