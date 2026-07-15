@@ -102,10 +102,15 @@ _write_export(snap / "things-export.json",
               {"https://n/t1": "widget", "https://n/p1": "ada"})
 
 written = dm.import_silo(_root, "demo", snap)
-check("import_wrote_both", (_sd / "tables" / "state-thing" / "widget.md").is_file()
-      and (_sd / "tables" / "state-person" / "ada.md").is_file())
-txt = (_sd / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8")
-check("import_type", "type: state-thing" in txt)
+# S8: records land under the SEMANTIC dir (the table's notion_source_db), never the type key.
+# FO/GM are semantic on disk already; emitting the type key would create state-note/ beside
+# notes/ and silently duplicate every record into a parallel tree.
+check("import_wrote_both", (_sd / "tables" / "things" / "widget.md").is_file()
+      and (_sd / "tables" / "people" / "ada.md").is_file())
+check("import_no_typekey_dirs", not (_sd / "tables" / "state-thing").exists()
+      and not (_sd / "tables" / "state-person").exists())
+txt = (_sd / "tables" / "things" / "widget.md").read_text(encoding="utf-8")
+check("import_type", "type: state-thing" in txt)          # the TYPE key stays in frontmatter
 check("import_checkbox", "flag: true" in txt)
 check("import_relation", 'owner: "[[people/ada]]"' in txt)
 check("import_notion_id", "notion_id: t1" in txt)
@@ -115,7 +120,7 @@ check("import_quoted_colon", 'note: "Phase 2: launch"' in txt)
 # idempotent
 before = txt
 dm.import_silo(_root, "demo", snap)
-check("idempotent", (_sd / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8") == before)
+check("idempotent", (_sd / "tables" / "things" / "widget.md").read_text(encoding="utf-8") == before)
 # fail-loud on dangling relation
 _write_export(snap / "things-export.json",
               [{"Name": "Orphan", "Owner": "https://n/missing", "url": "https://n/t2"}],
@@ -140,7 +145,7 @@ _write_export(_snap2 / "things-export.json",
               [{"Name": "Widget", "url": "https://app.notion.com/abc123def456"}],
               {"https://app.notion.com/abc123def456": "widget"})
 dm.import_silo(_root2, "demo", _snap2)
-_wtxt = (_sd2 / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8")
+_wtxt = (_sd2 / "tables" / "things" / "widget.md").read_text(encoding="utf-8")
 check("ext_notion_url_derived", "notion_url: https://www.notion.so/abc123def456" in _wtxt)
 check("ext_notion_url_not_raw", "app.notion.com" not in _wtxt.split("---", 2)[1])
 # no last_synced when neither _meta.exported nor CLI value present
@@ -152,7 +157,7 @@ _snap3 = _sd3 / "_snap"; _snap3.mkdir()
 _write_export(_snap3 / "things-export.json",
               [{"Name": "Widget", "url": "https://n/w1"}], {"https://n/w1": "widget"})
 dm.import_silo(_root3, "demo", _snap3, last_synced="2026-06-30")
-_w3 = (_sd3 / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8")
+_w3 = (_sd3 / "tables" / "things" / "widget.md").read_text(encoding="utf-8")
 check("ext_last_synced_from_cli", "last_synced: 2026-06-30" in _w3)
 
 # Extension 2b: _meta.exported OVERRIDES the CLI value (per-snapshot export date wins)
@@ -162,7 +167,7 @@ _snap4 = _sd4 / "_snap"; _snap4.mkdir()
     {"_meta": {"exported": "2026-07-01"}, "url_to_slug": {"https://n/w1": "widget"},
      "rows": [{"Name": "Widget", "url": "https://n/w1"}]}), encoding="utf-8")
 dm.import_silo(_root4, "demo", _snap4, last_synced="2026-06-30")
-_w4 = (_sd4 / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8")
+_w4 = (_sd4 / "tables" / "things" / "widget.md").read_text(encoding="utf-8")
 check("ext_last_synced_meta_wins", "last_synced: 2026-07-01" in _w4)
 
 # Emitter fix (generic correctness): a scalar with an embedded newline is escaped to a SINGLE
@@ -266,10 +271,10 @@ _write_export(_snap5 / "assets-export.json",
                {"Name": "West Note", "Region": "west", "Asset": "https://n/usd", "url": "https://n/a2"}],
               {"https://n/a1": "john-loan", "https://n/a2": "west-note"})
 dm.import_silo(_r5, "acme", _snap5)
-_atxt = (_sd5 / "tables" / "state-asset" / "john-loan.md").read_text(encoding="utf-8")
+_atxt = (_sd5 / "tables" / "assets" / "john-loan.md").read_text(encoding="utf-8")
 check("a53_cross_export_relation", 'asset: "[[prices/usd]]"' in _atxt)          # resolved via prices' slug map
 check("a53_computed_owner", 'owner_entity: "[[companies/acme-lending]]"' in _atxt)   # south -> acme-lending
-_wtxt = (_sd5 / "tables" / "state-asset" / "west-note.md").read_text(encoding="utf-8")
+_wtxt = (_sd5 / "tables" / "assets" / "west-note.md").read_text(encoding="utf-8")
 check("a53_computed_owner_default", 'owner_entity: "[[companies/acme-holdings]]"' in _wtxt)  # west -> default
 # the SHARED validator must pass over the generated tree (acceptance)
 import subprocess as _a53_sp
@@ -281,7 +286,7 @@ if _a53_vr.returncode != 0:
     print("A53 validator output:", _a53_vr.stdout[-800:])
 # a same-export relation (no rel_source) still resolves against the row's own export (backward compat)
 check("a53_same_export_still_works", 'owner: "[[people/ada]]"' in
-      (_sd / "tables" / "state-thing" / "widget.md").read_text(encoding="utf-8"))
+      (_sd / "tables" / "things" / "widget.md").read_text(encoding="utf-8"))
 
 # ── A53-review finding #1: a cross-export relation naming a NON-mirrored source_db must fail
 # PRE-FLIGHT (before any write), like the missing-snapshot check — not mid-write with a partial
@@ -319,7 +324,7 @@ try:
     check("a53_badrel_preflight_raises", False)
 except (KeyError, ValueError) as _e6:
     check("a53_badrel_preflight_raises", "nomirror" in str(_e6))
-_alpha_dir = _sd6 / "tables" / "state-alpha"
+_alpha_dir = _sd6 / "tables" / "alpha"
 check("a53_badrel_no_partial_write",              # the valid first table must NOT have been written
       not _alpha_dir.exists() or not any(_alpha_dir.glob("*.md")))
 
@@ -365,7 +370,6 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         return {k: _nv(v) for k, v in fm.items()}
 
     _cfg = dm.load_silo_config(_ENV_ROOT, "familyoffice")
-    _name2db = {t["name"]: t["source_db"] for t in _cfg["tables"]}
     # Normalize the dated exports into the snapshot shape the importer's contract expects:
     #  - <db>-notion-export-<DATE>.json -> <db>-export.json
     #  - inject _meta.exported=<DATE> (drives last_synced; the tax-ledger export carries no _meta)
@@ -399,11 +403,10 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         (_snap / f"{_db}-export.json").write_text(
             json.dumps({"_meta": _meta, "url_to_slug": _u2s, "rows": _rows}), encoding="utf-8")
 
-    _out = Path(tempfile.mkdtemp()) / "tables"
-    dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out, last_synced="2026-06-30")
-
     # A mapped table with no golden dir is a STALE fixture (a new mapping landed — Plan 2). Fail
-    # loud with the fix, never silently compare nothing.
+    # loud WITH THE FIX, never silently compare nothing — and check this BEFORE import_silo, whose
+    # FileNotFoundError on a newly-mapped table with neither an export nor a golden dir would
+    # otherwise raise first and bury this check's actionable hint.
     _nogold = sorted(db for db in {t["source_db"] for t in _cfg["tables"]}
                      if not (_GOLDEN / db).is_dir())
     check("fo_golden_covers_mapped_tables", not _nogold)
@@ -411,12 +414,15 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         print("FO golden fixture STALE — mapped tables with no golden dir:", _nogold)
         print("  regenerate: python Projects/family-office/state-mirror/migration/extract_golden.py")
 
-    _REQUIRED = {"state-entity", "state-note"}      # must reach equivalence (scope-narrowed)
+    _out = Path(tempfile.mkdtemp()) / "tables"
+    dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out, last_synced="2026-06-30")
+
+    _REQUIRED = {"entities", "notes"}      # must reach equivalence (scope-narrowed)
     _CURATED = {"wiki", "owner_entity", "asset"}    # golden-only state-native curation, out of scope
     _mism, _bad_extra, _counts = [], [], {}
     for _gen in _out.rglob("*.md"):
         _tbl = _gen.relative_to(_out).parts[0]
-        _gold = _GOLDEN / _name2db[_tbl] / _gen.name
+        _gold = _GOLDEN / _tbl / _gen.name
         _c = _counts.setdefault(_tbl, [0, 0])        # [n, equal]
         _c[0] += 1
         if not _gold.is_file():

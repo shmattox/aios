@@ -213,7 +213,10 @@ def import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, la
         # last_synced precedence: the snapshot's own export date (`_meta.exported`) wins; the CLI
         # value is the fallback for snapshots that carry no export date; else the field is omitted.
         eff_last_synced = (data.get("_meta") or {}).get("exported") or last_synced
-        tdir = out / table["name"]
+        # Records land under the table's SEMANTIC name (its notion_source_db), not the type key.
+        # The type key stays in each record's `type:` frontmatter, which is what state_validate
+        # reads — dir names are for humans and for the sync's reap scoping.
+        tdir = out / table["source_db"]
         for row in data["rows"]:
             slug, text = build_record(table, row, url_to_slug, slug_maps, last_synced=eff_last_synced)
             dest = tdir / f"{slug}.md"
