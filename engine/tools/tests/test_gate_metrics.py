@@ -133,3 +133,24 @@ def test_cli_render_missing_queue_is_loud_not_zeros(tmp_path):
 def test_cli_report_missing_queue_exits_nonzero(tmp_path):
     r = _run(["report", "--queue", str(tmp_path / "absent.json"), "--today", "2026-07-15"])
     assert r.returncode == 1
+
+
+# --- A73: ship.py normalized decided_by stamped at flip ---
+
+def test_ship_derive_decided_by():
+    import ship as shiptool
+    assert shiptool._derive_decided_by("auto-ship", False) == "auto"
+    assert shiptool._derive_decided_by("auto-ship-scheduled", False) == "scheduled"
+    assert shiptool._derive_decided_by("a-person", True) == "human"
+    assert shiptool._derive_decided_by("a-person", False) == "human"  # named approver => human even w/o flag
+
+def test_reject_records_decided_by(tmp_path):
+    q = _mkqueue(tmp_path, [{"id": "r1", "stage": "awaiting", "lane": "review",
+                             "recommended": "reject", "kb": "demo", "history": [],
+                             "conflict_key": "demo/wiki/notes/r1.md"}])
+    import ship as shiptool
+    shiptool.reject(q, "r1", "no draft", decided_by="human")
+    item = json.load(open(q, encoding="utf-8"))["queue"][0]
+    assert item["stage"] == "rejected"
+    assert item["history"][-1]["decided_by"] == "human"
+    assert item["history"][-1]["reason"] == "no draft"

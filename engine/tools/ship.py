@@ -136,6 +136,19 @@ def resolve(queue_path, vault_root, kb_map, cid):
     print(json.dumps(facts, ensure_ascii=False, indent=2))
 
 
+def _derive_decided_by(approved_by, human_approved):
+    """A73 normalized decider stamp. approved_by is either an auto constant or the approver's
+    name (gate SKILL contract) — any named approver is a human decision even on a non-review
+    lane. Free-text approved_by stays for audit; history is never rewritten."""
+    if human_approved:
+        return "human"
+    if approved_by == "auto-ship-scheduled":
+        return "scheduled"
+    if approved_by == "auto-ship":
+        return "auto"
+    return "human"
+
+
 def _flip(queue_path, item, stage, history_extra):
     item["stage"] = stage
     item.setdefault("history", []).append({"ts": _now(), "stage": stage, **history_extra})
@@ -193,7 +206,9 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
     pointer_path = os.path.join(revert_dir, f"{cid}.json")
     with open(_win_long(pointer_path), "w", encoding="utf-8") as f:
         json.dump(pointer, f, indent=2, ensure_ascii=False)
-    _flip(queue_path, item, "shipped", {"approved_by": approved_by})
+    _flip(queue_path, item, "shipped",
+          {"approved_by": approved_by,
+           "decided_by": _derive_decided_by(approved_by, human_approved)})
     # A30: retire the husk LAST — after the flip — fenced fail-closed (the A23 liveness lesson). A
     # crash BEFORE the flip leaves a clean `awaiting` item WITH its draft (re-shippable); a crash
     # AFTER the flip leaves a `shipped` item with a benign in-place husk (reconcile ignores shipped
@@ -207,12 +222,12 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
                       "revert_pointer": pointer_path}, ensure_ascii=False))
 
 
-def reject(queue_path, cid, reason):
+def reject(queue_path, cid, reason, decided_by="auto"):
     item = _find_item(queue_path, cid)
     if item.get("stage") in ("shipped", "reverted"):
         _die(f"id {cid!r} is at terminal stage {item.get('stage')!r} — rejecting it would orphan "
              f"its vault file; use `rewind.py undo-ship` first")
-    _flip(queue_path, item, "rejected", {"reason": reason})
+    _flip(queue_path, item, "rejected", {"reason": reason, "decided_by": decided_by})
     print(json.dumps({"ok": True, "id": cid, "stage": "rejected", "reason": reason},
                      ensure_ascii=False))
 
@@ -248,10 +263,12 @@ def main(argv=None):
                     help="required to ship a review-lane item (manual gate only)")
     pj = sub.add_parser("reject"); common(pj, vault=False)
     pj.add_argument("--reason", required=True)
+    pj.add_argument("--decided-by", choices=("human", "auto"), default="auto",
+                    help="A73: who decided this reject (manual gate passes human)")
     args = ap.parse_args(argv)
 
     if args.op == "reject":
-        reject(args.queue, args.id, args.reason)
+        reject(args.queue, args.id, args.reason, decided_by=args.decided_by)
         return 0
     try:
         kb_map = json.loads(args.kb_map)

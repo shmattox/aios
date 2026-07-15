@@ -53,7 +53,7 @@ Overview: `${CLAUDE_PLUGIN_ROOT}/engine/pipeline/PIPELINE.md`.
      --vault-root "<vault>" --kb-map '<live_kb_map JSON>' --id <id> \
      --approved-by <auto-ship | the approver | auto-ship-scheduled> --revert-dir "<env_root>/state/revert"
    python "${CLAUDE_PLUGIN_ROOT}/engine/tools/ship.py" reject --queue "<env_root>/state/queue.json" \
-     --id <id> --reason "<the BLOCK reason>"
+     --id <id> --reason "<the BLOCK reason>" --decided-by <human if a person rejected | auto for a review BLOCK>
    ```
    `resolve` → JSON facts (`slug`, `target_path`, `draft_found`, `draft_excerpt`, `is_journal`).
    `draft_found:false` → `ship.py reject … --reason "no draft found"`, skip the item; a non-zero
