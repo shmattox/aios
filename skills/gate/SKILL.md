@@ -124,10 +124,18 @@ ship — or a `source:self` skill-edit — without it.
 - **Never auto-ship a `review`-lane item.** Never ship a self-improvement proposal without approval.
 - **One writer per item** (lease); **serialize `conflict_key`s.** This is the clobber fix — not optional.
 - **Daily-note merge, never overwrite (clobber fix) — enforced by `ship.py`.** Shipping to an
-  existing `{kb}/wiki/journal/<date>.md` **merges** (incumbent preserved verbatim, the new entry
-  appended clearly-delimited, pre-merge copy saved for revert) — it **never replaces the file**.
-  Ingest lanes a draft whose target already exists as `review`, so a human confirms the merge;
-  the tool is the backstop that makes a mis-laned session-record harmless.
+  existing `{kb}/wiki/journal/<date>.md` **merges**, and always saves a pre-merge copy for revert, so
+  no incumbent content is lost either way. Which mechanism it uses is decided by content, not config:
+  ingest drafts a merge as the *whole note* re-emitted additively, and `ship.py` writes that draft in
+  place (A43) once it covers every incumbent body line; a draft that does **not** cover them is
+  instead appended below a delimiter. Ingest lanes a draft whose target already exists as `review`,
+  so a human confirms the merge; the tool is the backstop that makes a mis-laned session-record
+  harmless.
+  **If you edit a staged merge draft before approving, do not touch the incumbent's own lines.**
+  Adding lines is always safe. Editing one incumbent line drops the ship off the in-place path onto
+  the delimiter path, which appends the whole re-draft below the whole incumbent — a duplicated note
+  with two H1s, produced *after* your approval, so you never see it. To correct the incumbent's own
+  prose, ship the merge first and edit the note afterwards.
 - **Queue mutations commit via `queue_tx.py update`** (targeted — changes only the named items in the single `queue.json`, never prunes; atomic write under the advisory lock). Daily stages never use the bulk `commit` path. Never raw-write the queue file.
 - **Undo is git:** every ship is revertible by `id`. A bad auto-ship is `revert {id}`, same as anything.
 - Self-modification (`source:self`) is held for approval like a Paper-Governs write — the system
