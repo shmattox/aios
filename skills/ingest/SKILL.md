@@ -43,10 +43,28 @@ items sorted this run + pre-existing `sorted` items; the rest stay `sorted` for 
    Focus/Outcome/Why into the narrative (one entry per session), not an entity/source page.
    **Clobber guard — MERGE, never overwrite:** if that daily note **already exists** (drafted earlier
    this run OR a pre-existing note on disk, i.e. substantive content from another producer), draft the
-   addition as a *merge* — preserve the incumbent note's content verbatim, append this session as a
-   clearly-delimited entry, stage the folded result — and set `lane: review` + `recommended: hold`
-   (`rec_reason: "daily-note exists — confirm merge"`) in step 2. Only when the target is **absent**
-   (the pipeline is the sole producer for that date) may it stay `auto-ship`.
+   addition as a *merge* — re-emit the **whole note**, folding this session's entries into the note's
+   own H2 sections (`## What We Built`, `## Key Decisions`, `## Open Threads`, …) where they belong —
+   and set `lane: review` + `recommended: hold` (`rec_reason: "daily-note exists — confirm merge"`) in
+   step 2. Only when the target is **absent** (the pipeline is the sole producer for that date) may it
+   stay `auto-ship`.
+   **The draft you stage IS the note that ships.** `ship.py` writes your draft to the note — the gate
+   is a shipper, not an editor, and folds nothing on approval. So never stage a delimiter block, a
+   `## Merged sessions — pending gate confirmation` heading, or an HTML comment telling a later reader
+   to move the entries into their real sections: nothing executes it, so it ships as permanent prose
+   claiming approved content is unapproved (A83). Emit only what a human should read *after* approval.
+   **Merge by ADDING lines only.** Every incumbent line must survive byte-identical: never edit,
+   reflow, or delete one (adding lines between them is what a fold *is*; reordering whole lines is
+   safe — ship compares sets — but any character-level edit is not). This is load-bearing, not style:
+   ship replaces the note with your draft only while the draft covers every incumbent line (its A43
+   superset check). Edit one character of one incumbent line and it instead **appends your whole
+   re-draft onto the whole incumbent** — a duplicated note with two H1s. So if your fold leaves the
+   incumbent's own prose stale (a session count, a summary line that no longer covers the new
+   entries), **do not rewrite it** — say so in the entry you add, and leave the reconcile to a later
+   pass rather than editing the line here. A stale count is cheap; a duplicated note is not.
+   The superset check compares **bodies only**, so it does not protect the incumbent's frontmatter —
+   and the replace path writes your draft's frontmatter verbatim. Re-emit the incumbent's frontmatter
+   too (its `tags`/`aliases`/`links` included), or a minimal one silently drops those fields.
 2. **Assign the lane + ballot** on the queue item:
    - `lane`: per **`QUEUE.md §Lanes`** (auto-ship / confirm / review; escalation to review always
      overrides the KB default). Don't re-enumerate the lane rules here — that list is canonical there.

@@ -40,6 +40,12 @@ try:
     # late-capture-append pattern). Appending it verbatim would duplicate the note.
     draft("2026-06-30.md", "---\ntype: session-record\n---\n\n# 2026-06-30\n\n## Sessions\n\n"
                            "- session one.\n\n### Added late\n\n- session two.\n")
+    # A83: an EXEMPLAR of the merge draft shape the ingest skill now mandates — the whole note
+    # re-emitted, every incumbent line byte-identical, the new entries added into the incumbent's
+    # OWN sections. Additive-only, so it satisfies A43's superset check and takes the replace path.
+    draft("2026-07-01.md", "---\ntype: journal\n---\n\n# 2026-07-01\n\n## What We Built\n\n"
+                           "- morning session.\n- afternoon session.\n\n## Open Threads\n\n"
+                           "- thread one.\n- thread two.\n")
 
     def item(cid, ck, dp, stage="awaiting"):
         return {"id": cid, "stage": stage, "lane": "auto-ship", "conflict_key": ck,
@@ -50,6 +56,7 @@ try:
         item("it-journal", "dev/wiki/journal/2026-06-28.md", "03_Dev/wiki/staging/2026-06-28.md"),
         item("it-journal-fresh", "dev/wiki/journal/2026-06-29.md", "03_Dev/wiki/staging/2026-06-29.md"),
         item("it-journal-husk", "dev/wiki/journal/2026-06-30.md", "03_Dev/wiki/staging/2026-06-30.md"),
+        item("it-journal-a83", "dev/wiki/journal/2026-07-01.md", "03_Dev/wiki/staging/2026-07-01.md"),
         item("it-legacy", "dev/wiki/companies/legacyco.md", None),
         item("it-nodraft", "dev/wiki/companies/ghost.md", "03_Dev/wiki/staging/ghost.md"),
         item("it-badkb", "mystery/wiki/companies/x.md", "03_Dev/wiki/staging/godaddy.md"),
@@ -146,6 +153,33 @@ try:
           "### Added late" in husktext and "- session two." in husktext)
     check("A43 merge: superset re-draft still records merged:true + a pre-merge copy (revertible)",
           outh["merged"] is True and isinstance(outh.get("revert_pointer"), str))
+
+    # 4c. A83 — ship folds NOTHING on approval: whatever ingest stages is what a human reads
+    # forever, which is why A83's "pending gate confirmation" block shipped over confirmed content.
+    # HONEST SCOPE: A83's fix is model-facing prose in skills/ingest/SKILL.md, and no in-process
+    # test can execute a SKILL — revert that prose and this still passes. It is NOT an A83
+    # regression guard. What it does pin is the engine half of the contract the prose relies on:
+    # an additive-only whole-note re-draft takes the A43 superset -> replace path, so ship emits the
+    # draft's own bytes and injects no delimiter/gate comment of its own. The exemplar draft doubles
+    # as executable documentation of the shape ingest must stage.
+    ajtarget = os.path.join(vault, "03_Dev", "wiki", "journal", "2026-07-01.md")
+    open(ajtarget, "w", encoding="utf-8").write(
+        "# 2026-07-01\n\n## What We Built\n\n- morning session.\n\n## Open Threads\n\n- thread one.\n")
+    ra = run("ship", "--queue", queue, "--vault-root", vault, "--kb-map", kb_map,
+             "--id", "it-journal-a83", "--approved-by", "auto-ship-scheduled")
+    ajtext = open(ajtarget, encoding="utf-8").read()
+    outa = json.loads(ra.stdout.splitlines()[-1])
+    check("A83 merge: ships with no pending-confirmation heading and no gate-instruction comment",
+          ra.returncode == 0 and "pending gate confirmation" not in ajtext
+          and "<!--" not in ajtext and "merged by aios gate" not in ajtext)
+    check("A83 merge: the new entries land in the incumbent's real sections",
+          ajtext.index("- afternoon session.") > ajtext.index("## What We Built")
+          and ajtext.index("- afternoon session.") < ajtext.index("## Open Threads")
+          and ajtext.index("- thread two.") > ajtext.index("## Open Threads"))
+    check("A83 merge: incumbent kept verbatim once, exactly one H1, revertible (A43 replace path)",
+          sum(1 for ln in ajtext.splitlines() if ln.startswith("# ")) == 1
+          and ajtext.count("- morning session.") == 1 and ajtext.count("- thread one.") == 1
+          and outa["merged"] is True and isinstance(outa.get("revert_pointer"), str))
 
     # 5. ship refusals: no draft on disk; non-awaiting stage
     rn = run("ship", "--queue", queue, "--vault-root", vault, "--kb-map", kb_map,
