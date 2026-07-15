@@ -126,8 +126,17 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
         # off a Notion property (state-native). Kept fact-free: the rule + any lookup facts live in
         # the schema, never the engine. Each entry is (field_name, rule_spec_dict).
         computed = list((tdef.get("computed_fields") or {}).items())
+        # OPTIONAL `state_native:` (A80) — fields NO rule can reproduce (a hand-set link, not a
+        # snapshot property and not derivable from one), so the importer must carry them forward
+        # rather than rebuild them away. Fact-free: which fields qualify is the silo's call.
+        state_native = list(tdef.get("state_native") or [])
+        derived = {f[0] for f in fields} | {c[0] for c in computed}
+        clash = sorted(set(state_native) & derived)
+        if clash:
+            raise ValueError(f"[{tname}] state_native fields are also derived from the snapshot: "
+                             f"{clash} — a field cannot be both unreproducible and computed")
         tables.append({"name": tname, "source_db": tdef["notion_source_db"],
-                       "fields": fields, "computed": computed})
+                       "fields": fields, "computed": computed, "state_native": state_native})
     return {"state_dir": state_dir, "schema": schema, "tables": tables}
 
 
@@ -158,7 +167,21 @@ def compute_field(spec: dict, fm: dict):
     return "[[" + link.format(slug=out) + "]]" if link else out
 
 
-def build_record(table, row, url_to_slug, slug_maps, last_synced=None) -> tuple[str, str]:
+def _read_state_native(dest, keys) -> dict:
+    """The declared state-native keys present on an EXISTING record at `dest` (A80).
+
+    Absent file or absent key -> that key is simply not carried, so build_record omits it. That is
+    deliberate and evidence-led: a table's state-native field is routinely present on only SOME of
+    its records, and emitting `null` for the rest would rewrite records that are already correct.
+    A genuinely unreadable file raises out of read_text — failing loud is right, because carrying
+    nothing from a corrupt record is exactly the silent deletion this exists to prevent."""
+    if not keys or not dest.is_file():
+        return {}
+    fm = _extract_frontmatter(dest.read_text(encoding="utf-8"))
+    return {k: fm[k] for k in keys if k in fm}
+
+
+def build_record(table, row, url_to_slug, slug_maps, last_synced=None, preserved=None) -> tuple[str, str]:
     slug = url_to_slug[row["url"]]
     fm = {"type": table["name"]}
     for field, kind, link_tmpl, prop, rel_source in table["fields"]:
@@ -169,6 +192,12 @@ def build_record(table, row, url_to_slug, slug_maps, last_synced=None) -> tuple[
     # Computed (state-native) fields run AFTER the Notion-property fields so a rule can read them.
     for cfield, cspec in table["computed"]:
         fm[cfield] = compute_field(cspec, fm)
+    # state_native (A80): carried verbatim from the existing record — no rule can reproduce these,
+    # so rebuilding without them DELETES them. Emitted HERE, in the computed slot, because that is
+    # where they already sit on disk; any other position would churn every such record for nothing.
+    # `preserved` holds only keys that were actually present, so an absent one stays absent.
+    for _k, _v in (preserved or {}).items():
+        fm[_k] = _v
     notion_id = notion_id_from_url(row["url"])
     fm["notion_id"] = notion_id
     # Derivation, not a copy: the canonical notion_url is https://www.notion.so/<notion_id>.
@@ -218,7 +247,13 @@ def import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, la
         # reads — dir names are for humans and for the sync's reap scoping.
         tdir = out / table["source_db"]
         for row in data["rows"]:
-            slug, text = build_record(table, row, url_to_slug, slug_maps, last_synced=eff_last_synced)
+            # The slug is derived here as well as in build_record because the DESTINATION path is
+            # needed BEFORE the record is built: state_native carries forward from whatever is
+            # already there. Same expression, same fail-loud on an unmapped row url.
+            dest = tdir / f"{url_to_slug[row['url']]}.md"
+            preserved = _read_state_native(dest, table["state_native"])
+            slug, text = build_record(table, row, url_to_slug, slug_maps,
+                                      last_synced=eff_last_synced, preserved=preserved)
             dest = tdir / f"{slug}.md"
             if not dry_run:
                 tdir.mkdir(parents=True, exist_ok=True)

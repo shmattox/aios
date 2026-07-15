@@ -342,6 +342,71 @@ check("a72_regression_is_hermetic", _live_needle not in _self_src)
 check("a72_no_multiline_skip", _skip_needle not in _self_src)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# A80 — state_native: fields no rule can reproduce are carried forward, never rebuilt away.
+# Synthetic fixture silo; the engine stays fact-free (the field list lives in the schema).
+# ══════════════════════════════════════════════════════════════════════════════
+def _a80_silo(state_native_line):
+    root = Path(tempfile.mkdtemp())
+    (root / "profile").mkdir()
+    (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
+    sd = root / "state" / "domains" / "keep"
+    (sd / "tables").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(textwrap.dedent(f"""\
+        state-thing:
+          required: [name, type, notion_id]
+        {state_native_line}
+          notion_source_db: things
+          notion_fields:
+            name: [Name, title]
+            status: [Status, select]
+        """), encoding="utf-8")
+    return root, sd
+
+# config: the key is read, and defaults to [] when undeclared
+_r80, _sd80 = _a80_silo("  state_native: [curated]")
+_t80 = dm.load_silo_config(_r80, "keep")["tables"][0]
+check("a80_config_reads_key", _t80["state_native"] == ["curated"])
+_r80b, _sd80b = _a80_silo("")                        # no state_native declared at all
+check("a80_config_defaults_empty",
+      dm.load_silo_config(_r80b, "keep")["tables"][0]["state_native"] == [])
+
+# COLLISION: a field cannot be both unreproducible and read off the snapshot -> fail loud at LOAD
+_r80c, _sd80c = _a80_silo("  state_native: [status]")   # `status` is also a notion_field
+try:
+    dm.load_silo_config(_r80c, "keep")
+    check("a80_collision_raises", False)
+except ValueError as _e80:
+    check("a80_collision_raises", "status" in str(_e80))
+
+# carry-forward end-to-end on the fixture
+_snap80 = _sd80 / "_snap"; _snap80.mkdir()
+_write_export(_snap80 / "things-export.json",
+              [{"Name": "Widget", "Status": "old", "url": "https://n/w1"}],
+              {"https://n/w1": "widget"})
+_out80 = _sd80 / "tables"
+dm.import_silo(_r80, "keep", _snap80, _out80)
+check("a80_absent_key_omitted", "curated:" not in
+      (_out80 / "things" / "widget.md").read_text(encoding="utf-8"))   # nothing to carry -> OMITTED
+
+# now hand-author the state-native field, re-import with a CHANGED snapshot value, and prove:
+#   the curated field SURVIVES verbatim while its notion_fields sibling UPDATES.
+_w80 = _out80 / "things" / "widget.md"
+_w80.write_text(_w80.read_text(encoding="utf-8").replace(
+    "status: old", 'status: old\ncurated: "[[hand/authored]]"'), encoding="utf-8")
+_write_export(_snap80 / "things-export.json",
+              [{"Name": "Widget", "Status": "new", "url": "https://n/w1"}],
+              {"https://n/w1": "widget"})
+dm.import_silo(_r80, "keep", _snap80, _out80)
+_txt80 = _w80.read_text(encoding="utf-8")
+check("a80_state_native_survives_reimport", 'curated: "[[hand/authored]]"' in _txt80)
+check("a80_sibling_still_updates", "status: new" in _txt80)
+# and it lands in the COMPUTED SLOT: after the notion_fields, before the derived trio
+_keys80 = list(dm._extract_frontmatter(_txt80))
+check("a80_emitted_in_computed_slot",
+      _keys80.index("curated") > _keys80.index("status")
+      and _keys80.index("curated") < _keys80.index("notion_id"))
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ── A72/A53 REAL regression, HERMETIC: frozen exports -> records == frozen golden ──
 # Both sides are frozen: the dated FO exports in the family-office repo's migration dir, and the
 # `golden/` records extracted from env commit 81aaf14 (provenance + regeneration: that dir's
