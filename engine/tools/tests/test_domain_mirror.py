@@ -1,4 +1,4 @@
-import os, sys
+import os, re, sys
 from pathlib import Path
 _TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _TOOLS)
@@ -445,6 +445,49 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
             _mism.append((_tbl, _gen.name, list(_diffs)[:6]))
         else:
             _c[1] += 1
+    # ── Body contract (Plan 2). The comparison above is FRONTMATTER-ONLY, so body divergence has
+    # always been invisible here. The engine composes a body from the row's `Description` alone
+    # (build_record); the retired migrators additionally rendered a `# {Title}` heading + a
+    # boilerplate line. That heading is DERIVED and unread (state/domains is not in the vault), so
+    # it is deliberately not reproduced — but assert it, so a real body change can never hide.
+    # Excluded: records carrying generated DataviewJS view blocks, which a SEPARATE generator
+    # (state-mirror/views/render_entities_views.py) appends after import. They are regenerable and
+    # not Notion-derived. Plan 3 must re-run that generator after a sync or it strips them.
+    _VIEW_MARK = "generated relational views"
+    _BOILER = re.compile(r"^State-engine mirror of the Notion .* row\.$")
+
+    def _body(text):
+        parts = text.split("---", 2)
+        return parts[2] if len(parts) > 2 else ""
+
+    def _strip_derived(b):
+        keep = [ln for ln in b.split("\n")
+                if not ln.startswith("# ") and not _BOILER.match(ln.strip())]
+        return "\n".join(keep).strip()
+
+    _body_ok, _body_bad, _body_skipped = 0, [], 0
+    for _gen in _out.rglob("*.md"):
+        # Same fix as the frontmatter loop above: the table is the record's PARENT DIR relative to
+        # _out (not just its first path segment), so a nested source_db like "logs/change-log"
+        # resolves correctly instead of truncating to "logs" and silently missing its golden dir.
+        _tbl = _gen.parent.relative_to(_out).as_posix()
+        _gold = _GOLDEN / _tbl / _gen.name
+        if not _gold.is_file():
+            continue
+        _gold_text = _gold.read_text(encoding="utf-8")
+        if _VIEW_MARK in _gold_text:
+            _body_skipped += 1
+            continue
+        if _body(_gen.read_text(encoding="utf-8")).strip() == _strip_derived(_body(_gold_text)):
+            _body_ok += 1
+        else:
+            _body_bad.append((_tbl, _gen.name))
+    check("fo_body_substance_preserved", not _body_bad)
+    print(f"FO body contract: {_body_ok} substance-equal, {len(_body_bad)} divergent, "
+          f"{_body_skipped} skipped (generated view blocks)")
+    if _body_bad:
+        print("FO body divergences (first 6):", _body_bad[:6])
+
     _req_fail = [m for m in _mism if m[0] in _REQUIRED] + [b for b in _bad_extra if b[0] in _REQUIRED]
     check("fo_semantic_equivalence_required", not _req_fail)
     check("fo_semantic_equivalence_all", not _mism and not _bad_extra)
