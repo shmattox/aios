@@ -428,3 +428,34 @@ def test_render_factory_standup_surfaces_parse_errors():
     out = R.render_factory_standup(data)
     assert "Factory Standup" in out and "parse errors" in out and "boom" in out
     assert "nothing waiting" not in out
+
+
+# --- A73 Task 5: standup panel renders factory+gate acceptance ---
+
+def test_standup_renders_acceptance_lines():
+    data = {"groups": {}, "errors": [], "spend": {},
+            "acceptance": {"window_days": 30,
+                           "factory": {"accepted": 12, "reverted": 1, "unknown_sha": 2,
+                                       "spend_usd": 49.4, "usd_per_accepted": 4.12,
+                                       "reverted_ids": ["A65"]},
+                           "gate": {"n": 123, "accepted": 113, "rejected": 8, "reverted": 2,
+                                    "spend_usd": 68.9, "usd_per_accepted": 0.61}}}
+    out = R.render_factory_standup(data)
+    assert "📊 factory acceptance (30d): 12 shipped / 1 reverted / 2 unknown-sha → $4.12/accepted" in out
+    assert "reverted: A65" in out
+    assert "📊 gate acceptance (30d): 92% (113/123) · $0.61/accepted" in out
+
+
+def test_standup_acceptance_gate_note_renders_loud():
+    data = {"groups": {}, "errors": [], "spend": {},
+            "acceptance": {"window_days": 30,
+                           "factory": {"accepted": 0, "reverted": 0, "unknown_sha": 0,
+                                       "spend_usd": 0.0, "usd_per_accepted": None, "reverted_ids": []},
+                           "gate": {"note": "gate metrics JSON absent — run gate_metrics.py report"}}}
+    out = R.render_factory_standup(data)
+    assert "gate acceptance: unavailable — gate metrics JSON absent" in out
+
+
+def test_standup_empty_state_line_unchanged_without_acceptance():
+    out = R.render_factory_standup({"groups": {}, "errors": [], "spend": {}})
+    assert out == "🏭 Factory Standup — nothing waiting (backlogs drained clean)."

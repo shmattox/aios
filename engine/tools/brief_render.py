@@ -287,7 +287,10 @@ def render_factory_standup(data):
     errs = data.get("errors", [])
     sp = data.get("spend") or {}
     has_spend = bool(sp.get("output_tokens") or sp.get("cost_usd"))
-    if not any(g.get(k) for k in ("veto", "needs_you", "handed_off", "stuck")) and not errs and not has_spend:
+    acc0 = data.get("acceptance") or {}
+    has_acc = bool(acc0.get("factory") or acc0.get("gate"))
+    if not any(g.get(k) for k in ("veto", "needs_you", "handed_off", "stuck")) and not errs \
+            and not has_spend and not has_acc:
         return "🏭 Factory Standup — nothing waiting (backlogs drained clean)."
     lines = ["🏭 Factory Standup"]
     def _emit(sym, label, items, fmt):
@@ -313,6 +316,27 @@ def render_factory_standup(data):
         if cap:
             line += f" (soft cap {cap:,})"
         lines.append(line + (" ⚠ OVER SOFT-CAP" if sp.get("over_cap") else ""))
+    acc = data.get("acceptance") or {}
+    fa, ga = acc.get("factory"), acc.get("gate")
+    if fa:
+        w = acc.get("window_days", 30)
+        line = (f"  📊 factory acceptance ({w}d): {fa.get('accepted', 0)} shipped / "
+                f"{fa.get('reverted', 0)} reverted / {fa.get('unknown_sha', 0)} unknown-sha")
+        if fa.get("usd_per_accepted") is not None:
+            line += f" → ${fa['usd_per_accepted']:,.2f}/accepted"
+        lines.append(line)
+        if fa.get("reverted_ids"):
+            lines.append("     reverted: " + ", ".join(fa["reverted_ids"]))
+    if ga:
+        w = acc.get("window_days", 30)
+        if "note" in ga:
+            lines.append(f"  📊 gate acceptance: unavailable — {ga['note']}")
+        elif ga.get("n"):
+            pct = round(100 * ga.get("accepted", 0) / ga["n"])
+            line = f"  📊 gate acceptance ({w}d): {pct}% ({ga.get('accepted', 0)}/{ga['n']})"
+            if ga.get("usd_per_accepted") is not None:
+                line += f" · ${ga['usd_per_accepted']:,.2f}/accepted"
+            lines.append(line)
     return "\n".join(lines)
 
 

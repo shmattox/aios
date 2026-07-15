@@ -218,6 +218,15 @@ silo brief too, never only at root:
   (the settle station's own empty case is "nothing to settle" — see `# Stage 0 — Settle`).
 - **Echo the scope in the render-time masthead** — `Family Office · as of {generated_utc}` scoped,
   `All silos · as of …` for root.
+- **Dev scope ONLY — gate acceptance metrics (A73).** Run the A73 gate-acceptance metrics
+  (deterministic; lift `render` output verbatim):
+  ```
+  python "${CLAUDE_PLUGIN_ROOT}/engine/tools/gate_metrics.py" report --queue "<env_root>/state/queue.json" \
+    --today <today> --out "<env_root>/state/factory/gate-metrics.json"
+  python "${CLAUDE_PLUGIN_ROOT}/engine/tools/gate_metrics.py" render --queue "<env_root>/state/queue.json" --today <today>
+  ```
+  If the tool prints "metrics unavailable", lift that line as-is — never substitute zeros.
+  (Capture the output as UTF-8 — the tool emits UTF-8 regardless of locale.)
 - **Dev scope ONLY — the Factory Standup panel.** During the gather for a `dev` (or root `all`)
   walk, ensure `<env_root>/state/factory/standup.json` is current — refresh it by running (read-only)
   `python Scripts/factory-gate/factory_standup.py --root <env_root> --today <today>` — no scheduled job
