@@ -323,26 +323,39 @@ _alpha_dir = _sd6 / "tables" / "state-alpha"
 check("a53_badrel_no_partial_write",              # the valid first table must NOT have been written
       not _alpha_dir.exists() or not any(_alpha_dir.glob("*.md")))
 
-# ── Task-4 REAL regression: FO Notion snapshots -> state records, semantic equivalence ──
-# Runs UNCONDITIONALLY against the real FO snapshots (only guard: snapshot/schema absence, e.g. a
-# laptop with no family-office clone). Comparison uses the ENGINE's own reader,
-# dm._extract_frontmatter — no PyYAML. The reader now decodes YAML escapes quote-style-aware
-# (state_validate._unquote: single-quoted '' -> ', double-quoted \n/\t/\"/\\), so a shipped value
-# in YAML single-quoted style and the generated double-quoted form de-serialize to the SAME literal.
-# Both sides are read by the same reader, so the comparison is a true semantic equivalence check on
-# the engine's terms; state_validate.py --all is also run over the generated tree (must exit 0).
+# ── A72 tripwire: the FO regression must stay HERMETIC — both sides frozen. An edit that
+# reattaches the comparison (or the slug-map reconstruction) to the LIVE mirror re-creates the
+# exact defect A72 fixed: live operational data changing turns the CODE suite red. This is a
+# tripwire on the live-tree handle, not a proof of hermeticity — cheap, and it catches the
+# obvious regression. `_FO_SCHEMA_DIR` is the live dir but reaches ONLY schema.yaml (the field
+# mapping IS what's under test); the live *records* must never be read.
+# The needles are built by concatenation so this guard's own source cannot match them.
+_self_src = Path(__file__).read_text(encoding="utf-8")
+_live_needle = "_FO_" + "STATE"                # the retired live-record-tree handle
+_skip_needle = "_has_" + "multiline_scalar"    # vestigial since A53 taught the reader flow-folding
+check("a72_regression_is_hermetic", _live_needle not in _self_src)
+check("a72_no_multiline_skip", _skip_needle not in _self_src)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── A72/A53 REAL regression, HERMETIC: frozen exports -> records == frozen golden ──
+# Both sides are frozen: the dated FO exports in the family-office repo's migration dir, and the
+# `golden/` records extracted from env commit 81aaf14 (provenance + regeneration: that dir's
+# README). This proves the importer's field mapping against REAL Notion data, deterministically,
+# forever — the real-data coverage a plain deletion of this block would have discarded (A53).
 #
-# ONE reader-grammar boundary remains: a shipped value written as a MULTI-LINE quoted (flow-folded)
-# scalar is outside the stdlib subset reader's single-line grammar (the module documents that it
-# does not parse block/folded scalars). Records carrying such a value are detected structurally and
-# excluded from the field comparison (counted + printed) — this is a reader limitation, NOT a
-# field-mapping error; the affected record's economic fields still validate.
+# It deliberately never reads the LIVE state/domains/familyoffice tree. Under the derived-mirror
+# contract those records are OUTPUT refreshed from Notion, so asserting them equal to a frozen
+# export asserts that operational data never changes — which is what made this test red (A72).
+#
+# Only guard: the family-office clone's absence (e.g. a laptop without it) — the hermetic fixture
+# proofs above still stand there.
 import glob as _glob, subprocess
-_FO_SNAP = Path(_TOOLS).resolve().parents[2] / "family-office" / "state-mirror" / "migration"
+_FO_MIG = Path(_TOOLS).resolve().parents[2] / "family-office" / "state-mirror" / "migration"
+_GOLDEN = _FO_MIG / "golden"
 _ENV_ROOT = Path(_TOOLS).resolve().parents[2].parent
-_FO_STATE = _ENV_ROOT / "state" / "domains" / "familyoffice"
-if _FO_SNAP.is_dir() and (_FO_STATE / "schema.yaml").is_file():
-    _load_fm = dm._extract_frontmatter    # the engine's own stdlib reader (now escape-decoding)
+_FO_SCHEMA_DIR = _ENV_ROOT / "state" / "domains" / "familyoffice"
+if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
+    _load_fm = dm._extract_frontmatter          # the engine's own stdlib reader
 
     def _nv(v):
         # A length-1 relation list is the migrator's collapsed scalar (semantically identical).
@@ -351,55 +364,21 @@ if _FO_SNAP.is_dir() and (_FO_STATE / "schema.yaml").is_file():
     def _norm(fm):
         return {k: _nv(v) for k, v in fm.items()}
 
-    def _closed_on_line(v):
-        # True iff the quoted scalar `v` (v[0] in "'\"") is terminated on its own physical line.
-        q = v[0]; i = 1; n = len(v)
-        while i < n:
-            if q == '"':
-                if v[i] == "\\":
-                    i += 2; continue
-                if v[i] == '"':
-                    return True
-            else:  # single-quoted: a lone ' closes; '' is an escaped quote
-                if v[i] == "'":
-                    if i + 1 < n and v[i + 1] == "'":
-                        i += 2; continue
-                    return True
-            i += 1
-        return False
-
-    def _has_multiline_scalar(text):
-        # A shipped frontmatter value that OPENS a quote it does not close on its own line is a
-        # multi-line flow-folded scalar — outside the subset reader's grammar.
-        L = text.splitlines()
-        try:
-            end = L.index("---", 1)
-        except ValueError:
-            return False
-        for line in L[1:end]:
-            if ":" not in line:
-                continue
-            v = line.partition(":")[2].strip()
-            if v[:1] in ("'", '"') and not _closed_on_line(v):
-                return True
-        return False
-
     _cfg = dm.load_silo_config(_ENV_ROOT, "familyoffice")
     _name2db = {t["name"]: t["source_db"] for t in _cfg["tables"]}
-    # Normalize the dated FO exports into a scratch snapshot dir the importer's contract expects:
-    #  - filename <db>-notion-export-<DATE>.json -> <db>-export.json
+    # Normalize the dated exports into the snapshot shape the importer's contract expects:
+    #  - <db>-notion-export-<DATE>.json -> <db>-export.json
     #  - inject _meta.exported=<DATE> (drives last_synced; the tax-ledger export carries no _meta)
-    #  - reconstruct url_to_slug (the slug decisions the snapshot contract carries) from the shipped
-    #    records' own notion_id->filename where an older export predates emitting one; the entities
-    #    export already carries an authentic url_to_slug and is used as-is.
-    # CAVEAT: for the reconstructed tables (notes/people/insurance/tax-ledger) the filename/slug
-    # derivation is thus NOT independently proven here (it is taken from the shipped filenames);
-    # what IS proven for them is field-mapping equivalence of the frontmatter. entities exercises a
-    # real, authentic url_to_slug end-to-end.
+    #  - reconstruct url_to_slug from the GOLDEN records' notion_id->filename where an older export
+    #    predates carrying one; the entities export carries an authentic url_to_slug, used as-is.
+    # Reconstructing from GOLDEN (not the live tree) is what makes this hermetic.
+    # CAVEAT (unchanged from A53): for the reconstructed tables the slug DERIVATION is not
+    # independently proven here (it is taken from the frozen filenames); what IS proven for them is
+    # field-mapping equivalence. `entities` exercises a real url_to_slug end-to-end.
     _snap = Path(tempfile.mkdtemp())
     for _t in _cfg["tables"]:
         _db = _t["source_db"]
-        _fs = _glob.glob(str(_FO_SNAP / f"{_db}-notion-export-*.json"))
+        _fs = _glob.glob(str(_FO_MIG / f"{_db}-notion-export-*.json"))
         if not _fs:
             continue
         _f = _fs[0]
@@ -411,7 +390,7 @@ if _FO_SNAP.is_dir() and (_FO_STATE / "schema.yaml").is_file():
         _u2s = _d.get("url_to_slug")
         if not _u2s:
             _n2s = {}
-            for _p in (_FO_STATE / "tables" / _db).glob("*.md"):
+            for _p in (_GOLDEN / _db).glob("*.md"):
                 _nid = _load_fm(_p.read_text(encoding="utf-8")).get("notion_id")
                 if _nid is not None:
                     _n2s[str(_nid)] = _p.stem
@@ -423,25 +402,29 @@ if _FO_SNAP.is_dir() and (_FO_STATE / "schema.yaml").is_file():
     _out = Path(tempfile.mkdtemp()) / "tables"
     dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out, last_synced="2026-06-30")
 
-    _REQUIRED = {"state-entity", "state-note"}          # must reach equivalence (scope-narrowed)
-    _CURATED = {"wiki", "owner_entity", "asset"}        # shipped-only state-native curation, out of scope
-    _mism, _bad_extra, _counts, _skipped = [], [], {}, []
+    # A mapped table with no golden dir is a STALE fixture (a new mapping landed — Plan 2). Fail
+    # loud with the fix, never silently compare nothing.
+    _nogold = sorted(db for db in {t["source_db"] for t in _cfg["tables"]}
+                     if not (_GOLDEN / db).is_dir())
+    check("fo_golden_covers_mapped_tables", not _nogold)
+    if _nogold:
+        print("FO golden fixture STALE — mapped tables with no golden dir:", _nogold)
+        print("  regenerate: python Projects/family-office/state-mirror/migration/extract_golden.py")
+
+    _REQUIRED = {"state-entity", "state-note"}      # must reach equivalence (scope-narrowed)
+    _CURATED = {"wiki", "owner_entity", "asset"}    # golden-only state-native curation, out of scope
+    _mism, _bad_extra, _counts = [], [], {}
     for _gen in _out.rglob("*.md"):
         _tbl = _gen.relative_to(_out).parts[0]
-        _shipped = _FO_STATE / "tables" / _name2db[_tbl] / _gen.name
-        _c = _counts.setdefault(_tbl, [0, 0, 0])         # [n, equal, skipped_multiline]
+        _gold = _GOLDEN / _name2db[_tbl] / _gen.name
+        _c = _counts.setdefault(_tbl, [0, 0])        # [n, equal]
         _c[0] += 1
-        if not _shipped.is_file():
-            _mism.append((_tbl, _gen.name, "no shipped file")); continue
-        _shipped_text = _shipped.read_text(encoding="utf-8")
-        if _has_multiline_scalar(_shipped_text):
-            # Shipped record carries a multi-line flow-folded scalar (block-scalar territory the
-            # stdlib subset reader documents as out of scope). Excluded from the field comparison.
-            _c[2] += 1; _skipped.append((_tbl, _gen.name)); continue
+        if not _gold.is_file():
+            _mism.append((_tbl, _gen.name, "no golden file")); continue
         _g = _norm(_load_fm(_gen.read_text(encoding="utf-8")))
-        _s = _norm(_load_fm(_shipped_text))
+        _s = _norm(_load_fm(_gold.read_text(encoding="utf-8")))
         _diffs = {k: (_g.get(k), _s.get(k)) for k in _g if _g.get(k) != _s.get(k)}
-        _unexpected = (set(_s) - set(_g)) - _CURATED     # a shipped Notion field we forgot to map
+        _unexpected = (set(_s) - set(_g)) - _CURATED  # a golden field we forgot to map
         if _unexpected:
             _bad_extra.append((_tbl, _gen.name, sorted(_unexpected)))
         if _diffs:
@@ -452,23 +435,21 @@ if _FO_SNAP.is_dir() and (_FO_STATE / "schema.yaml").is_file():
     check("fo_semantic_equivalence_required", not _req_fail)
     check("fo_semantic_equivalence_all", not _mism and not _bad_extra)
     for _tbl in sorted(_counts):
-        _n, _ok, _sk = _counts[_tbl]
-        print(f"FO equivalence {_tbl}: {_ok}/{_n - _sk} compared" + (f" ({_sk} multiline-scalar skipped)" if _sk else ""))
-    if _skipped:
-        print("FO multiline-scalar records excluded (reader-grammar limit):", _skipped)
+        _n, _ok = _counts[_tbl]
+        print(f"FO golden equivalence {_tbl}: {_ok}/{_n} compared")
     if _mism:
         print("FO mismatches (first 6):", _mism[:6])
     if _bad_extra:
-        print("FO unexpected shipped-only keys:", _bad_extra[:6])
+        print("FO unexpected golden-only keys:", _bad_extra[:6])
 
     _r = subprocess.run([sys.executable, os.path.join(_TOOLS, "state_validate.py"),
-                         "--schema", str(_FO_STATE / "schema.yaml"), "--all", str(_out)],
+                         "--schema", str(_FO_SCHEMA_DIR / "schema.yaml"), "--all", str(_out)],
                         capture_output=True, text=True)
     check("fo_validator_pass", _r.returncode == 0)
     if _r.returncode != 0:
         print("FO validator output:", _r.stdout[-500:])
 else:
-    print("FO snapshots absent — skipping real regression (fixture proofs stand)")
+    print("FO golden absent — skipping real regression (fixture proofs stand)")
 
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
