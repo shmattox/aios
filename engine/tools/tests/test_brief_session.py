@@ -577,3 +577,35 @@ def test_validate_cache_act_item_bad_grade_reuses_station_rule():
 def test_validate_cache_act_absent_is_valid():
     ok, errs = bs.validate_cache(dict(_MIN))
     assert ok, errs
+
+
+# ── validate_cache: standup delta -> stations.gm conservation (A88 / Task 7) ────────
+# The brief printed "21 need you" from standup.json's delta while the walk rendered four
+# unrelated cards from the cache, and nothing compared them. A delta item with no card in
+# stations.gm is a silent drop — assert it.
+
+def test_validate_cache_fails_when_a_delta_item_has_no_card():
+    standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"},
+                         {"repo": "aios", "id": "A69", "title": "Reflect lessons"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
+                          "gm": [{"item_id": "H54", "title": "Retirement sweep", "domain": "gm",
+                                  "claude_voice": {"text": "c"}, "system_voice": None}]},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 1},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert not ok
+    joined = " ".join(errs)
+    assert "unaccounted" in joined and "A69" in joined, joined
+
+
+def test_validate_cache_passes_when_every_delta_item_has_a_card():
+    standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
+                          "gm": [{"item_id": "H54", "title": "Retirement sweep", "domain": "gm",
+                                  "claude_voice": {"text": "c"}, "system_voice": None}]},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 1},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert ok, errs

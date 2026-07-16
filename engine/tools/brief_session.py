@@ -52,7 +52,7 @@ CLI (same interface style as queue_tx.py — called from SKILL.md prose):
   python brief_session.py record_deferral <state_path> <item_id> <station> <reason> <deferred_on> [--title T]
   python brief_session.py advance     <state_path>
   python brief_session.py start_over  <state_path> <archive_dir>
-  python brief_session.py validate_cache <cache_json_path>
+  python brief_session.py validate_cache <cache_json_path> --domains a,b,c [--standup standup.json]
 """
 import json
 import os
@@ -352,7 +352,7 @@ def _validate_system_voice(sv, prefix):
     return errs
 
 
-def validate_cache(cache_obj, required_domains=None):
+def validate_cache(cache_obj, required_domains=None, standup=None):
     """Validate a brief-cache.json payload for the new stations/station_counts keys (spec §3.2).
 
     Returns (ok: bool, errors: list[str]).
@@ -366,6 +366,9 @@ def validate_cache(cache_obj, required_domains=None):
         - grade in {"1", "2a", "2b"}
         - text
         - cite for grades "1" and "2a" (required); for "2b" cite is optional
+    - standup (optional): a parsed state/factory/standup.json dict. When given, every item in
+      its `delta` list must have a matching card in stations["gm"] (matched by id) — the
+      standup->station hand-off that used to silently drop items (A88/Task 7).
     """
     errors = []
 
@@ -446,6 +449,20 @@ def validate_cache(cache_obj, required_domains=None):
                 if not isinstance(cv, dict) or not cv.get("text"):
                     errors.append(f"{prefix}: missing claude_voice.text")
                 errors.extend(_validate_system_voice(item.get("system_voice"), prefix))
+
+    # A88 (A3): conservation across the standup -> station hand-off. The brief used to print
+    # "21 need you" from standup.json while the walk rendered four unrelated cards from the cache,
+    # and nothing compared them. A delta item with no card is a silent drop.
+    if standup:
+        delta = standup.get("delta") or []
+        carded = {str(i.get("item_id") or i.get("id") or "")
+                  for i in (cache_obj.get("stations", {}).get("gm") or [])}
+        missing = [i for i in delta if str(i.get("id") or "") not in carded]
+        if missing:
+            errors.append(
+                "standup delta %d · stations.gm %d · %d unaccounted: %s"
+                % (len(delta), len(carded), len(missing),
+                   ", ".join(str(i.get("id") or i.get("title")) for i in missing)))
 
     # settle block (optional; when present, candidates must be well-formed)
     SETTLE_TRANSITIONS = {"done", "in_progress", "due_rolled"}
@@ -766,7 +783,11 @@ if __name__ == "__main__":
         if obj is None:
             print("FAIL: could not parse cache JSON")
             sys.exit(1)
-        ok, errs = validate_cache(obj, required_domains=req)
+        standup_obj = None
+        if "--standup" in rest:
+            with open(rest[rest.index("--standup") + 1], encoding="utf-8") as f:
+                standup_obj = json.load(f)
+        ok, errs = validate_cache(obj, required_domains=req, standup=standup_obj)
         if ok:
             print("OK")
         else:
