@@ -5,3 +5,4 @@ __pycache__/
 
 # A65 — derived, machine-local, regenerable embedding cache (rebuilds from content hashes)
 state/garden/embeddings/
+.worktrees/
