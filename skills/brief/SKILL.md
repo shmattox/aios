@@ -406,7 +406,11 @@ it looks complete (A49); `ℹ resolve steady-state …` (A60) = the unresolved w
 card about resolve candidate quality (`references/gather.md`). No line = resolve complete and the sweep is fresh.
 
 ## VERIFY step (before reporting success for any walk session)
-Run `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" validate_cache <env_root>/state/brief-cache.json --domains <the profile's domain-group keys, comma-separated>` — the explicit list catches a gather that dropped a whole silo (the bare structural mode can't). Any INVALID output → do NOT present the brief; surface the error and re-gather (fix the data, not the render).
+Run `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" validate_cache
+<env_root>/state/brief-cache.json --domains <the profile's domain-group keys, comma-separated>
+--standup <env_root>/state/factory/standup.json` — `--domains` is REQUIRED (without it the
+expected set is derived from the cache itself, so a dropped silo validates OK) and `--standup`
+asserts every delta item has a card. Any INVALID output → do NOT present the brief; surface the error and re-gather (fix the data, not the render).
 
 Data gate + format gate = the two-layer block cannot be dropped: `validate_cache` guarantees the data
 (every item has `claude_voice.text` + a valid/absent `system_voice`), the renderer guarantees the
@@ -468,7 +472,7 @@ the **⏳ In-motion** track. Emit that track directly under Act by lifting `brie
 A/B buttons). This is what stops worked items re-surfacing cold — the `in_motion` field is written at
 gather by `brief_threads.py annotate` (`## Cache contract` in `references/gather.md`). *Track* = quiet
 reference below: State-by-domain (a one-line pointer into Notion — never rebuild the dashboard) and the
-Phase-A review panel. The legacy content (Needs you · Review panel · Flags · Going quiet · State) is unchanged;
+Phase-A review panel. The legacy content (Act · Review panel · Flags · Going quiet · State) is unchanged;
 Act-vs-Track is how it's arranged. `conversational` surface renders this as prose; `widget` as the inline cockpit.
 
 # Phase A review panel — the Stage 1 approval surface (held KB drafts)

@@ -68,6 +68,18 @@ For each domain group in `domains.yaml`, in parallel:
    System card when `check` is LOUD (`⚠ resolve INCOMPLETE`) or `⚠ … DEGRADED` — a genuinely new or
    worsening state. The counter lives in `sweep-status.json` (`candidates_unchanged_days`), written
    by the sweep; the brief only reads the tool's verdict, never re-derives it.
+5. **Dev slice — the item SET is CODE's, the VOICE is yours (A88).** Do NOT read the backlogs to
+   decide which Dev items exist — `factory_standup` already derived that from the same files, and a
+   model re-derivation racing the code one is exactly what went stale three times on 2026-07-15.
+   Refresh the standup (read-only):
+
+       python Scripts/factory-gate/factory_standup.py --root <env_root> --today <today>
+
+   Then take `delta[]` from `<env_root>/state/factory/standup.json` as the Dev station's item set —
+   one card per delta item, in the order given. Author ONLY the graded two-layer voice for each
+   (`system_voice` + `claude_voice`); the item's identity, group, and reason come from the standup.
+   Lift `brief_render.render_unchanged_line(standup)` verbatim beneath the cards. `headline_bubbles`
+   is `brief_render.compute_headline_bubbles(cache, standup)` — never hand-typed.
 
 ## Cache contract — the two files (the tail of EVERY full gather)
 

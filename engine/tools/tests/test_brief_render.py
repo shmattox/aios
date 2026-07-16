@@ -498,3 +498,11 @@ def test_headline_bubbles_cannot_disagree_with_act():
     cache = {"act": [], "held": [], "flags": [], "going_quiet": [],
              "settle": {"auto_healed": [], "candidates": []}}
     assert R.compute_headline_bubbles(cache)[0] == "0 need you"
+
+
+# --- Task 9: render_unchanged_line — the quiet "N unchanged" line ---
+
+def test_unchanged_line_is_quiet_and_countable():
+    assert R.render_unchanged_line({"unchanged": [{"id": "H1"}, {"id": "H2"}]}) \
+        == "· 2 unchanged · walk them"
+    assert R.render_unchanged_line({"unchanged": []}) == ""

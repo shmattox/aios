@@ -212,6 +212,13 @@ def compute_headline_bubbles(cache, standup=None):
     return bubbles
 
 
+def render_unchanged_line(standup):
+    """One quiet line for the decision queue's steady state — A60's posture: quiet when nothing
+    moved, loud on a real change. Empty string when everything is delta (nothing to suppress)."""
+    n = len(standup.get("unchanged") or [])
+    return "· %d unchanged · walk them" % n if n else ""
+
+
 def _load(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
