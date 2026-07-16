@@ -78,9 +78,14 @@ For each domain group in `domains.yaml`, in parallel:
    Then take `delta[]` from `<env_root>/state/factory/standup.json` as the Dev station's item set —
    one card per delta item, in the order given. Author ONLY the graded two-layer voice for each
    (`system_voice` + `claude_voice`); the item's identity, group, and reason come from the standup.
-   Lift `brief_render.render_unchanged_line(standup)` verbatim beneath the cards. `headline_bubbles`
-   is COMPUTED by the `brief_render.py headline` op (pass the standup path) — never hand-typed; see
-   the `## Cache contract` section below for the command and the gate that enforces it.
+   Lift the unchanged-line VERBATIM from the `brief_render.py unchanged` op beneath the cards —
+   never hand-type the count (A8: the op exists so the "lift verbatim" rule is actually runnable):
+
+       python engine/tools/brief_render.py unchanged <env_root>/state/factory/standup.json
+
+   `headline_bubbles` is likewise COMPUTED by the `brief_render.py headline` op (pass the standup
+   path) — never hand-typed; see the `## Cache contract` section below for the command and the gate
+   that enforces it.
 
 ## Cache contract — the two files (the tail of EVERY full gather)
 

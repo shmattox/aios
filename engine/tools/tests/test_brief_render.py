@@ -553,3 +553,70 @@ def test_unchanged_line_is_quiet_and_countable():
     assert R.render_unchanged_line({"unchanged": [{"id": "H1"}, {"id": "H2"}]}) \
         == "· 2 unchanged · walk them"
     assert R.render_unchanged_line({"unchanged": []}) == ""
+
+
+# --- FIX 1: the chip counts the RENDERED (court-filtered) Act rows, not len(act) ---
+
+def _seven_act_two_waiting():
+    """7 raw act items; 2 route to the ⏳In-motion track (court others/done) so only 5 render as
+    Act rows — the exact live 2026-07-15 shape the 'corrected' 5/7/21 finding describes."""
+    act = [{"id": "you-%d" % i, "title": "you%d" % i, "domain": "gm",
+            "claude_voice": {"text": "c"}, "system_voice": None} for i in range(5)]
+    act.append({"id": "w1", "title": "waiting1", "domain": "gm", "claude_voice": {"text": "c"},
+                "system_voice": None, "in_motion": {"court": "others", "next_action": "sig"}})
+    act.append({"id": "w2", "title": "waiting2", "domain": "gm", "claude_voice": {"text": "c"},
+                "system_voice": None, "in_motion": {"court": "done"}})
+    return act
+
+
+def test_headline_chip_counts_rendered_act_rows_not_len_act():
+    # CORRECTED 5/7/21: raw act=7, but 2 are court-filtered to In-motion, so 5 render as Act. The
+    # chip must count what the reader SEES ("5 need you"), NOT len(act) ("7"). Before the _act_rows
+    # fix, compute_headline_bubbles returned "7 need you" over a 5-row list.
+    act = _seven_act_two_waiting()
+    cache = {"act": act, "held": [], "flags": [], "going_quiet": [],
+             "settle": {"auto_healed": [], "candidates": []}}
+    assert len(act) == 7                       # raw list still holds 7
+    assert len(R._act_rows(cache)) == 5        # but only 5 render as Act rows
+    assert R.compute_headline_bubbles(cache)[0] == "5 need you"
+    # the chip's count equals the rows render_overview actually emits (the load-bearing sync)
+    rendered = R.render_overview(cache)
+    assert "waiting1" not in rendered and "waiting2" not in rendered
+    assert "waiting1" in R.render_in_motion(cache)  # the 2 are shown, in the In-motion track
+
+
+# --- FIX 3 (A8): render_unchanged_line reachable via a CLI op ---
+
+def test_cli_unchanged_op_round_trips_the_unchanged_line():
+    # A8: gather.md tells the model to "Lift render_unchanged_line(standup) verbatim", but the
+    # function had no CLI op, so the count got hand-typed. This op is how the brief obtains the
+    # line — its stdout is what gets lifted. Before the op existed, `unchanged` printed
+    # "unknown op" to stderr and returned 2.
+    import subprocess, tempfile
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    sp = os.path.join(tempfile.mkdtemp(), "standup.json")
+    standup = {"unchanged": [{"id": "H1"}, {"id": "H2"}, {"id": "H3"}]}
+    with open(sp, "w", encoding="utf-8") as f:
+        json.dump(standup, f)
+    proc = subprocess.run([sys.executable, tool, "unchanged", sp],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, proc.stderr
+    # the op's stdout is lifted verbatim -> it MUST equal the function's own output
+    assert proc.stdout.strip() == R.render_unchanged_line(standup)
+    assert proc.stdout.strip() == "· 3 unchanged · walk them"
+
+
+# --- FIX 3 (A8/A5): the census `unparsed` count is surfaced in the standup panel ---
+
+def test_render_factory_standup_surfaces_unparsed_census():
+    # A8/A5: the collector computed `unparsed` (## Watching-class bullets invisible to the queue)
+    # but NOTHING rendered it (write-only). It must surface in the panel — the natural human home.
+    # Before the fix, an all-groups-empty standup with unparsed=60 rendered "nothing waiting".
+    data = {"groups": {"veto": [], "needs_you": [], "handed_off": [], "stuck": []},
+            "totals": {"veto": 0, "needs_you": 0, "handed_off": 0, "stuck": 0},
+            "census": {"parsed": 5, "grouped": 3, "drainable": 2,
+                       "unparsed": 60, "unparsed_titles": ["A80 tail: verify", "H68 residual"]}}
+    out = R.render_factory_standup(data)
+    assert "60 unparsed" in out
+    assert "A80 tail" in out
+    assert "nothing waiting" not in out.lower()   # the panel renders, it is not the empty state

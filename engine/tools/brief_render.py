@@ -148,14 +148,24 @@ def _court(item):
     return im.get("court") if isinstance(im, dict) else None
 
 
+def _act_rows(cache):
+    """The RENDERED Act set — act items MINUS those routed to the ⏳In-motion track (court
+    'others'/'done', the v0.4.1 Act/In-motion split). This is the ONE predicate for "what is an
+    Act row": render_overview AND compute_headline_bubbles both derive from it, so the masthead
+    chip can never disagree with the rows the reader sees. The 5/7/21 bug was exactly a chip
+    (`len(act)`=7) computed off a different predicate than the render (5 court-filtered rows);
+    if these two ever compute the Act set differently again, THAT divergence is the bug.
+    Act is the catch-all: only genuinely-routed courts (others/done) leave it, so an unknown or
+    malformed court degrades to visible-in-Act rather than vanishing from both surfaces."""
+    return [i for i in (cache.get("act") or []) if _court(i) not in ("others", "done")]
+
+
 def render_overview(cache, limit=None):
     """The merged Act list from cache['act'] — items that still need YOUR move: no linked
     thread, or an open one (court 'you'). Waiting ('others') and done ('done') items are routed
     out to render_in_motion. limit (optional int) caps the rows — the caller's '≈5 view-more' cut."""
     dm = cache.get("domain_display")
-    # Act is the catch-all: only genuinely-routed courts (others/done) leave it, so an unknown or
-    # malformed court degrades to visible-in-Act rather than vanishing from both surfaces.
-    items = [i for i in (cache.get("act") or []) if _court(i) not in ("others", "done")]
+    items = _act_rows(cache)
     if limit is not None:
         items = items[:int(limit)]
     return "\n\n".join(render_overview_row(i, dm) for i in items)
@@ -190,11 +200,14 @@ def render_in_motion(cache):
 def compute_headline_bubbles(cache, standup=None):
     """The masthead chips, DERIVED from the objects they count — never model-authored prose.
 
-    2026-07-15: the live cache said "5 need you" while cache['needs_you'] held 7 items and
-    standup.totals.needs_you was 21 — three numbers on one screen, nothing comparing them. A chip
-    computed from its own list cannot lie about that list.
+    2026-07-15: the live cache said "5 need you" while cache['act'] held 7 items and
+    standup.totals.needs_you was 21. The "5" was actually CORRECT — 2 of the 7 route to the
+    ⏳In-motion track (court others/done) and only 5 render as Act rows — so the chip must count
+    the RENDERED set (`_act_rows`), the same court-filtered rows render_overview emits, NOT
+    `len(act)`. A `len(act)` chip would print "7 need you" over a 5-row list. A chip computed
+    from the very set it labels cannot lie about that set.
     """
-    act = cache.get("act") or []
+    act = _act_rows(cache)
     held = cache.get("held") or []
     flags = cache.get("flags") or []
     quiet = cache.get("going_quiet") or []
@@ -321,8 +334,14 @@ def render_factory_standup(data):
     has_spend = bool(sp.get("output_tokens") or sp.get("cost_usd"))
     acc0 = data.get("acceptance") or {}
     has_acc = bool(acc0.get("factory") or acc0.get("gate"))
+    # A8/A5: the census counts `unparsed` — top-level `## Watching`-class bullets (no checkbox/
+    # glyph) that parse_items structurally cannot see, so no group ever surfaces them. The
+    # collector computed the count but NOTHING rendered it (write-only). Surface it here — the
+    # standup panel is the natural human-visible home — so the silent drop is actually loud.
+    census = data.get("census") or {}
+    unparsed = int(census.get("unparsed") or 0)
     if not any(g.get(k) for k in ("veto", "needs_you", "handed_off", "stuck")) and not errs \
-            and not has_spend and not has_acc:
+            and not has_spend and not has_acc and not unparsed:
         return "🏭 Factory Standup — nothing waiting (backlogs drained clean)."
     lines = ["🏭 Factory Standup"]
     def _emit(sym, label, items, fmt):
@@ -340,6 +359,13 @@ def render_factory_standup(data):
           lambda it: f"{it.get('repo','?')} {it.get('id','?')} — {it.get('title') or '(untitled)'} [{it.get('reason','?')}]")
     _emit("‼", "backlog parse errors", errs,
           lambda e: f"{e.get('repo','?')} — {e.get('error','?')}")
+    if unparsed:  # A8/A5: the ## Watching-class silent-drop count, now loud
+        line = ("  ⓘ %d unparsed backlog bullet%s (## Watching-class — no checkbox/glyph, "
+                "invisible to the decision queue)" % (unparsed, "" if unparsed == 1 else "s"))
+        sample = "; ".join(str(t) for t in (census.get("unparsed_titles") or [])[:3])
+        if sample:
+            line += ": " + sample
+        lines.append(line)
     if has_spend:  # H62: rolling unattended-tier token/$ spend + fail-loud soft-cap flag
         tok, cost, cap = sp.get("output_tokens", 0), sp.get("cost_usd", 0.0), sp.get("cap") or 0
         line = f"  💸 unattended spend today: {tok:,} out-tok"
@@ -402,6 +428,7 @@ def main(argv):
               "       brief_render.py in-motion <cache.json>\n"
               "       brief_render.py settle <cache.json> [--domain <kb> ...]\n"
               "       brief_render.py headline <cache.json> [standup.json]\n"
+              "       brief_render.py unchanged <standup.json>\n"
               "       brief_render.py factory-health <latest.md path>",
               file=sys.stderr)
         return 2
@@ -427,6 +454,13 @@ def main(argv):
         except OSError:
             md = None
         print(render_factory_health(md))
+        return 0
+    if op == "unchanged":
+        # A8: the gather prose (gather.md) says "Lift render_unchanged_line(standup) verbatim" —
+        # but the function had no CLI op, so a model hand-typed the count instead (21 of 22 live
+        # decision items reached Seth via unverified prose). This makes the rule runnable: the
+        # brief lifts THIS op's stdout verbatim beneath the delta cards. argv[2] is standup.json.
+        print(render_unchanged_line(_load(cache_path)))
         return 0
     cache = _load(cache_path)
     if op == "station":

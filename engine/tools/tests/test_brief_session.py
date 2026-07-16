@@ -821,3 +821,94 @@ def test_real_shaped_fixture_carries_the_documented_delta_item_keys():
     for item in standup["delta"]:
         for key in ("repo", "id", "title", "reason", "group"):
             assert key in item, f"delta item must carry {key!r}: {item}"
+
+
+# ── FIX 1: the headline chip asserts the RENDERED Act count, not len(act) ────────────
+# The 'corrected' 5/7/21: 7 raw act items, 2 court-filtered to ⏳In-motion -> 5 render as Act.
+# The honest "5 need you" chip (matching the rendered rows) must PASS; the len(act) "7 need you"
+# chip must FAIL. Before the fix the assertion demanded len(act)=7 and REJECTED the honest chip.
+
+def _act_5_of_7():
+    act = [{"title": "you%d" % i, "domain": "gm", "claude_voice": {"text": "c"},
+            "system_voice": None} for i in range(5)]
+    act.append({"title": "w1", "domain": "gm", "claude_voice": {"text": "c"},
+                "system_voice": None, "in_motion": {"court": "others"}})
+    act.append({"title": "w2", "domain": "gm", "claude_voice": {"text": "c"},
+                "system_voice": None, "in_motion": {"court": "done"}})
+    return act
+
+
+def _base_cache_with_act(act):
+    return {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+            "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+            "act": act}
+
+
+_REQ_GM = ["system", "personal", "familyoffice", "gm"]
+
+
+def test_validate_cache_accepts_the_honest_rendered_count_chip():
+    cache = _base_cache_with_act(_act_5_of_7())
+    cache["headline_bubbles"] = ["5 need you"]     # what render_overview actually emits
+    ok, errs = bs.validate_cache(cache, required_domains=_REQ_GM)
+    assert ok, errs
+
+
+def test_validate_cache_rejects_the_len_act_chip_over_a_filtered_list():
+    cache = _base_cache_with_act(_act_5_of_7())
+    cache["headline_bubbles"] = ["7 need you"]      # the misleading len(act) count
+    ok, errs = bs.validate_cache(cache, required_domains=_REQ_GM)
+    assert not ok
+    assert any("5 need you" in e or "RENDERED" in e for e in errs), errs
+
+
+# ── FIX 2 (A7): the delta-card station key is NOT hardcoded "gm" ─────────────────────
+# The engine's own shipped fixture keys the Dev station "dev". A dev-keyed cache with the delta
+# id carded under stations["dev"] must be accounted; before the fix `carded` read stations["gm"]
+# (absent -> empty), every real-id delta was "unaccounted", and Invariant 4 bricked the brief.
+
+def test_validate_cache_delta_card_in_dev_keyed_station_is_accounted():
+    standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
+                          "dev": [{"item_id": "H54", "title": "Retirement sweep", "domain": "dev",
+                                   "claude_voice": {"text": "c"}, "system_voice": None}]},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "dev": 1},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "dev"], standup=standup)
+    assert ok, errs
+
+
+def test_validate_cache_uncarded_delta_still_fails_under_any_station_key():
+    # The real protection must survive the de-hardcode: a delta id carded in NO station fails.
+    standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"},
+                         {"repo": "aios", "id": "A69", "title": "Reflect lessons"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
+                          "dev": [{"item_id": "H54", "title": "Retirement sweep", "domain": "dev",
+                                   "claude_voice": {"text": "c"}, "system_voice": None}]},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "dev": 1},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "dev"], standup=standup)
+    assert not ok
+    assert "A69" in " ".join(errs) and "unaccounted" in " ".join(errs), errs
+
+
+# ── FIX 4: --standup with a missing/torn file fails CLEAN, no raw traceback ──────────
+# Carried minor #8: the --standup read had no error handling; a missing file threw a raw
+# FileNotFoundError instead of the "FAIL: could not parse …" the cache path already gets. The
+# gate's own rule (asserted in this branch) is "a gate RETURNS (ok, errors), never raises".
+
+def test_cli_validate_cache_standup_missing_file_fails_clean(tmp_path):
+    import subprocess
+    tool = os.path.join(TOOLS, "brief_session.py")
+    cache_path = str(tmp_path / "cache_ok.json")
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump({"station_counts": {"gm": 0}, "stations": {"gm": []}, "act": []}, f)
+    proc = subprocess.run(
+        [sys.executable, tool, "validate_cache", cache_path, "--domains", "gm",
+         "--standup", str(tmp_path / "does_not_exist.json")],
+        capture_output=True, encoding="utf-8", errors="replace")
+    assert proc.returncode != 0
+    assert "Traceback" not in (proc.stderr or ""), proc.stderr
+    assert "could not parse standup" in (proc.stdout or ""), (proc.stdout, proc.stderr)

@@ -61,6 +61,9 @@ import sys
 import time
 import glob
 
+import brief_render  # sibling; validate_cache reuses its _act_rows so the chip assertion
+                     # counts the SAME court-filtered rows render_overview emits (no re-derived predicate)
+
 # Walk order: "kb" (Stage 1 — knowledge-base processing) first, then the install's domain
 # stations (Stage 2 — task cards) in the caller's --order (from the profile's domain groups).
 # Fact-free: the engine knows only its own "kb" station; with no --order the seed's key order
@@ -370,13 +373,16 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
       only be a stale writer still emitting the pre-rename `needs_you`). `act: []` is valid —
       a real quiet day must still render. Same per-item rules as a station item.
     - headline_bubbles (optional — DERIVED, so the render can recompute it): when present,
-      `headline_bubbles[0]` must equal "%d need you" % len(act). A chip that disagrees with the
-      list it counts is the 5/7/21 regression.
+      `headline_bubbles[0]` must equal "%d need you" % len(brief_render._act_rows(cache)) — the
+      RENDERED, court-filtered Act rows, NOT len(act) (2 waiting items route to ⏳In-motion and
+      don't render as Act). A chip that disagrees with the rows the reader sees is the 5/7/21
+      regression.
     - standup (optional): a parsed state/factory/standup.json dict. When given it MUST carry a
       `delta` list of objects — absent/malformed is factory_standup contract drift and errors
       (it used to degrade into a vacuous pass, or raise). Every delta item with an id must have
-      a matching card in stations["gm"] — the standup->station hand-off that used to silently
-      drop items (A88/Task 7).
+      a matching card in SOME station (A7: not a hardcoded stations["gm"] — the Dev station key
+      varies by install, e.g. the fixture keys it "dev") — the standup->station hand-off that used
+      to silently drop items (A88/Task 7).
 
     Contract boundary throughout: ABSENCE of authored data is a break; EMPTINESS is a
     legitimate state. Derived data (headline_bubbles) is exempt — it can be recomputed.
@@ -490,10 +496,18 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
         if not isinstance(bubbles, list):
             errors.append(f"headline_bubbles: expected a list, got {type(bubbles).__name__}")
         elif bubbles:
-            expected = "%d need you" % (len(act) if isinstance(act, list) else 0)
+            # Count the RENDERED Act set — the court-filtered rows render_overview actually emits
+            # (brief_render._act_rows), NOT len(act). 2 waiting items (court others/done) render in
+            # the ⏳In-motion track, not Act, so a len(act) chip would demand "7 need you" over a
+            # 5-row list. Reuse the renderer's own predicate so the chip and the rows can never
+            # diverge (that divergence WAS the 5/7/21 bug). Absent 'act' -> the block above already
+            # errored; here it degrades to 0 rendered rows.
+            rendered = len(brief_render._act_rows(cache_obj)) if isinstance(act, list) else 0
+            expected = "%d need you" % rendered
             if bubbles[0] != expected:
                 errors.append(
-                    "headline_bubbles[0] %r disagrees with the Act list it counts (expected %r). "
+                    "headline_bubbles[0] %r disagrees with the RENDERED Act rows it counts "
+                    "(expected %r — the court-filtered set render_overview emits, not len(act)). "
                     "The chips are computed by brief_render.compute_headline_bubbles(cache, "
                     "standup) — never hand-typed." % (bubbles[0], expected))
 
@@ -526,8 +540,20 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
                 "factory_standup contract drift."
                 % (len(bad), "y" if len(bad) == 1 else "ies", bad[0]))
             delta = [i for i in delta if isinstance(i, dict)]
-        carded = {str(i.get("item_id") or i.get("id") or "")
-                  for i in (cache_obj.get("stations", {}).get("gm") or [])}
+        # A7: a delta item's card can live in ANY station, so accountability means "carded
+        # SOMEWHERE the walk renders it" — never a hardcoded "gm". This file hardcoded
+        # stations["gm"], but the engine's OWN shipped fixture keys the Dev station "dev"; a
+        # dev-keyed install then read an empty set, every real-id delta became "unaccounted", and
+        # Invariant 4 refused to render the WHOLE brief (the id-less-seed brick, third occurrence,
+        # shipping in a public plugin). Unioning every station's carded ids de-hardcodes the key
+        # entirely and is the honest invariant — "a delta item with NO card anywhere is the silent
+        # drop." Dev backlog ids are per-repo-unique and don't collide with other silos' cards, so
+        # matching across all stations cannot mask a genuine drop.
+        carded = {
+            str(i.get("item_id") or i.get("id") or "")
+            for items in (cache_obj.get("stations") or {}).values() if isinstance(items, list)
+            for i in items
+        }
         # Id-less items (id: "") are the standup collector's deliberate "◷" backlog seeds —
         # it routes them AROUND its dedupe sidecar, so they are ALWAYS in delta and ALWAYS
         # reported via the collector's own errors[] (already surfaced in the factory panel).
@@ -539,7 +565,7 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
         missing = [i for i in delta if i.get("id") and str(i.get("id")) not in carded]
         if missing:
             errors.append(
-                "standup delta %d · stations.gm %d · %d unaccounted: %s"
+                "standup delta %d · carded %d · %d unaccounted: %s"
                 % (len(delta), len(carded), len(missing),
                    ", ".join(str(i.get("id") or i.get("title")) for i in missing)))
 
@@ -864,8 +890,15 @@ if __name__ == "__main__":
             sys.exit(1)
         standup_obj = None
         if "--standup" in rest:
-            with open(rest[rest.index("--standup") + 1], encoding="utf-8") as f:
-                standup_obj = json.load(f)
+            # Route through _read_json (like the cache path above): a missing/torn standup file
+            # must FAIL CLEAN ("could not parse …"), never throw a raw FileNotFoundError traceback.
+            # The gate's own rule is "a gate RETURNS (ok, errors), never raises" — the CLI wrapper
+            # must not undo that with an unhandled open().
+            standup_path = rest[rest.index("--standup") + 1]
+            standup_obj = _read_json(standup_path)
+            if standup_obj is None:
+                print("FAIL: could not parse standup JSON: %s" % standup_path)
+                sys.exit(1)
         ok, errs = validate_cache(obj, required_domains=req, standup=standup_obj)
         if ok:
             print("OK")
