@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -147,6 +148,52 @@ def test_fixture_matches_real_cache_shape():
     ok, errs = B.validate_cache(cache)
     assert ok, errs
     assert R.render_station(cache, "system").strip() != ""
+
+
+def test_fixture_chips_are_the_computed_ones_not_hand_typed():
+    """The fixture is the reference for what a real cache looks like — if ITS chips were
+    hand-typed they would model the exact habit the assertion exists to kill."""
+    cache = R._load(FIX)
+    assert cache["headline_bubbles"] == R.compute_headline_bubbles(cache)
+
+
+def test_cli_headline_op_emits_the_computed_chips():
+    """The chips rule ("never hand-typed") pointed at a Python function with no way to call
+    it — so a model followed the cache-contract prose instead and typed "5 need you" over an
+    act[] of 7. This op is how a cache-writer actually obtains them."""
+    import subprocess
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    proc = subprocess.run([sys.executable, tool, "headline", FIX],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, proc.stderr
+    emitted = json.loads(proc.stdout)
+    assert emitted == R.compute_headline_bubbles(R._load(FIX))
+    assert emitted[0] == "1 need you"          # the fixture's act[] holds exactly 1 item
+
+
+def test_cli_headline_op_accepts_a_standup_and_adds_its_chip():
+    import subprocess, tempfile
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    sp = os.path.join(tempfile.mkdtemp(), "standup.json")
+    with open(sp, "w", encoding="utf-8") as f:
+        json.dump({"totals": {"needs_you": 21}, "delta": [{"id": "H54"}, {"id": "A69"}]}, f)
+    proc = subprocess.run([sys.executable, tool, "headline", FIX, sp],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)[-1] == "21 decisions · 2 new"
+
+
+def test_cli_headline_output_is_accepted_by_validate_cache():
+    """End-to-end of the intended workflow: run the op, splice its output into the cache,
+    validate. If these two ever disagree on format, the op is useless."""
+    import subprocess
+    import brief_session as B
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
+    proc = subprocess.run([sys.executable, tool, "headline", FIX],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    cache = dict(R._load(FIX), headline_bubbles=json.loads(proc.stdout))
+    ok, errs = B.validate_cache(cache)
+    assert ok, errs
 
 
 def test_cli_station_does_not_crash_on_windows_stdout():

@@ -79,7 +79,8 @@ For each domain group in `domains.yaml`, in parallel:
    one card per delta item, in the order given. Author ONLY the graded two-layer voice for each
    (`system_voice` + `claude_voice`); the item's identity, group, and reason come from the standup.
    Lift `brief_render.render_unchanged_line(standup)` verbatim beneath the cards. `headline_bubbles`
-   is `brief_render.compute_headline_bubbles(cache, standup)` — never hand-typed.
+   is COMPUTED by the `brief_render.py headline` op (pass the standup path) — never hand-typed; see
+   the `## Cache contract` section below for the command and the gate that enforces it.
 
 ## Cache contract — the two files (the tail of EVERY full gather)
 
@@ -102,9 +103,21 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    `claude_voice.text`, and a valid `system_voice` (`{grade, text, cite}`; cite required for grades
    1/2a) or `system_voice: null` for Grade 0. The JSON also carries an optional `domain_display`
    map (kb → display-name, from the profile's domain groups), which `brief_render.py` consumes.
-   **`headline_bubbles` MUST carry the four primary count chips the render-time header lifts** —
-   `{N} need you` · `{N} to review` · `{N} Paper-Governs flags` · `{N} going quiet` — plus, when the
-   settle pass ran, the `{N} settled · {M} to confirm` chip (below).
+   **`act` MUST be present** — it is the Act list, the first thing the brief shows. Write the key on
+   every gather: an ABSENT `act` fails `validate_cache` (it can only mean a stale writer still
+   emitting the old `needs_you` name), while `act: []` is a valid quiet day.
+   **`headline_bubbles` MUST be COMPUTED, never hand-typed** — do NOT write the count chips from
+   your own reading of the data. After the rest of the cache is populated, run:
+
+       python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_render.py" headline "<env_root>/state/brief-cache.json" [<env_root>/state/factory/standup.json]
+
+   and splice its JSON output in verbatim as `headline_bubbles`. It emits the four primary chips
+   (`{N} need you` · `{N} to review` · `{N} Paper-Governs flags` · `{N} going quiet`), the
+   `{N} settled · {M} to confirm` chip when the settle pass ran, and the `{N} decisions · {M} new`
+   chip when given the standup. A hand-typed chip is how the header once said `5 need you` over an
+   `act[]` of 7 and a standup total of 21 — three numbers on one screen, none of them checked
+   against each other. `validate_cache` now REJECTS a `headline_bubbles[0]` that disagrees with
+   `len(act)`, so a hand-typed chip fails the gate.
    `validate_cache` is the completeness exit gate. The cache is ALWAYS the full all-silos superset
    (core SKILL `# Scope` rule 5).
 

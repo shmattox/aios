@@ -366,9 +366,20 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
         - grade in {"1", "2a", "2b"}
         - text
         - cite for grades "1" and "2a" (required); for "2b" cite is optional
-    - standup (optional): a parsed state/factory/standup.json dict. When given, every item in
-      its `delta` list must have a matching card in stations["gm"] (matched by id) — the
-      standup->station hand-off that used to silently drop items (A88/Task 7).
+    - act is REQUIRED (absent -> error: a gather always writes the key, so an absent `act` can
+      only be a stale writer still emitting the pre-rename `needs_you`). `act: []` is valid —
+      a real quiet day must still render. Same per-item rules as a station item.
+    - headline_bubbles (optional — DERIVED, so the render can recompute it): when present,
+      `headline_bubbles[0]` must equal "%d need you" % len(act). A chip that disagrees with the
+      list it counts is the 5/7/21 regression.
+    - standup (optional): a parsed state/factory/standup.json dict. When given it MUST carry a
+      `delta` list of objects — absent/malformed is factory_standup contract drift and errors
+      (it used to degrade into a vacuous pass, or raise). Every delta item with an id must have
+      a matching card in stations["gm"] — the standup->station hand-off that used to silently
+      drop items (A88/Task 7).
+
+    Contract boundary throughout: ABSENCE of authored data is a break; EMPTINESS is a
+    legitimate state. Derived data (headline_bubbles) is exempt — it can be recomputed.
     """
     errors = []
 
@@ -429,10 +440,24 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
 
     # act block (A88): the Act list is the FIRST thing the brief shows and was the least-
     # asserted object in the chain — `needs_you` (now `act`, Task 5's rename) never appeared
-    # in this function, so a gather emitting an empty or malformed Act passed with OK. Same
-    # per-item rules as a station item; optional (absent act is valid — back-compat).
+    # in this function, so a gather emitting an empty or malformed Act passed with OK.
+    #
+    # REQUIRED, not optional. The rename carried no fallback (deliberately — a fallback hides
+    # a stale writer), so against the pre-rename cache on disk the whole chain reported
+    # healthy while the Act list rendered EMPTY: status fresh -> validate OK -> overview ''.
+    # An "optional act" made that silence legal. The boundary: ABSENCE is a contract break (a
+    # real gather always writes the key, so absent == stale/pre-rename writer); EMPTINESS is a
+    # legitimate state (a quiet day where nothing needs the owner must still render — outlawing it
+    # would brick the ENTIRE brief via Invariant 4 on a good day). Spec §1's `needs_you: []`
+    # failure is caught by the headline-chip conservation below: the harm was never the empty
+    # list, it was the empty list under a hand-typed "5 need you".
     act = cache_obj.get("act")
-    if act is not None:
+    if act is None:
+        errors.append(
+            "act is missing — the Act list is the brief's first surface and a gather ALWAYS "
+            "writes the key. An absent 'act' means a stale writer still emitting 'needs_you' "
+            "(Task 5's rename), not a quiet day; a real quiet day is act: [].")
+    else:
         if not isinstance(act, list):
             errors.append(f"act: expected a list, got {type(act).__name__}")
         else:
@@ -450,11 +475,57 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
                     errors.append(f"{prefix}: missing claude_voice.text")
                 errors.extend(_validate_system_voice(item.get("system_voice"), prefix))
 
+    # headline_bubbles (A88): the masthead chips must not contradict the list they count. The
+    # 5/7/21 regression was exactly this — "5 need you" as model prose over an act[] of 7 and a
+    # standup total of 21, three numbers on one screen with nothing comparing them.
+    # brief_render.compute_headline_bubbles() derives the chips, but the cache-contract prose is
+    # what a cache-writing model actually follows, so the assertion — not the function — is the
+    # load-bearing half: it closes the hole regardless of which prose the model reads.
+    # DERIVED data, so absence is recoverable (the render just computes them) — unlike `act`
+    # and `delta`, which are authored and cannot be reconstructed. Present -> must agree.
+    # The chip format is pinned to compute_headline_bubbles' own "%d need you" by
+    # test_validate_cache_headline_chip_matches_the_renderer_format_exactly.
+    bubbles = cache_obj.get("headline_bubbles")
+    if bubbles is not None:
+        if not isinstance(bubbles, list):
+            errors.append(f"headline_bubbles: expected a list, got {type(bubbles).__name__}")
+        elif bubbles:
+            expected = "%d need you" % (len(act) if isinstance(act, list) else 0)
+            if bubbles[0] != expected:
+                errors.append(
+                    "headline_bubbles[0] %r disagrees with the Act list it counts (expected %r). "
+                    "The chips are computed by brief_render.compute_headline_bubbles(cache, "
+                    "standup) — never hand-typed." % (bubbles[0], expected))
+
     # A88 (A3): conservation across the standup -> station hand-off. The brief used to print
     # "21 need you" from standup.json while the walk rendered four unrelated cards from the cache,
     # and nothing compared them. A delta item with no card is a silent drop.
     if standup:
-        delta = standup.get("delta") or []
+        # `standup.get("delta") or []` degraded a CROSS-REPO CONTRACT BREAK into a vacuous pass:
+        # env-side drift (delta[] -> changes[]) left this check iterating an empty list and
+        # reporting ok=True — "absence looks like OK" at exactly the repo boundary where drift is
+        # likeliest, since standup.json is written in claude-env and read here. Same rule as
+        # `act`: a caller passing standup= asserts there IS a standup to conserve against, so an
+        # absent delta[] means the file is not a standup and the check CANNOT run — fail loud.
+        # (An empty delta[] is a real quiet day and stays valid.) A non-list delta also used to
+        # crash this function outright: a dict iterates to str keys -> AttributeError on .get.
+        delta = standup.get("delta")
+        if not isinstance(delta, list):
+            errors.append(
+                "standup: 'delta' is missing or not a list (got %s) — a standup handed to "
+                "validate_cache MUST carry delta[]; this is factory_standup contract drift, "
+                "not a quiet day (a quiet day is delta: [])." % type(delta).__name__)
+            delta = []
+        # A gate must RETURN (ok, errors), never raise — a delta of bare ids (["H54"]) used to
+        # crash the .get() below with AttributeError, bricking the brief harder than the
+        # vacuous pass this block exists to prevent.
+        bad = [i for i in delta if not isinstance(i, dict)]
+        if bad:
+            errors.append(
+                "standup: delta[] items must be objects, got %d non-object entr%s (e.g. %r) — "
+                "factory_standup contract drift."
+                % (len(bad), "y" if len(bad) == 1 else "ies", bad[0]))
+            delta = [i for i in delta if isinstance(i, dict)]
         carded = {str(i.get("item_id") or i.get("id") or "")
                   for i in (cache_obj.get("stations", {}).get("gm") or [])}
         # Id-less items (id: "") are the standup collector's deliberate "◷" backlog seeds —

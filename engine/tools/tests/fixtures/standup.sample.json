@@ -1,0 +1,79 @@
+{
+  "generated": "2026-07-15",
+  "groups": {
+    "veto": [],
+    "needs_you": [
+      {
+        "repo": "Claude",
+        "id": "H54",
+        "title": "Retirement sweep of the legacy path. ([GATE: human])",
+        "reason": "hard-to-reverse / [GATE: human]",
+        "group": "needs_you"
+      },
+      {
+        "repo": "Claude",
+        "id": "A69",
+        "title": "Reflect lessons into the loop. (escalate: economic)",
+        "reason": "economic/ownership",
+        "group": "needs_you"
+      }
+    ],
+    "handed_off": [],
+    "stuck": []
+  },
+  "delta": [
+    {
+      "repo": "Claude",
+      "id": "H54",
+      "title": "Retirement sweep of the legacy path. ([GATE: human])",
+      "reason": "hard-to-reverse / [GATE: human]",
+      "group": "needs_you"
+    },
+    {
+      "repo": "Claude",
+      "id": "A69",
+      "title": "Reflect lessons into the loop. (escalate: economic)",
+      "reason": "economic/ownership",
+      "group": "needs_you"
+    }
+  ],
+  "unchanged": [],
+  "totals": {
+    "veto": 0,
+    "needs_you": 2,
+    "handed_off": 0,
+    "stuck": 0,
+    "delta": 2,
+    "unchanged": 0
+  },
+  "errors": [],
+  "spend": {
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "cap": 8000000,
+    "over_cap": false,
+    "sources": []
+  },
+  "acceptance": {
+    "window_days": 30,
+    "factory": {
+      "accepted": 0,
+      "reverted": 0,
+      "unknown_sha": 0,
+      "spend_usd": null,
+      "usd_per_accepted": null,
+      "reverted_ids": []
+    },
+    "gate": {
+      "note": "gate metrics JSON absent — run gate_metrics.py report --out state/factory/gate-metrics.json"
+    }
+  },
+  "census": {
+    "parsed": 2,
+    "grouped": 2,
+    "drainable": 0,
+    "drainable_titles": [],
+    "unparsed": 0,
+    "unparsed_titles": []
+  }
+}

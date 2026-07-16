@@ -208,6 +208,7 @@ try:
             "familyoffice": [good_item("familyoffice", "2b")],
             "dev":          [good_item("dev", None)],  # Grade 0 — system_voice=null
         },
+        "act": [],   # REQUIRED: a real gather always writes the key (absent == stale writer)
     }
 
     ok, errs = bs.validate_cache(good_cache)
@@ -222,6 +223,7 @@ try:
             "familyoffice": [],
             "dev":          [],
         },
+        "act": [],
     }
     ok0, errs0 = bs.validate_cache(grade0_cache)
     check("validate_cache: Grade-0 (null system_voice) accepted",  ok0 is True)
@@ -347,6 +349,7 @@ try:
             }],
             "personal": [], "familyoffice": [], "dev": [],
         },
+        "act": [],
     }
     ok_2b, e_2b = bs.validate_cache(ok_2b_cache)
     check("validate_cache: grade '2b' without cite is accepted", ok_2b is True)
@@ -488,6 +491,7 @@ def test_record_decision_stores_notion_write_intent(tmp_path):
 _MIN = {  # a minimal valid cache: adjust keys to match existing valid fixtures in this file
     "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "dev": 0},
     "stations": {"system": [], "personal": [], "familyoffice": [], "dev": []},
+    "act": [],   # REQUIRED since the act-conservation fix — a real gather always writes the key
 }
 
 def test_settle_absent_is_valid():
@@ -574,9 +578,92 @@ def test_validate_cache_act_item_bad_grade_reuses_station_rule():
     assert any("act[0]" in e and "cite" in e for e in errs)
 
 
-def test_validate_cache_act_absent_is_valid():
-    ok, errs = bs.validate_cache(dict(_MIN))
+# ── validate_cache: `act` is REQUIRED, not optional ────────────────────────────────
+# Task 5 renamed cache.needs_you -> act with NO fallback (correct: a fallback would hide a
+# stale writer). Task 6 then added act validation but made it OPTIONAL. Composed against the
+# cache actually on disk (pre-rename, still `needs_you`), the whole chain reported healthy
+# while the Act list rendered EMPTY: cache-status fresh -> validate_cache OK -> overview ''.
+# Seven real items vanished and every gate said OK. Spec §1's headline complaint — "a gather
+# emitting needs_you: [] passes with OK" — was renamed, not closed.
+#
+# The rule: ABSENCE is a contract break; EMPTINESS is a legitimate state. A gather always
+# writes the key, so an absent `act` can only mean a stale/pre-rename writer. An `act: []` is
+# a real quiet day and MUST still render — banning it would brick the ENTIRE brief
+# (Invariant 4: INVALID -> don't render) on a good day. The spec's `needs_you: []` failure is
+# caught by the headline-chip conservation below, not by outlawing emptiness.
+
+def test_validate_cache_act_absent_is_an_error():
+    c = dict(_MIN); c.pop("act", None)
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any("act" in e and "missing" in e for e in errs), errs
+
+
+def test_validate_cache_catches_the_stale_pre_rename_writer():
+    """The exact cache on disk: a writer still emitting `needs_you` must NOT validate OK."""
+    c = dict(_MIN); c.pop("act", None)
+    c["needs_you"] = [{"title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+                       "system_voice": None}]
+    ok, errs = bs.validate_cache(c)
+    assert not ok, "a pre-rename cache must fail loud, not render an empty Act list"
+
+
+def test_validate_cache_empty_act_is_valid_when_the_chip_agrees():
+    """DELIBERATE: a legitimately quiet day (nothing needs the owner) renders — not an error."""
+    c = dict(_MIN, act=[], headline_bubbles=["0 need you", "0 to review"])
+    ok, errs = bs.validate_cache(c)
     assert ok, errs
+
+
+# ── validate_cache: headline chips cannot disagree with the list they count ─────────
+# The 5/7/21 regression: the masthead said "5 need you" (model-authored prose) while
+# cache["act"] held 7 items and standup.totals.needs_you said 21 — three numbers on one
+# screen and nothing compared them. compute_headline_bubbles() derives the chips, but a model
+# writing the cache follows the cache-contract prose, so the assertion is the load-bearing
+# half: it closes the hole whichever prose the model follows.
+#
+# The chips are DERIVED data, so ABSENT is recoverable (the render just computes them) —
+# unlike `act`/`delta`, which are authored and cannot be reconstructed. Present -> must agree.
+
+def test_validate_cache_fails_when_headline_bubbles_disagree_with_act():
+    item = {"title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
+    c = dict(_MIN, act=[dict(item) for _ in range(7)], headline_bubbles=["5 need you"])
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any("headline_bubbles" in e for e in errs), errs
+
+
+def test_validate_cache_catches_the_spec_empty_act_under_a_nonzero_chip():
+    """Spec §1's literal failure: an EMPTY Act list shipped under a hand-typed "5 need you"."""
+    c = dict(_MIN, act=[], headline_bubbles=["5 need you"])
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any("headline_bubbles" in e for e in errs), errs
+
+
+def test_validate_cache_passes_when_headline_bubbles_agree_with_act():
+    item = {"title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
+    c = dict(_MIN, act=[item], headline_bubbles=["1 need you", "3 to review"])
+    ok, errs = bs.validate_cache(c)
+    assert ok, errs
+
+
+def test_validate_cache_headline_bubbles_absent_is_valid():
+    """Derived data: absent chips are computed at render, so there is nothing to contradict."""
+    ok, errs = bs.validate_cache(dict(_MIN, act=[]))
+    assert ok, errs
+
+
+def test_validate_cache_headline_chip_matches_the_renderer_format_exactly():
+    """The assertion is worthless if it checks a format the renderer never emits — pin them
+    together so a format change in one cannot silently pass the other."""
+    sys.path.insert(0, TOOLS)
+    import brief_render as R
+    item = {"title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
+    cache = dict(_MIN, act=[dict(item) for _ in range(3)])
+    computed = R.compute_headline_bubbles(cache)
+    ok, errs = bs.validate_cache(dict(cache, headline_bubbles=computed))
+    assert ok, ("validate_cache must accept what compute_headline_bubbles emits", errs)
 
 
 # ── validate_cache: standup delta -> stations.gm conservation (A88 / Task 7) ────────
@@ -640,3 +727,97 @@ def test_validate_cache_id_less_item_does_not_mask_a_real_unaccounted_item():
     joined = " ".join(errs)
     assert "H54" in joined, joined
     assert "Capture worthiness floor" not in joined, joined
+
+
+# ── the standup.json cross-repo contract (Scripts/factory-gate -> aios) ─────────────
+# standup.json is written in the ENV repo and read here; nothing pinned its shape across the
+# boundary. Every test above hand-builds {"delta": [...]}, so a hand-built fixture could not
+# catch env-side drift. Simulated drift (delta[] -> changes[]) returned ok=True, errs=[]: the
+# conservation assertion ran over an empty list and passed VACUOUSLY, because
+# `standup.get("delta") or []` makes a CONTRACT BREAK indistinguishable from a quiet day —
+# "absence looks like OK" at exactly the repo boundary where drift is likeliest.
+#
+# Same rule as `act`: ABSENCE is a contract break, EMPTINESS is legitimate. A caller passing
+# standup= is asserting "there is a standup to conserve against"; if it carries no delta[],
+# the file is not a standup and the check cannot run — say so rather than report OK.
+# The paired producer-side test lives in the env repo:
+#   Scripts/factory-gate/tests/test_factory_standup.py::test_collect_emits_the_cross_repo_standup_contract
+
+_FIX_STANDUP = os.path.join(HERE, "fixtures", "standup.sample.json")
+
+
+def test_validate_cache_rejects_a_standup_missing_delta():
+    """Env-side drift must fail LOUD, not degrade into a vacuous pass."""
+    standup = {"changes": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"}],
+               "unchanged": [], "totals": {"delta": 1}}          # `delta` renamed -> drift
+    ok, errs = bs.validate_cache(dict(_MIN), standup=standup)
+    assert not ok, "a standup with no delta[] must not pass vacuously"
+    assert any("delta" in e for e in errs), errs
+
+
+def test_validate_cache_rejects_a_standup_whose_delta_is_not_a_list():
+    ok, errs = bs.validate_cache(dict(_MIN), standup={"delta": {"H54": "x"}})
+    assert not ok
+    assert any("delta" in e for e in errs), errs
+
+
+def test_validate_cache_rejects_a_delta_of_non_dict_items():
+    """A gate must RETURN (ok, errors), never raise: a delta of bare ids used to crash
+    validate_cache with AttributeError, which bricks the brief harder than a vacuous pass
+    (Invariant 4 never even gets to evaluate)."""
+    ok, errs = bs.validate_cache(dict(_MIN), standup={"delta": ["H54", "A69"]})
+    assert not ok
+    assert any("delta" in e for e in errs), errs
+
+
+def test_validate_cache_standup_with_empty_delta_is_valid():
+    """A real quiet day in the decision queue: nothing moved. Legitimate — must render."""
+    ok, errs = bs.validate_cache(dict(_MIN), standup={"delta": [], "unchanged": [{"id": "H1"}]})
+    assert ok, errs
+
+
+def test_validate_cache_against_a_real_shaped_standup_fixture():
+    """The fixture is GENERATED BY the env collector (factory_standup.collect), not hand-typed,
+    so it carries the real key set. Its delta ids are carded -> conservation holds."""
+    with open(_FIX_STANDUP, encoding="utf-8") as f:
+        standup = json.load(f)
+    ids = [i["id"] for i in standup["delta"]]
+    assert ids, "fixture must carry delta items or it asserts nothing"
+    cards = [{"item_id": i, "title": "T", "domain": "gm",
+              "claude_voice": {"text": "c"}, "system_voice": None} for i in ids]
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": cards},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": len(cards)},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert ok, errs
+
+
+def test_real_shaped_fixture_drops_a_card_and_is_caught():
+    """Same real fixture, one card missing — the conservation check must catch the drop."""
+    with open(_FIX_STANDUP, encoding="utf-8") as f:
+        standup = json.load(f)
+    ids = [i["id"] for i in standup["delta"]]
+    cards = [{"item_id": i, "title": "T", "domain": "gm",
+              "claude_voice": {"text": "c"}, "system_voice": None} for i in ids[:-1]]
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": cards},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": len(cards)},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert not ok
+    assert ids[-1] in " ".join(errs), errs
+
+
+def test_real_shaped_fixture_carries_the_documented_delta_item_keys():
+    """Pins the field set the aios side consumes. If the env collector stops emitting one of
+    these, regenerating this fixture fails here rather than silently rendering a blank card."""
+    with open(_FIX_STANDUP, encoding="utf-8") as f:
+        standup = json.load(f)
+    for key in ("delta", "unchanged", "totals", "groups"):
+        assert key in standup, f"real standup must carry {key!r}"
+    for key in ("delta", "unchanged"):
+        assert key in standup["totals"], f"totals must carry {key!r}"
+    for item in standup["delta"]:
+        for key in ("repo", "id", "title", "reason", "group"):
+            assert key in item, f"delta item must carry {key!r}: {item}"

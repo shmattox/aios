@@ -15,6 +15,15 @@
        "claude_voice": {"text": "Pure function, golden-file it."}}
     ]
   },
+  "act": [
+    {"item_id": "sys-1", "title": "Fix sorter taxonomy", "domain": "System",
+     "system_voice": {"grade": "1", "text": "Hold, then re-drive.", "cite": "decisions.md#taxo"},
+     "claude_voice": {"text": "Batch the 8 stubs."}}
+  ],
+  "headline_bubbles": [
+    "1 need you", "0 to review", "0 Paper-Governs flags", "0 going quiet",
+    "0 settled · 1 to confirm"
+  ],
   "settle": {
     "auto_healed": [],
     "candidates": [

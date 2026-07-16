@@ -401,6 +401,7 @@ def main(argv):
               "       brief_render.py overview <cache.json> [limit]\n"
               "       brief_render.py in-motion <cache.json>\n"
               "       brief_render.py settle <cache.json> [--domain <kb> ...]\n"
+              "       brief_render.py headline <cache.json> [standup.json]\n"
               "       brief_render.py factory-health <latest.md path>",
               file=sys.stderr)
         return 2
@@ -438,6 +439,15 @@ def main(argv):
         print(render_in_motion(cache))
     elif op == "settle":
         print(render_settle(cache, domains=domain_filters or None))
+    elif op == "headline":
+        # The cache-writer's op: emits the chips as JSON to splice into `headline_bubbles`.
+        # Every other "do NOT hand-author X" instruction in this engine points at a runnable
+        # op (`brief_render.py station …`); the chips rule pointed at a bare Python function
+        # with no way to call it, so a model followed the cache-contract prose and hand-typed
+        # "5 need you" over an act[] of 7. This makes the rule executable; validate_cache's
+        # headline_bubbles assertion is what makes it enforced.
+        standup = _load(key) if key else None
+        print(json.dumps(compute_headline_bubbles(cache, standup), ensure_ascii=False, indent=2))
     else:
         print(f"unknown op {op!r}", file=sys.stderr)
         return 2
