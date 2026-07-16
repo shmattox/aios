@@ -192,12 +192,28 @@ def test_overview_row_silent_system_still_carries_claude():
 
 def test_overview_uses_domain_display_map():
     out = R.render_overview({"domain_display": {"familyoffice": "Family Office"},
-                             "needs_you": [ACT_ITEM]})
+                             "act": [ACT_ITEM]})
     assert "[Family Office]" in out
 
 
+def test_overview_reads_act_not_needs_you():
+    cache = {"act": [{"title": "T", "domain": "gm",
+                      "claude_voice": {"text": "c"}, "system_voice": None}]}
+    out = R.render_overview(cache)
+    assert "T" in out, "render_overview must read cache['act']"
+
+
+def test_standup_needs_you_is_untouched_by_the_rename():
+    # groups.needs_you is the STANDUP's decision queue — a different object that keeps its name.
+    cache = {"groups": {"veto": [], "needs_you": [{"repo": "r", "id": "H1", "title": "X",
+                                                  "reason": "economic/ownership"}],
+                        "handed_off": [], "stuck": []}}
+    out = R.render_factory_standup(cache)
+    assert "needs you — decide" in out and "X" in out
+
+
 def test_overview_limit_and_empty():
-    cache = {"needs_you": [dict(ACT_ITEM, id=f"i{i}", title=f"t{i}") for i in range(4)]}
+    cache = {"act": [dict(ACT_ITEM, id=f"i{i}", title=f"t{i}") for i in range(4)]}
     assert R.render_overview(cache, limit=2).count("🟠") == 2
     assert R.render_overview({}) == ""
 
@@ -220,7 +236,7 @@ def test_overview_legacy_layers_missing_system_is_silent_not_fabricated():
     assert "> 🟠 **Claude**: x" in out
 
 
-def test_cli_overview_exits_zero_even_without_needs_you():
+def test_cli_overview_exits_zero_even_without_act():
     import subprocess
     tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brief_render.py")
     proc = subprocess.run([sys.executable, tool, "overview", FIX], capture_output=True)
@@ -340,7 +356,7 @@ if __name__ == "__main__":
 
 def _cache_in_motion():
     return {
-        "needs_you": [
+        "act": [
             {"id": "OI-1000", "title": "NOTICE-A Northwind", "domain": "familyoffice",
              "urgency": "26d overdue", "claude_voice": {"text": "pull transcript"},
              "in_motion": {"thread_id": "OI-1000", "status": "open", "court": "you",
@@ -377,8 +393,8 @@ def test_render_in_motion_lists_waiting_items():
 
 
 def test_render_in_motion_empty_is_one_clean_line():
-    out = R.render_in_motion({"needs_you": [{"id": "x", "title": "t", "domain": "d",
-                                             "claude_voice": {"text": "c"}}]})
+    out = R.render_in_motion({"act": [{"id": "x", "title": "t", "domain": "d",
+                                       "claude_voice": {"text": "c"}}]})
     assert out == "⏳ In motion: nothing waiting"
 
 
@@ -398,7 +414,7 @@ def test_render_card_unchanged_without_in_motion():
 
 def test_render_resolved_item_not_in_waiting_track_and_not_in_act():
     # a resolved thread (court "done") is neither in Act nor labelled "waiting on others" (#3)
-    cache = {"needs_you": [
+    cache = {"act": [
         {"id": "OI-1032", "title": "STRC done", "domain": "familyoffice",
          "claude_voice": {"text": "x"},
          "in_motion": {"thread_id": "OI-1032", "status": "resolved", "court": "done",
@@ -413,7 +429,7 @@ def test_render_resolved_item_not_in_waiting_track_and_not_in_act():
 
 def test_render_overview_unknown_court_degrades_to_visible_in_act():
     # defense-in-depth: an unrecognized court must NOT vanish from both surfaces — Act is the catch-all
-    cache = {"needs_you": [
+    cache = {"act": [
         {"id": "OI-901", "title": "Weird court", "domain": "d", "claude_voice": {"text": "x"},
          "in_motion": {"thread_id": "t", "status": "?", "court": "foo", "next_action": "n"}},
     ]}

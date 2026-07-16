@@ -117,7 +117,7 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    **`in_motion` (thread reconciliation — the tail that stops worked items re-surfacing cold):**
    after populating the cache and BEFORE `validate_cache`, run
    `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_threads.py" annotate "<env_root>/state/brief-cache.json" "<env_root>/state/threads"`.
-   It deterministically joins each `needs_you`/station item to its `state/threads/` action thread
+   It deterministically joins each `act`/station item to its `state/threads/` action thread
    (by the item's OI-id referenced in the thread, by `conflict_key`, or by honoring a `thread_id` the
    gather already set) and writes `in_motion: {thread_id, status, next_action, updated_utc, court}` onto
    it (`court:"you"` for an open thread, else `"others"`). The renderer reads `in_motion` to keep

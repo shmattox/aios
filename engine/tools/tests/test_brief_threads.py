@@ -149,7 +149,7 @@ def test_link_item_no_match_returns_none():
 
 def _cache():
     return {
-        "needs_you": [
+        "act": [
             {"id": "OI-1000", "title": "NOTICE-A", "domain": "familyoffice"},
             {"id": "OI-1899", "title": "Unlinked", "domain": "familyoffice"},
         ],
@@ -165,10 +165,10 @@ def _cache():
 def test_annotate_cache_sets_in_motion_and_preserves_fields():
     cache = _cache()
     count = T.annotate_cache(cache, _threads())
-    assert count == 2  # OI-1000 (needs_you) + OI-997 (station)
-    assert cache["needs_you"][0]["in_motion"]["thread_id"] == "OI-1000"
+    assert count == 2  # OI-1000 (act) + OI-997 (station)
+    assert cache["act"][0]["in_motion"]["thread_id"] == "OI-1000"
     # unmatched item stays clean
-    assert "in_motion" not in cache["needs_you"][1]
+    assert "in_motion" not in cache["act"][1]
     # station item linked + other fields preserved
     st = cache["stations"]["familyoffice"][0]
     assert st["in_motion"]["thread_id"] == "acme-loan-extension"
@@ -180,7 +180,7 @@ def test_annotate_cache_does_not_persist_a_derived_thread_id():
     # derived link would go sticky and survive a corrected join rule (review finding #2).
     cache = _cache()
     T.annotate_cache(cache, _threads())
-    assert "thread_id" not in cache["needs_you"][0]
+    assert "thread_id" not in cache["act"][0]
 
 
 def test_annotate_cache_is_idempotent():
@@ -188,10 +188,10 @@ def test_annotate_cache_is_idempotent():
     first = T.annotate_cache(cache, _threads())
     second = T.annotate_cache(cache, _threads())
     assert first == second == 2
-    assert cache["needs_you"][0]["in_motion"]["thread_id"] == "OI-1000"
+    assert cache["act"][0]["in_motion"]["thread_id"] == "OI-1000"
 
 
 def test_annotate_cache_empty_threads_is_noop():
     cache = _cache()
     assert T.annotate_cache(cache, []) == 0
-    assert "in_motion" not in cache["needs_you"][0]
+    assert "in_motion" not in cache["act"][0]

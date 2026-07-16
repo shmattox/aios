@@ -99,7 +99,7 @@ def render_card(item, display_map=None):
 
 
 def _legacy_layers(item):
-    """Tolerate the pre-A11 needs_you shape: recommended = [{"layer": "your_system"|"claude",
+    """Tolerate the pre-A11 act shape: recommended = [{"layer": "your_system"|"claude",
     "action": ...}, ...]. Returns (system_text, claude_text) or (None, None) when not that shape."""
     rec = item.get("recommended")
     if not isinstance(rec, list):
@@ -149,24 +149,24 @@ def _court(item):
 
 
 def render_overview(cache, limit=None):
-    """The merged Act list from cache['needs_you'] — items that still need YOUR move: no linked
+    """The merged Act list from cache['act'] — items that still need YOUR move: no linked
     thread, or an open one (court 'you'). Waiting ('others') and done ('done') items are routed
     out to render_in_motion. limit (optional int) caps the rows — the caller's '≈5 view-more' cut."""
     dm = cache.get("domain_display")
     # Act is the catch-all: only genuinely-routed courts (others/done) leave it, so an unknown or
     # malformed court degrades to visible-in-Act rather than vanishing from both surfaces.
-    items = [i for i in (cache.get("needs_you") or []) if _court(i) not in ("others", "done")]
+    items = [i for i in (cache.get("act") or []) if _court(i) not in ("others", "done")]
     if limit is not None:
         items = items[:int(limit)]
     return "\n\n".join(render_overview_row(i, dm) for i in items)
 
 
 def render_in_motion(cache):
-    """The ⏳ In-motion track for needs_you items with a linked thread: 'others' -> waiting-on-others
+    """The ⏳ In-motion track for act items with a linked thread: 'others' -> waiting-on-others
     (a compact awareness list, no A/B buttons — nothing to decide); 'done' (resolved/reverted) ->
     acknowledged as cleared, never left in Act and never mislabelled "waiting" (review finding #3).
     Nothing in either bucket -> ONE clean line, never an empty panel (matches render_settle)."""
-    items = cache.get("needs_you") or []
+    items = cache.get("act") or []
     waiting = [i for i in items if _court(i) == "others"]
     done = [i for i in items if _court(i) == "done"]
     if not waiting and not done:

@@ -118,7 +118,7 @@ def link_item(item, threads):
 
 
 def _iter_items(cache):
-    for it in cache.get("needs_you") or []:
+    for it in cache.get("act") or []:
         yield it
     stations = cache.get("stations") or {}
     for node in stations.values():
@@ -128,7 +128,7 @@ def _iter_items(cache):
 
 
 def annotate_cache(cache, threads):
-    """Populate `in_motion` on every needs_you + station item that links to a thread. Mutates
+    """Populate `in_motion` on every act + station item that links to a thread. Mutates
     `cache` in place; returns the number of items linked.
 
     Deliberately does NOT write the scalar `thread_id` (review finding #2): only the gather authors

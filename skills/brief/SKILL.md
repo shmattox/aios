@@ -459,7 +459,7 @@ Card shape (`{TITLE} [domain] · Urgency · Your playbook · Flags · Recommende
 "view more" for the rest), merged & de-duped across domains, **flags folded onto the item they concern**
 (not a separate section), each row actionable — the Act rows are `brief_render.py overview <cache.json>
 [limit]`'s job (A11), lifted verbatim (compact header + urgency + the two-layer blockquote). On a LIVE
-gather (no fresh cache file), write the gathered `needs_you[]` to a temp JSON and render through the same
+gather (no fresh cache file), write the gathered `act[]` to a temp JSON and render through the same
 op — the renderer is the sole card producer on every path. **`overview` now emits Act items only** —
 tasks with a linked open thread stay in Act, reframed to the thread's live `next_action` (the `↻ In
 motion` line); tasks whose thread has moved the ball to someone else's court (or is done) are routed to
