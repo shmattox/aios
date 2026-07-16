@@ -33,6 +33,42 @@ def test_parse_frontmatter_no_frontmatter_returns_empty():
     assert T.parse_frontmatter("no frontmatter here") == {}
 
 
+def test_parse_frontmatter_strips_trailing_inline_comment():
+    # A82: an unquoted value with a trailing ` # ...` comment must parse to the value alone,
+    # not the whole literal string (which would fail every downstream vocabulary match).
+    fm = T.parse_frontmatter(
+        "---\nid: x\nstatus: open            # open | parked | resolved | reverted\n---\nbody"
+    )
+    assert fm["status"] == "open"
+
+
+def test_parse_frontmatter_keeps_hash_inside_quoted_value():
+    # a legitimate '#' inside a quoted scalar is NOT a comment and must survive
+    fm = T.parse_frontmatter('---\nnext_action: "reply to notice #3 by Friday"\n---\nbody')
+    assert fm["next_action"] == "reply to notice #3 by Friday"
+
+
+def test_parse_frontmatter_does_not_strip_hash_from_join_fields():
+    # A82 review MEDIUM #1: comment-stripping is scoped to `status` ONLY. An unquoted free-text
+    # field (item/next_action) that carries a ` #` before an OI-id must keep it, or thread_oids
+    # drops the OI and the item resurfaces COLD — the exact regression this tool exists to prevent.
+    fm = T.parse_frontmatter(
+        "---\nid: x\nitem: audit #ref then resolve OI-9\n"
+        "next_action: chase paperwork #tracking then resolve OI-42\n---\nbody"
+    )
+    assert fm["next_action"] == "chase paperwork #tracking then resolve OI-42"
+    assert fm["item"] == "audit #ref then resolve OI-9"
+    assert {"OI-9", "OI-42"} <= T.thread_oids(fm)
+
+
+def test_parse_frontmatter_quoted_status_with_trailing_comment():
+    # A82 review MEDIUM #2: a quoted status carrying a trailing comment must parse to the bare
+    # token (quotes AND comment removed) so court() classifies it, not to the literal '"parked"'.
+    fm = T.parse_frontmatter('---\nid: x\nstatus: "parked"   # waiting on Sam\n---\nbody')
+    assert fm["status"] == "parked"
+    assert T.court(fm["status"]) == "others"
+
+
 # --- thread_oids: OI-ids referenced anywhere in the thread ---
 
 def test_thread_oids_from_next_action():
@@ -60,13 +96,40 @@ def test_court_open_is_you():
 
 def test_court_parked_is_others():
     assert T.court("parked") == "others"
-    assert T.court("") == "others"
 
 
 def test_court_resolved_reverted_are_done():
     assert T.court("resolved") == "done"
     assert T.court("reverted") == "done"
     assert T.court("closed") == "done"
+
+
+def test_court_unrecognized_status_degrades_to_you():
+    # A82: a parse miss / garbage status must degrade toward VISIBLE (Act), never silently to
+    # "others" (the ⏳ waiting track, which by design carries no A/B buttons). Blank counts too.
+    assert T.court("") == "you"
+    assert T.court(None) == "you"
+    assert T.court("open            # open | parked | resolved") == "you"
+    assert T.court("banana") == "you"
+
+
+def test_unquoted_parked_with_template_comment_routes_to_others():
+    # A82: the exact form the shipped template ships — an UNQUOTED parked status carrying the
+    # ` # open | parked | ...` annotation — must parse to the bare token AND route to 'others'
+    # (waiting track), pinned end-to-end so a strip that handled `open` but not `parked` can't slip.
+    fm = T.parse_frontmatter(
+        "---\nid: x\nstatus: parked            # open | parked | resolved | reverted\n---\nbody"
+    )
+    assert fm["status"] == "parked"
+    assert T.court(fm["status"]) == "others"
+
+
+def test_court_comment_polluted_status_parses_and_routes_to_you():
+    # end-to-end: a thread whose status carries a trailing comment parses to "open" -> court "you".
+    fm = T.parse_frontmatter(
+        "---\nid: bridge-hedge\nstatus: open            # open | parked | resolved | reverted\n---\nx"
+    )
+    assert T.court(fm["status"]) == "you"
 
 
 # --- link_item ---

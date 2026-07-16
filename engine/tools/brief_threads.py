@@ -13,8 +13,10 @@ own id, so a mere cross-reference never captures another item):
   2b. a slug-id thread (no OI-N of its own) that references the item's OI-id, OR
   3. the item's `conflict_key` equals a thread's `conflict_key`.
 On match, the item gains `in_motion = {thread_id, status, next_action, updated_utc, court}` where
-`court` is "you" (open — still your move), "others" (parked — waiting on someone else), or "done"
-(resolved/reverted — finished). The tool never writes the scalar `thread_id` (only the gather does).
+`court` is "others" (parked — waiting on someone else), "done" (resolved/reverted — finished), or
+"you" (open, blank, or any unrecognized status — still your move; a parse miss degrades toward
+visible, never silently into the button-less waiting track). The tool never writes the scalar
+`thread_id` (only the gather does).
 
 See docs/superpowers/specs/2026-07-11-brief-thread-reconciliation-design.md
 """
@@ -42,6 +44,17 @@ def parse_frontmatter(text):
         key, _, val = line.partition(":")
         key = key.strip()
         val = val.strip()
+        if key == "status":
+            # `status` is matched against a fixed vocabulary and the shipped thread template annotates
+            # it with a trailing ` # open | parked | ...` comment (A82) — strip that inline comment
+            # (YAML: a '#' after whitespace begins a comment) before the quote-strip below runs on the
+            # bare token. SCOPED to `status` deliberately: the other frontmatter fields are either
+            # spaceless tokens (id/conflict_key/domain — no ` #` to strip) or free-text scanned for
+            # OI-ids (item/next_action), where a blanket strip could truncate an `OI-N` after a stray
+            # ` #` and silently break the thread join this tool exists to make (review MEDIUM #1).
+            m = re.search(r"\s#", val)
+            if m:
+                val = val[:m.start()].rstrip()
         if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
             val = val[1:-1]
         out[key] = val
@@ -56,16 +69,20 @@ def thread_oids(thread):
 
 
 def court(status):
-    """Whose court the ball is in. `open` -> 'you' (still your move); `resolved`/`reverted`/`closed`/
-    `done` -> 'done' (finished, leaves the actionable surfaces); anything else (parked/blank) ->
-    'others' (waiting on someone else). The three buckets keep a done task out of the "waiting on
-    others" track (review finding #3)."""
+    """Whose court the ball is in. `resolved`/`reverted`/`closed`/`done` -> 'done' (finished, leaves
+    the actionable surfaces); `parked` -> 'others' (waiting on someone else); `open` OR any
+    unrecognized/blank status -> 'you' (still your move). The three buckets keep a done task out of the
+    "waiting on others" track (review finding #3).
+
+    Unrecognized defaults to 'you', NOT 'others' (A82): a malformed status (e.g. a comment-polluted
+    parse miss) must degrade toward VISIBLE-in-Act rather than vanishing into the ⏳ In-motion track,
+    which by design carries no A/B buttons. Only the explicit `parked` vocabulary routes to 'others'."""
     s = (status or "").strip().lower()
-    if s == "open":
-        return "you"
     if s in ("resolved", "reverted", "closed", "done"):
         return "done"
-    return "others"
+    if s == "parked":
+        return "others"
+    return "you"
 
 
 def _in_motion(thread):
