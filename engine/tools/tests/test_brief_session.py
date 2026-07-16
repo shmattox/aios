@@ -522,3 +522,58 @@ def test_settle_candidates_not_a_list_rejected():
     ok, errs = bs.validate_cache(c)
     assert not ok
     assert any("candidates must be a list" in e for e in errs)
+
+
+# ── validate_cache: act-list coverage (A88) ─────────────────────────────────────────
+# The Act list (`cache["act"]`, renamed from `needs_you` in Task 5) is the FIRST thing the
+# brief shows, and was entirely unasserted by validate_cache. These lock the same per-item
+# rules (title/domain/claude_voice.text/system_voice) applied to a station item.
+
+def test_validate_cache_rejects_an_act_item_missing_voice():
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": [{"title": "T", "domain": "gm"}]}          # no claude_voice
+    ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
+    assert not ok and any("act" in e and "claude_voice" in e for e in errs)
+
+
+def test_validate_cache_accepts_a_well_formed_act():
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": [{"title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+                      "system_voice": None}]}
+    ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
+    assert ok, errs
+
+
+def test_validate_cache_rejects_act_not_a_list():
+    c = dict(_MIN)
+    c["act"] = {"not": "a list"}
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any(e.startswith("act:") and "list" in e for e in errs)
+
+
+def test_validate_cache_act_item_missing_title_and_domain():
+    c = dict(_MIN)
+    c["act"] = [{"claude_voice": {"text": "c"}, "system_voice": None}]
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any("act[0]" in e and "title" in e for e in errs)
+    assert any("act[0]" in e and "domain" in e for e in errs)
+
+
+def test_validate_cache_act_item_bad_grade_reuses_station_rule():
+    # Same grade/cite rules as a station item, proving the act path shares the helper rather
+    # than a re-implemented copy.
+    c = dict(_MIN)
+    c["act"] = [{"title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+                 "system_voice": {"grade": "1", "text": "x"}}]   # grade 1 requires cite
+    ok, errs = bs.validate_cache(c)
+    assert not ok
+    assert any("act[0]" in e and "cite" in e for e in errs)
+
+
+def test_validate_cache_act_absent_is_valid():
+    ok, errs = bs.validate_cache(dict(_MIN))
+    assert ok, errs

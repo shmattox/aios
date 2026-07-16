@@ -67,9 +67,10 @@ import glob
 # is used. No person's domain set is hardcoded here.
 DEFAULT_STATION_ORDER = ["kb"]
 
-VALID_CHOICES  = {"system", "claude", "other", "defer"}
-VALID_GRADES   = {"1", "2a", "2b"}   # "0" / null = system_voice absent
-VALID_STATUSES = {"pending", "in_progress", "complete"}
+VALID_CHOICES     = {"system", "claude", "other", "defer"}
+VALID_GRADES      = {"1", "2a", "2b"}   # "0" / null = system_voice absent
+GRADES_WITH_CITE  = {"1", "2a"}         # cite required for these; optional for "2b"
+VALID_STATUSES    = {"pending", "in_progress", "complete"}
 
 # ─────────────────────────── internal helpers ───────────────────────────
 
@@ -328,6 +329,29 @@ def status_summary(state_path):
     return result
 
 
+def _validate_system_voice(sv, prefix):
+    """Validate one item's `system_voice` field. `sv` is either None (Grade 0, accepted) or a
+    dict with `grade` in VALID_GRADES, non-empty `text`, and `cite` required for grades in
+    GRADES_WITH_CITE. Returns a list of error strings (empty = valid).
+
+    Shared by validate_cache's station-item loop AND its act-item loop (A88) so the grade/cite
+    rules are asserted in exactly one place instead of two copies drifting apart.
+    """
+    if sv is None:
+        return []  # Grade 0 — explicitly accepted
+    if not isinstance(sv, dict):
+        return [f"{prefix}: system_voice must be null or a dict"]
+    errs = []
+    grade = sv.get("grade")
+    if grade not in VALID_GRADES:
+        errs.append(f"{prefix}: system_voice.grade {grade!r} not in {sorted(VALID_GRADES)}")
+    if not sv.get("text"):
+        errs.append(f"{prefix}: system_voice.text is required when system_voice is present")
+    if grade in GRADES_WITH_CITE and not sv.get("cite"):
+        errs.append(f"{prefix}: system_voice.cite is required for grade {grade!r}")
+    return errs
+
+
 def validate_cache(cache_obj, required_domains=None):
     """Validate a brief-cache.json payload for the new stations/station_counts keys (spec §3.2).
 
@@ -344,7 +368,6 @@ def validate_cache(cache_obj, required_domains=None):
         - cite for grades "1" and "2a" (required); for "2b" cite is optional
     """
     errors = []
-    GRADES_WITH_CITE = {"1", "2a"}
 
     if not isinstance(cache_obj, dict):
         return False, ["cache_obj must be a dict"]
@@ -399,23 +422,30 @@ def validate_cache(cache_obj, required_domains=None):
                 if not isinstance(cv, dict) or not cv.get("text"):
                     errors.append(f"{prefix}: missing claude_voice.text")
                 # system_voice: null is Grade 0 (accepted); dict must be valid
-                sv = item.get("system_voice")
-                if sv is None:
-                    pass  # Grade 0 — explicitly accepted
-                elif isinstance(sv, dict):
-                    grade = sv.get("grade")
-                    if grade not in VALID_GRADES:
-                        errors.append(
-                            f"{prefix}: system_voice.grade {grade!r} not in {sorted(VALID_GRADES)}"
-                        )
-                    if not sv.get("text"):
-                        errors.append(f"{prefix}: system_voice.text is required when system_voice is present")
-                    if grade in GRADES_WITH_CITE and not sv.get("cite"):
-                        errors.append(
-                            f"{prefix}: system_voice.cite is required for grade {grade!r}"
-                        )
-                else:
-                    errors.append(f"{prefix}: system_voice must be null or a dict")
+                errors.extend(_validate_system_voice(item.get("system_voice"), prefix))
+
+    # act block (A88): the Act list is the FIRST thing the brief shows and was the least-
+    # asserted object in the chain — `needs_you` (now `act`, Task 5's rename) never appeared
+    # in this function, so a gather emitting an empty or malformed Act passed with OK. Same
+    # per-item rules as a station item; optional (absent act is valid — back-compat).
+    act = cache_obj.get("act")
+    if act is not None:
+        if not isinstance(act, list):
+            errors.append(f"act: expected a list, got {type(act).__name__}")
+        else:
+            for idx, item in enumerate(act):
+                prefix = f"act[{idx}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{prefix}: must be a dict")
+                    continue
+                if "title" not in item:
+                    errors.append(f"{prefix}: missing 'title'")
+                if "domain" not in item:
+                    errors.append(f"{prefix}: missing 'domain'")
+                cv = item.get("claude_voice")
+                if not isinstance(cv, dict) or not cv.get("text"):
+                    errors.append(f"{prefix}: missing claude_voice.text")
+                errors.extend(_validate_system_voice(item.get("system_voice"), prefix))
 
     # settle block (optional; when present, candidates must be well-formed)
     SETTLE_TRANSITIONS = {"done", "in_progress", "due_rolled"}
@@ -721,13 +751,17 @@ if __name__ == "__main__":
         print(json.dumps({"ok": True, "archived_to": archive_dir}, indent=2))
 
     elif op == "validate_cache":
-        # validate_cache <cache.json> [--domains a,b,c]  (the profile's domain groups; without
-        # it the check is structural — counts and stations must agree on a non-empty set)
+        # validate_cache <cache.json> --domains a,b,c  (the profile's domain-group keys)
+        # --domains is REQUIRED (A88): without it the expected set is derived FROM THE CACHE, so a
+        # cache that dropped a whole silo validates OK — the check defaults to not conserving.
+        if "--domains" not in args[2:]:
+            print("validate_cache: --domains is required (the profile's domain-group keys). "
+                  "Without it the expected set is derived from the cache itself and a dropped "
+                  "silo validates OK.", file=sys.stderr)
+            sys.exit(2)
         path = args[1]
         rest = args[2:]
-        req = None
-        if "--domains" in rest:
-            req = [s.strip() for s in rest[rest.index("--domains") + 1].split(",") if s.strip()]
+        req = [s.strip() for s in rest[rest.index("--domains") + 1].split(",") if s.strip()]
         obj = _read_json(path)
         if obj is None:
             print("FAIL: could not parse cache JSON")
