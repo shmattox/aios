@@ -475,3 +475,26 @@ def test_standup_acceptance_gate_note_renders_loud():
 def test_standup_empty_state_line_unchanged_without_acceptance():
     out = R.render_factory_standup({"groups": {}, "errors": [], "spend": {}})
     assert out == "🏭 Factory Standup — nothing waiting (backlogs drained clean)."
+
+
+# --- Task 8: headline_bubbles computed — the 5/7/21 regression ---
+
+def test_headline_bubbles_are_computed_from_the_objects_they_count():
+    # The 5/7/21 regression: on 2026-07-15 the cache said "5 need you" in prose while act had 7
+    # items and the standup said 21. A computed chip cannot disagree with its own list.
+    cache = {"act": [{"title": "a%d" % i, "domain": "gm",
+                      "claude_voice": {"text": "c"}, "system_voice": None} for i in range(7)],
+             "held": [{"id": "h1"}, {"id": "h2"}],
+             "flags": ["f1"], "going_quiet": [{"name": "X"}],
+             "settle": {"auto_healed": [], "candidates": []}}
+    bubbles = R.compute_headline_bubbles(cache)
+    assert bubbles[0] == "7 need you", bubbles
+    assert "2 to review" in bubbles
+    assert "1 Paper-Governs flag" in bubbles or "1 Paper-Governs flags" in bubbles
+    assert "1 going quiet" in bubbles
+
+
+def test_headline_bubbles_cannot_disagree_with_act():
+    cache = {"act": [], "held": [], "flags": [], "going_quiet": [],
+             "settle": {"auto_healed": [], "candidates": []}}
+    assert R.compute_headline_bubbles(cache)[0] == "0 need you"

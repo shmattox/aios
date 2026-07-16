@@ -187,6 +187,31 @@ def render_in_motion(cache):
     return "\n".join(lines)
 
 
+def compute_headline_bubbles(cache, standup=None):
+    """The masthead chips, DERIVED from the objects they count — never model-authored prose.
+
+    2026-07-15: the live cache said "5 need you" while cache['needs_you'] held 7 items and
+    standup.totals.needs_you was 21 — three numbers on one screen, nothing comparing them. A chip
+    computed from its own list cannot lie about that list.
+    """
+    act = cache.get("act") or []
+    held = cache.get("held") or []
+    flags = cache.get("flags") or []
+    quiet = cache.get("going_quiet") or []
+    settle = cache.get("settle") or {}
+    healed = settle.get("auto_healed") or []
+    cands = settle.get("candidates") or []
+    bubbles = ["%d need you" % len(act),
+               "%d to review" % len(held),
+               "%d Paper-Governs flag%s" % (len(flags), "" if len(flags) == 1 else "s"),
+               "%d going quiet" % len(quiet),
+               "%d settled · %d to confirm" % (len(healed), len(cands))]
+    if standup:
+        bubbles.append("%d decisions · %d new" % ((standup.get("totals") or {}).get("needs_you", 0),
+                                                  len(standup.get("delta") or [])))
+    return bubbles
+
+
 def _load(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
