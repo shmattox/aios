@@ -457,7 +457,15 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
         delta = standup.get("delta") or []
         carded = {str(i.get("item_id") or i.get("id") or "")
                   for i in (cache_obj.get("stations", {}).get("gm") or [])}
-        missing = [i for i in delta if str(i.get("id") or "") not in carded]
+        # Id-less items (id: "") are the standup collector's deliberate "◷" backlog seeds —
+        # it routes them AROUND its dedupe sidecar, so they are ALWAYS in delta and ALWAYS
+        # reported via the collector's own errors[] (already surfaced in the factory panel).
+        # An id-less item can never be carded BY ID, so holding it to this rule is asserting
+        # something structurally impossible — and because Invariant 4 is "INVALID -> don't
+        # render", that impossible assertion bricks the ENTIRE brief over a single seed that
+        # was never meant to have a card (Task 7). Only real-id items are held to "must have
+        # a card"; an id-less item mixed in must not mask a genuine unaccounted real-id item.
+        missing = [i for i in delta if i.get("id") and str(i.get("id")) not in carded]
         if missing:
             errors.append(
                 "standup delta %d · stations.gm %d · %d unaccounted: %s"

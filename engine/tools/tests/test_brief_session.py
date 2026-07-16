@@ -609,3 +609,34 @@ def test_validate_cache_passes_when_every_delta_item_has_a_card():
     ok, errs = bs.validate_cache(
         cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
     assert ok, errs
+
+
+# ── validate_cache: id-less delta items are exempt from the card assertion (Task 7) ─
+# The standup collector deliberately emits id-less "◷" backlog seeds (id: "") and routes
+# them around its dedupe sidecar, so they are ALWAYS in delta and ALWAYS reported via the
+# collector's own errors[]. An id-less item can never be carded BY ID — asserting one is
+# structurally impossible to satisfy, and previously bricked the ENTIRE brief (Invariant 4:
+# INVALID -> don't render) over a single seed that was never meant to have a card.
+
+def test_validate_cache_passes_when_the_only_unaccounted_delta_item_has_no_id():
+    standup = {"delta": [{"repo": "aios", "id": "", "title": "Capture worthiness floor…"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert ok, errs
+
+
+def test_validate_cache_id_less_item_does_not_mask_a_real_unaccounted_item():
+    standup = {"delta": [{"repo": "aios", "id": "", "title": "Capture worthiness floor…"},
+                         {"repo": "Claude", "id": "H54", "title": "Retirement sweep"}]}
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": []}
+    ok, errs = bs.validate_cache(
+        cache, required_domains=["system", "personal", "familyoffice", "gm"], standup=standup)
+    assert not ok
+    joined = " ".join(errs)
+    assert "H54" in joined, joined
+    assert "Capture worthiness floor" not in joined, joined
