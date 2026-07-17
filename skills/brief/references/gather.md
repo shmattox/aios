@@ -101,11 +101,12 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > **No headline file.** The header prose (masthead + count chips + narrative + the movement line +
 > the delta-gated health lines) is synthesized at RENDER time from the data below, not written to a
 > file — see `SKILL.md` `## Render flow` step 3. `headline_bubbles` (the count chips) lives in the
-> JSON payload; the pipeline-health / factory-health / economic-figures / standing-check lines are
+> JSON payload; the pipeline-health / factory-health / economic-figures / standing-check /
+> brainstorm-packet lines are
 > lifted verbatim at render by `pipeline_health.py` / `brief_render.py factory-health` /
-> `resolve_brief.py header` / `standing_checks.py render`, then
+> `resolve_brief.py header` / `standing_checks.py render` / `brainstorm_packets.py render`, then
 > **delta-gated** (A93 §4): the gather stores each line's verbatim text as `health_lines`
-> (`{pipeline, factory, economic, standing}`) AND its fingerprint via `brief_render.health_fingerprints`
+> (`{pipeline, factory, economic, standing, packets}`) AND its fingerprint via `brief_render.health_fingerprints`
 > as `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
 > (silence) from a real change. A fact rendered from a live query THIS run is tagged
 > `queried_live: true` (or `source: "live"`) so `render_citation` cites the run, not the cache (A93 §2c).
@@ -118,7 +119,17 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > sidecar also lists any `watching_clear` entries (`kind: watch` checks that just went green) — surface
 > them to the interactive session as "N Watching lines ready to delete"; the runner never edits
 > BACKLOG.md itself.
-
+>
+> **Brainstorm packets (A77).** Scan the configured packet directories once for pending decision
+> cards: `brainstorm_packets.py scan --dirs "<comma-joined brief.packet_dirs>" --out
+> "<env_root>/state/brainstorm-packets/cards.json"` (fact-free — `brief.packet_dirs` from
+> `profile/domains.yaml`, a list of the repos' `docs/superpowers/findings` dirs where the GM19
+> `factory-packet` skill writes packets; env-root-resolved, NEVER cwd-relative; an unset/empty list
+> or absent dir degrades silent, exit 0 always). Store the sidecar's `cards[]` verbatim on the cache
+> as `packet_cards` (the walk renders them — `SKILL.md` `# Stage 2b`), and lift the `packets` health
+> line from `brainstorm_packets.py render --results "<…>/cards.json"` — it is FINDINGS ONLY (a
+> malformed packet refused with `⚠ brainstorm packet malformed: …`); the valid pending packets never
+> appear as a header line, only as cards. Steady-state (no pending, no malformed) → both are silent.
 1. `<env_root>/state/brief-cache.json` — the structured payload + `generated_utc` + the source
    counts the delta check uses. **`source_counts` MUST carry the capability manifest** — the
    machine-readable truth the render flow's parity check reads (never prose): `notion_live` (true ONLY if

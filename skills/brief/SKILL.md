@@ -117,9 +117,11 @@ from the exact data about to be shown — so it can never drift out of sync with
    - the **deterministic health lines, DELTA-GATED (A93 §4)** — each is still lifted VERBATIM (never
      hand-composed) from `pipeline_health.py --path "<env_root>/state/context-log.jsonl"`,
      `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"`,
-     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"`, and the **standing-check** line from
+     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"`, the **standing-check** line from
      `standing_checks.py render --results "<env_root>/state/standing-checks/results.json"` (A94 —
-     `⛑`/`👁` reds only; empty when all invariants hold) — but a line prints ONLY when its
+     `⛑`/`👁` reds only; empty when all invariants hold), and the **brainstorm-packet** line from
+     `brainstorm_packets.py render --results "<env_root>/state/brainstorm-packets/cards.json"` (A77 —
+     `⚠` malformed-packet refusals only; valid packets surface as cards, not a header line) — but a line prints ONLY when its
      content changed since the last brief (steady-state = silence, generalizing A60). The gather
      stored the current lines as `health_lines` and their fingerprints as `health_fingerprints` in
      the cache; lift `brief_render.py health-gate "<env_root>/state/brief-cache.json"
@@ -440,6 +442,34 @@ sweep DEGRADED …` = the overnight sweep could not reach the source, so the wor
 it looks complete (A49); `ℹ resolve steady-state …` (A60) = the unresolved worklist has been unchanged for
 ≥ N sweeps (a known ceiling, not fresh news) — surface this quiet line and do NOT also raise a System-station
 card about resolve candidate quality (`references/gather.md`). No line = resolve complete and the sweep is fresh.
+
+## Brainstorm-packet decision cards (A77 — after the walk render, before done)
+The GM19 `factory-packet` skill pre-runs a seed's solo-runnable brainstorm legs and freezes the
+residual Seth-judgment into a machine-readable `questions:` block; A77 surfaces those here so all
+judgment converges on the one front door (2026-07-12). The gather already scanned + validated the
+packets and stored the renderable set as `packet_cards` on the cache (`references/gather.md` →
+`## Cache contract`). For EACH `packet_cards[]` entry (skip the section entirely when the list is
+empty — zero pending packets renders nothing):
+
+1. Present its `questions[]` through the **standard AskUserQuestion affordance** — one card per
+   question, `header` as the chip, `question` as the prompt, each `options[]` `{label, description}`
+   as a choice, `default` pre-selected. **Render the question set VERBATIM** (deterministic-render
+   rule — the model authors nothing here; the packet froze the data, the walk only presents it).
+2. On answer, write it straight back into the packet (act-then-tell — a tactical file write in the
+   repo the packet lives in, the one write this surface makes):
+   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brainstorm_packets.py" answer --packet "<packet path>"
+   --answers '<JSON map {"q1":"<chosen label>", ...}>'`. The `--answers` value is a single
+   JSON-encoded argument — pass it as one shell arg and let JSON carry any quotes/apostrophes in a
+   free-text "Other" answer (do NOT string-interpolate a raw label into the shell; a label containing
+   a quote would break it — build the JSON with a real encoder). The tool accepts an "Other"
+   free-text value verbatim, and re-parses the rewritten packet before saving, so a value it cannot
+   represent fails loud instead of corrupting the file. It flips `status: answered` only once every
+   question is answered; a partial round leaves `status: awaiting-answers` so the remainder
+   re-surfaces next brief.
+3. The `answered` packet is NOT drafted into a spec here — **spec authorship stays session-owned and
+   human-reviewed** (GM19 spec §Decisions 3); the next session sees `answered` and writes the spec.
+4. A malformed packet never reaches this step — it was refused at gather as the `⚠ brainstorm packet
+   malformed: …` health line (delta-gated), never rendered as a card.
 
 ## VERIFY step (before reporting success for any walk session)
 Run `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" validate_cache
