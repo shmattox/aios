@@ -92,11 +92,22 @@ For each domain group in `domains.yaml`, in parallel:
 Whoever gathered — the on-trigger live gather (normal) or the optional scheduled cache-writer —
 ends by writing these two files, smallest first, atomic (write → re-read → verify parses → retry ×3):
 
-> **No headline file.** The header prose (masthead + count chips + narrative + the three
-> deterministic health lines) is synthesized at RENDER time from the data below, not written to a
+> **Snapshot the incumbent cache FIRST (A93 §3).** Before overwriting `brief-cache.json`, copy the
+> existing one to `<env_root>/state/brief-cache.prev.json` (keep exactly one — overwrite the prior
+> snapshot). The render's movement line (`✅ N cleared` / `↑ now in Act`) and the delta-gated health
+> lines both diff the fresh cache against this snapshot. On the very first gather there is no
+> incumbent — skip the copy; the movement line then reports only what is newly in Act.
+
+> **No headline file.** The header prose (masthead + count chips + narrative + the movement line +
+> the delta-gated health lines) is synthesized at RENDER time from the data below, not written to a
 > file — see `SKILL.md` `## Render flow` step 3. `headline_bubbles` (the count chips) lives in the
 > JSON payload; the pipeline-health / factory-health / economic-figures lines are lifted verbatim at
-> render by `pipeline_health.py` / `brief_render.py factory-health` / `resolve_brief.py header`.
+> render by `pipeline_health.py` / `brief_render.py factory-health` / `resolve_brief.py header`, then
+> **delta-gated** (A93 §4): the gather stores each line's verbatim text as `health_lines`
+> (`{pipeline, factory, economic}`) AND its fingerprint via `brief_render.health_fingerprints` as
+> `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
+> (silence) from a real change. A fact rendered from a live query THIS run is tagged
+> `queried_live: true` (or `source: "live"`) so `render_citation` cites the run, not the cache (A93 §2c).
 
 1. `<env_root>/state/brief-cache.json` — the structured payload + `generated_utc` + the source
    counts the delta check uses. **`source_counts` MUST carry the capability manifest** — the

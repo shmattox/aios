@@ -912,3 +912,63 @@ def test_cli_validate_cache_standup_missing_file_fails_clean(tmp_path):
     assert proc.returncode != 0
     assert "Traceback" not in (proc.stderr or ""), proc.stderr
     assert "could not parse standup" in (proc.stdout or ""), (proc.stdout, proc.stderr)
+
+
+# ─── A93 §2a — carryover-deferral revalidation ───────────────────────────────
+
+def test_revalidate_carryover_drops_completed_and_keeps_open():
+    carry = [{"item_id": "OI-1", "title": "Still open"},
+             {"item_id": "OI-2", "title": "Done since deferral"},
+             {"item_id": "", "title": "no id — cannot resurface"}]
+    kept, cleared = bs.revalidate_carryover(carry, live_ids={"OI-1"})
+    assert [d["item_id"] for d in kept] == ["OI-1"]
+    assert {d["item_id"] for d in cleared} == {"OI-2", ""}
+
+
+def test_revalidate_carryover_none_live_keeps_everything():
+    carry = [{"item_id": "OI-1", "title": "x"}, {"item_id": "OI-2", "title": "y"}]
+    kept, cleared = bs.revalidate_carryover(carry, live_ids=None)
+    assert kept == carry and cleared == []
+
+
+def test_resume_or_new_auto_clears_completed_carryover(tmp_path):
+    state = str(tmp_path / "brief-session.json")
+    # a completed prior walk with two open deferrals
+    bs.new_walk(state, "2026-07-16", ["kb", "dev"], {"dev": 1})
+    bs.record_deferral(state, "OI-1", "Kept task", "dev", "timing", "2026-07-16")
+    bs.record_deferral(state, "OI-9", "Completed task", "dev", "blocked", "2026-07-16")
+    led = bs.load(state)
+    led["status"] = "complete"
+    bs._atomic_write(state, led)
+    # fresh gather: only OI-1 is still live
+    mode, ledger = bs.resume_or_new(state, "2026-07-17", ["kb", "dev"], {"dev": 1},
+                                    live_ids={"OI-1"})
+    assert mode == "new"
+    assert [d["item_id"] for d in ledger["deferrals"]] == ["OI-1"]
+    assert [d["item_id"] for d in ledger["auto_cleared_deferrals"]] == ["OI-9"]
+
+
+# ─── A93 §2b — live held-panel enforcement in validate_cache ─────────────────
+
+def _min_cache(held_n):
+    return {"station_counts": {"dev": 0}, "stations": {"dev": []}, "act": [],
+            "held": [{"id": "h%d" % i} for i in range(held_n)]}
+
+
+def test_validate_cache_flags_held_panel_drift():
+    cache = _min_cache(3)
+    ok, errs = bs.validate_cache(cache, required_domains=["dev"], live_held_count=5)
+    assert not ok
+    assert any("held-panel drift" in e for e in errs), errs
+
+
+def test_validate_cache_passes_when_held_matches_live():
+    cache = _min_cache(4)
+    ok, errs = bs.validate_cache(cache, required_domains=["dev"], live_held_count=4)
+    assert ok, errs
+
+
+def test_validate_cache_held_check_skipped_when_no_live_count():
+    cache = _min_cache(3)
+    ok, errs = bs.validate_cache(cache, required_domains=["dev"])  # no live count -> not checked
+    assert ok, errs

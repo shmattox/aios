@@ -127,11 +127,39 @@ def load(state_path):
     return obj
 
 
-def new_walk(state_path, walk_id, station_order, stations_seed, carryover_deferrals=None):
+def revalidate_carryover(carryover, live_ids):
+    """A93 §2: partition carried-over deferrals against the FRESH gather's live item set.
+
+    A deferral resurfaces next walk only while its task is still open. When `live_ids` (the set
+    of item ids present-and-not-done in the fresh gather) is supplied, a carryover whose item_id
+    is NOT in it has been completed/removed since the deferral and must be DROPPED from the walk
+    (never re-rendered as a card) and REPORTED once as auto-cleared. Returns (kept, cleared).
+
+    Match by `item_id` (the ledger's stable key). `live_ids` is a set/collection of ids; an
+    empty-string / missing item_id can never match a live id, so such a deferral is treated as
+    cleared (it cannot be re-surfaced deterministically anyway). `live_ids=None` means "no fresh
+    gather supplied" — everything is kept unchanged (the pre-A93 behavior). Origin: the
+    2026-07-17 incident — two tasks completed that day still re-rendered as overdue cards."""
+    if live_ids is None:
+        return list(carryover or []), []
+    live = set(live_ids)
+    kept, cleared = [], []
+    for d in (carryover or []):
+        if str(d.get("item_id") or "") in live and d.get("item_id"):
+            kept.append(d)
+        else:
+            cleared.append(d)
+    return kept, cleared
+
+
+def new_walk(state_path, walk_id, station_order, stations_seed, carryover_deferrals=None,
+             auto_cleared=None):
     """Create and atomically write a fresh ledger.
 
     stations_seed: dict mapping station -> items_total  e.g. {"system": 5, "personal": 3, ...}
     carryover_deferrals: list of deferral dicts from the previous walk (resurface: next-walk)
+    auto_cleared: deferrals dropped by revalidate_carryover (their task completed since) — stored
+      so the render can report them as one `✅ auto-cleared` line (A93 §2); never re-rendered as cards.
     Returns the new ledger dict.
     """
     now = _utcnow()
@@ -153,16 +181,19 @@ def new_walk(state_path, walk_id, station_order, stations_seed, carryover_deferr
         "stations": stations,
         "decisions": [],
         "deferrals": list(carryover_deferrals) if carryover_deferrals else [],
+        "auto_cleared_deferrals": list(auto_cleared) if auto_cleared else [],
     }
     if not _atomic_write(state_path, ledger):
         _die(f"new_walk: failed to write ledger to {state_path} after retries")
     return ledger
 
 
-def resume_or_new(state_path, walk_id, station_order, stations_seed):
+def resume_or_new(state_path, walk_id, station_order, stations_seed, live_ids=None):
     """Return ("resume", ledger) if an in_progress ledger exists, else ("new", new ledger).
 
-    On "new", carries over open deferrals from the previous ledger (resurface: next-walk).
+    On "new", carries over open deferrals from the previous ledger (resurface: next-walk). When
+    `live_ids` (the fresh gather's live item ids) is given, carryovers whose task is done/absent
+    are dropped and recorded as `auto_cleared_deferrals` instead of re-surfacing (A93 §2).
     """
     existing = load(state_path)
     if isinstance(existing, dict) and existing.get("status") == "in_progress":
@@ -173,8 +204,9 @@ def resume_or_new(state_path, walk_id, station_order, stations_seed):
         for d in existing.get("deferrals", []):
             if d.get("resurface") == "next-walk":
                 carryover.append(d)
+    kept, cleared = revalidate_carryover(carryover, live_ids)
     ledger = new_walk(state_path, walk_id, station_order, stations_seed,
-                      carryover_deferrals=carryover)
+                      carryover_deferrals=kept, auto_cleared=cleared)
     return ("new", ledger)
 
 
@@ -355,7 +387,7 @@ def _validate_system_voice(sv, prefix):
     return errs
 
 
-def validate_cache(cache_obj, required_domains=None, standup=None):
+def validate_cache(cache_obj, required_domains=None, standup=None, live_held_count=None):
     """Validate a brief-cache.json payload for the new stations/station_counts keys (spec §3.2).
 
     Returns (ok: bool, errors: list[str]).
@@ -569,6 +601,25 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
                 % (len(delta), len(carded), len(missing),
                    ", ".join(str(i.get("id") or i.get("title")) for i in missing)))
 
+    # A93 §2: live held-panel enforcement. The held panel is recomputed fresh from the queue at
+    # render (`queue_tx select --stage awaiting`), but the cache carries a gather-time `held[]`
+    # snapshot that the count chips and Stage-1 seed are derived from. If the live count no longer
+    # matches the snapshot the brief is about to render, the cache is stale for the review panel —
+    # exactly the 2026-07-17 class where an already-approved held item re-rendered as pending.
+    # The already-mandated "recompute the held panel fresh" prose (SKILL.md render flow step 4)
+    # becomes an ENFORCED assertion, not advisory. The caller passes the fresh awaiting count
+    # (lane review/confirm); None means "no live count supplied" — the check is skipped (the
+    # pre-A93 behavior, so offline/no-queue callers still validate).
+    if live_held_count is not None:
+        held = cache_obj.get("held")
+        cache_held_n = len(held) if isinstance(held, list) else 0
+        if cache_held_n != int(live_held_count):
+            errors.append(
+                "held-panel drift: cache held[] has %d item%s but the live queue "
+                "(queue_tx select --stage awaiting) has %d — the review panel would render a "
+                "stale set. Re-gather; do not present." % (
+                    cache_held_n, "" if cache_held_n == 1 else "s", int(live_held_count)))
+
     # settle block (optional; when present, candidates must be well-formed)
     SETTLE_TRANSITIONS = {"done", "in_progress", "due_rolled"}
     settle = cache_obj.get("settle")
@@ -599,34 +650,125 @@ def validate_cache(cache_obj, required_domains=None, standup=None):
 # The brief SKILL's "is the cache USABLE" boolean (age + capability parity) and the cwd→scope
 # map lookup were prose a model re-derived every trigger. They are pure logic; they live here.
 
+def _iso_epoch(s):
+    """ISO-8601 (`YYYY-MM-DDTHH:MM:SS…`, trailing tz/`Z` tolerated) → epoch seconds, or None.
+    The one parser both cache_status and its signal readers share so a timestamp is compared
+    the SAME way everywhere (the A93 event-staleness check is a set of epoch comparisons)."""
+    try:
+        import calendar
+        return calendar.timegm(time.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
+
+
+def _session_updated(session_path):
+    """Newest walk-ledger activity: `brief-session.json` `updated_utc` → epoch, or None.
+    A decision/deferral recorded after the gather bumps `updated_utc`, so a ledger newer than
+    the cache means the board moved since the cache was written (A93 §1 signal 1)."""
+    obj = _read_json(session_path)
+    if not isinstance(obj, dict):
+        return None
+    return _iso_epoch(obj.get("updated_utc") or "")
+
+
+def _changelog_newest(changelog_path):
+    """Newest write-back receipt: max `ts` across `notion-changelog.jsonl` → epoch, or None.
+    Each row is `{"ts": ISO, ...}` (notion_writeback.append_receipt). Torn/blank lines are
+    skipped, never fatal — same tolerance as the pipeline-health reader (A93 §1 signal 2)."""
+    newest = None
+    try:
+        with open(changelog_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                e = _iso_epoch(rec.get("ts") or "")
+                if e is not None and (newest is None or e > newest):
+                    newest = e
+    except OSError:
+        return None
+    return newest
+
+
 def cache_status(cache_path, max_age_min=720, notion_enabled=False, session_has_notion=False,
-                 now_epoch=None):
-    """USABILITY of the brief cache — TWO tests, both must pass (a cache can be minutes old
-    and still unusable):
-      age        : generated_utc within max_age_min.
+                 now_epoch=None, session_updated=None, changelog_newest=None,
+                 notion_watermark=None):
+    """USABILITY of the brief cache. The verdict is NO LONGER a pure age timer (A93 §1): three
+    change signals, ANY newer than the cache's `generated_utc`, flip it to `stale` regardless
+    of age — `max_age_min` survives only as a backstop ceiling.
+
+      event      : the board moved since the gather. Signals (epoch, each optional):
+                     session_updated   — brief-session.json updated_utc (a walk decision/deferral)
+                     changelog_newest  — newest notion-changelog.jsonl receipt (a write-back)
+                     notion_watermark  — max last_edited_time across the writable task DBs
+                                         (a direct-in-Notion edit; the gatherer passes the value,
+                                         so the tool stays fact-free/offline; skip when Notion is
+                                         unreachable — the existing `degraded` semantics apply).
+                   Origin: the 2026-07-17 stale-brief incident — a 07:02 cache rendered a
+                   16:05Z-completed task as overdue because age said fresh and the fresh-path
+                   delta check saw only ADDED urgent tasks, never completions.
+      age        : generated_utc within max_age_min (BACKSTOP only now — a cache older than the
+                   ceiling is stale even with no signal).
       capability : if the profile enables Notion AND this session can reach it, a cache
                    gathered notion-blind (source_counts.notion_live false / 0 sources) is
                    DEGRADED — treat exactly like stale (the headless-precompute guard).
-    status: 'missing' | 'stale' | 'degraded' | 'fresh'."""
+    status: 'missing' | 'stale' | 'degraded' | 'fresh'.
+
+    session_updated / changelog_newest / notion_watermark accept either an ISO string OR an
+    already-resolved epoch (float/int); None means the signal was not supplied. The CLI resolves
+    the file-backed two via _session_updated / _changelog_newest and passes --notion-watermark
+    through verbatim."""
     obj = _read_json(cache_path)
     if obj is None:
         return {"status": "missing", "exists": False}
     gen = obj.get("generated_utc") or ""
-    try:
-        import calendar
-        gen_epoch = calendar.timegm(time.strptime(gen[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
-        gen_epoch = 0.0
+    gen_epoch = _iso_epoch(gen) or 0.0
     now = time.time() if now_epoch is None else now_epoch
     age_min = max(0.0, (now - gen_epoch) / 60.0)
     age_ok = gen_epoch > 0 and age_min <= float(max_age_min)
     sc = obj.get("source_counts") or {}
     notion_live = bool(sc.get("notion_live"))
     degraded = bool(notion_enabled and session_has_notion and not notion_live)
-    status = "fresh" if (age_ok and not degraded) else ("degraded" if (age_ok and degraded) else "stale")
+
+    # Event-based staleness: a signal newer than the cache means the board moved after the gather.
+    # A signal may arrive as an ISO string or a pre-resolved epoch; None = not supplied. Only
+    # signals STRICTLY newer than generated_utc count (a signal at/at-or-before the gather is
+    # already reflected in the cache). gen_epoch==0 (unparseable) means we can't compare — no
+    # signal can fire, and age_ok is already False, so the cache is stale via the backstop.
+    def _sig_epoch(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return _iso_epoch(v)
+    stale_signals = []
+    if gen_epoch > 0:
+        for name, val in (("walk_ledger", session_updated),
+                          ("changelog", changelog_newest),
+                          ("notion_watermark", notion_watermark)):
+            e = _sig_epoch(val)
+            if e is not None and e > gen_epoch:
+                stale_signals.append(name)
+    event_stale = bool(stale_signals)
+
+    if event_stale:
+        status = "stale"
+    elif not age_ok:
+        status = "stale"
+    elif degraded:
+        status = "degraded"
+    else:
+        status = "fresh"
     return {"status": status, "exists": True, "generated_utc": gen,
             "age_min": round(age_min, 1), "age_ok": age_ok,
-            "notion_live": notion_live, "degraded": degraded}
+            "notion_live": notion_live, "degraded": degraded,
+            "event_stale": event_stale, "stale_signals": stale_signals}
 
 
 def resolve_scope(cwd, domain_map, default_scope="all", vault_root=None, kb_map=None,
@@ -803,6 +945,7 @@ if __name__ == "__main__":
         rest = args[3:]
         order = None                       # resolved after parsing: --order > kb + seed keys
         seed = {}
+        live_ids = None                    # A93 §2: fresh gather's live ids for carryover revalidation
         i = 0
         while i < len(rest):
             if rest[i] == "--order" and i + 1 < len(rest):
@@ -814,11 +957,14 @@ if __name__ == "__main__":
                         k, v = pair.split(":", 1)
                         seed[k.strip()] = int(v.strip())
                 i += 2
+            elif rest[i] == "--live-ids" and i + 1 < len(rest):
+                live_ids = [s.strip() for s in rest[i + 1].split(",") if s.strip()]
+                i += 2
             else:
                 i += 1
         if order is None:
             order = ["kb"] + [k for k in seed if k != "kb"]
-        mode, ledger = resume_or_new(path, walk_id, order, seed)
+        mode, ledger = resume_or_new(path, walk_id, order, seed, live_ids=live_ids)
         print(f"mode: {mode}")
         print(json.dumps(ledger, indent=2, ensure_ascii=False))
 
@@ -899,7 +1045,11 @@ if __name__ == "__main__":
             if standup_obj is None:
                 print("FAIL: could not parse standup JSON: %s" % standup_path)
                 sys.exit(1)
-        ok, errs = validate_cache(obj, required_domains=req, standup=standup_obj)
+        live_held = None
+        if "--live-held-count" in rest:
+            live_held = int(rest[rest.index("--live-held-count") + 1])
+        ok, errs = validate_cache(obj, required_domains=req, standup=standup_obj,
+                                  live_held_count=live_held)
         if ok:
             print("OK")
         else:
@@ -910,6 +1060,8 @@ if __name__ == "__main__":
 
     elif op == "cache-status":
         # cache-status <cache.json> [--max-age-min N] [--notion-enabled] [--session-has-notion]
+        #              [--session brief-session.json] [--changelog notion-changelog.jsonl]
+        #              [--notion-watermark ISO]
         #              [--cwd P --domain-map JSON] [--default-scope S] [--vault-root V --kb-map JSON]
         #              [--override S] [--cache-write]
         path = args[1]
@@ -918,10 +1070,17 @@ if __name__ == "__main__":
             return name in rest
         def _val(name, default=None):
             return rest[rest.index(name) + 1] if name in rest else default
+        # A93 §1: resolve the two file-backed change signals HERE (the tool core stays offline);
+        # --notion-watermark is passed through verbatim by the gatherer.
         st = cache_status(path,
                           max_age_min=float(_val("--max-age-min", 720)),
                           notion_enabled=_flag("--notion-enabled"),
-                          session_has_notion=_flag("--session-has-notion"))
+                          session_has_notion=_flag("--session-has-notion"),
+                          session_updated=(_session_updated(_val("--session"))
+                                           if _val("--session") else None),
+                          changelog_newest=(_changelog_newest(_val("--changelog"))
+                                            if _val("--changelog") else None),
+                          notion_watermark=_val("--notion-watermark"))
         st["scope"] = resolve_scope(_val("--cwd", os.getcwd()),
                                     json.loads(_val("--domain-map", "{}")),
                                     default_scope=_val("--default-scope", "all"),

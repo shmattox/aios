@@ -106,6 +106,60 @@ try:
     st5 = bs.cache_status(os.path.join(d, "nope.json"))
     check("cache-status: missing cache", st5["status"] == "missing")
 
+    # ── A93 §1: event-based staleness — a signal newer than generated_utc flips to stale ──
+    # even when the age backstop says fresh. Offline: signals are supplied as ISO/epoch, the
+    # tool never reaches out. Cache is 30 min old (well within max_age 720).
+    write_cache(30, True)
+    gen_epoch = now - 30 * 60
+    older = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(gen_epoch - 600))   # before the gather
+    newer = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(gen_epoch + 600))   # after the gather
+    base = dict(max_age_min=720, notion_enabled=False, session_has_notion=False, now_epoch=now)
+    # signal 1: walk ledger newer
+    s_w = bs.cache_status(cache, session_updated=newer, **base)
+    check("cache-status A93: walk-ledger newer than cache -> stale",
+          s_w["status"] == "stale" and "walk_ledger" in s_w["stale_signals"])
+    # signal 2: changelog tail newer
+    s_c = bs.cache_status(cache, changelog_newest=newer, **base)
+    check("cache-status A93: changelog newer than cache -> stale",
+          s_c["status"] == "stale" and "changelog" in s_c["stale_signals"])
+    # signal 3: notion watermark newer
+    s_n = bs.cache_status(cache, notion_watermark=newer, **base)
+    check("cache-status A93: notion watermark newer than cache -> stale",
+          s_n["status"] == "stale" and "notion_watermark" in s_n["stale_signals"])
+    # all three OLDER than the cache -> still fresh (already reflected in the gather)
+    s_ok = bs.cache_status(cache, session_updated=older, changelog_newest=older,
+                           notion_watermark=older, **base)
+    check("cache-status A93: signals older than cache stay fresh",
+          s_ok["status"] == "fresh" and not s_ok["event_stale"])
+    # the age backstop still bites with no signal at all
+    write_cache(800, True)
+    s_age = bs.cache_status(cache, max_age_min=720, notion_enabled=False,
+                            session_has_notion=False, now_epoch=now)
+    check("cache-status A93: age backstop still stale with no signal",
+          s_age["status"] == "stale" and not s_age["event_stale"])
+    # epoch (not just ISO) accepted for a signal
+    write_cache(30, True)
+    s_ep = bs.cache_status(cache, session_updated=(gen_epoch + 600), **base)
+    check("cache-status A93: an epoch signal is accepted too", s_ep["status"] == "stale")
+
+    # file-backed signal readers (what the CLI resolves before calling cache_status)
+    sess = os.path.join(d, "brief-session.json")
+    json.dump({"updated_utc": newer}, open(sess, "w", encoding="utf-8"))
+    check("cache-status A93: _session_updated reads updated_utc",
+          bs._session_updated(sess) == bs._iso_epoch(newer))
+    check("cache-status A93: _session_updated on a missing file -> None",
+          bs._session_updated(os.path.join(d, "no-sess.json")) is None)
+    clog = os.path.join(d, "notion-changelog.jsonl")
+    with open(clog, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": older}) + "\n")
+        f.write("\n")                                   # blank line tolerated
+        f.write("{ torn line\n")                        # unparseable line skipped
+        f.write(json.dumps({"ts": newer}) + "\n")
+    check("cache-status A93: _changelog_newest takes the max ts, skips torn lines",
+          bs._changelog_newest(clog) == bs._iso_epoch(newer))
+    check("cache-status A93: _changelog_newest on a missing file -> None",
+          bs._changelog_newest(os.path.join(d, "no-clog.jsonl")) is None)
+
     # ── brief_session.resolve_scope (the cwd→silo lever as code) ──
     env_root = os.path.join(d, "env"); vault = os.path.join(env_root, "Vault")
     proj = os.path.join(env_root, "Projects", "family-office", "sub")

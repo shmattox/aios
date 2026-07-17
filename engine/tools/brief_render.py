@@ -3,7 +3,9 @@
 Pure stdlib. No LLM, no network. The card format lives HERE, not in skill prose,
 so it cannot drift between renders or surfaces. See
 docs/superpowers/specs/2026-07-02-brief-deterministic-card-render-design.md
+docs/superpowers/specs/2026-07-17-brief-freshness-actionability-design.md (A93 §2c/§3/§4)
 """
+import hashlib
 import json
 import sys
 
@@ -232,6 +234,131 @@ def render_unchanged_line(standup):
     return "· %d unchanged · walk them" % n if n else ""
 
 
+# ─────────────────────────── A93 §2c — citation honesty ───────────────────────────
+
+def render_citation(item, generated_utc, run_date=None):
+    """The freshness cite a card is allowed to carry (A93 §2c). A card may say
+    'queried live {run_date}' ONLY when the fact was queried in THIS run — enforced by DERIVING
+    the string from the item's source tag, not authored prose. A `queried_live: true` item (or
+    one tagged `source: "live"`) cites the run; every cache-sourced fact cites the cache's
+    `generated_utc`. Origin: the 2026-07-17 incident, where a cache-sourced overdue flag was
+    presented as if freshly checked."""
+    live = bool(item.get("queried_live")) or item.get("source") == "live"
+    if live:
+        return "queried live %s" % (run_date or generated_utc or "")
+    return "as of %s" % (generated_utc or "")
+
+
+# ─────────────────────────── A93 §2a — carryover auto-clear line ───────────────────────────
+
+def render_auto_cleared(cleared):
+    """One line per carryover deferral whose task completed since it was deferred (A93 §2a). The
+    walk drops these instead of re-rendering a completed task as a card; the render reports them
+    once. `cleared` is the ledger's `auto_cleared_deferrals` list (or a ledger dict — its list is
+    read). Empty -> '' (earn-your-line: nothing to report renders nothing)."""
+    if isinstance(cleared, dict):
+        cleared = cleared.get("auto_cleared_deferrals") or []
+    lines = []
+    for d in (cleared or []):
+        if isinstance(d, dict):
+            title = d.get("title") or d.get("item_id") or "(untitled)"
+            lines.append("✅ auto-cleared: %s (completed since deferral)" % title)
+    return "\n".join(lines)
+
+
+# ─────────────────────────── A93 §3 — the movement line ───────────────────────────
+
+def _rows_id_title(items):
+    """(stable_id, title) for each dict row — id/item_id/title, in that precedence for the id."""
+    out = []
+    for i in (items or []):
+        if isinstance(i, dict):
+            iid = str(i.get("item_id") or i.get("id") or i.get("title") or "")
+            out.append((iid, i.get("title") or "(untitled)"))
+    return out
+
+
+def _board_rows(cache):
+    """Every rendered row across the board: all stations + Act (id, title)."""
+    rows = []
+    for items in ((cache or {}).get("stations") or {}).values():
+        if isinstance(items, list):
+            rows += _rows_id_title(items)
+    rows += _rows_id_title((cache or {}).get("act") or [])
+    return rows
+
+
+def compute_movement(prev_cache, cache):
+    """A93 §3 board diff. Returns {"cleared": [titles], "now_in_act": [titles]}.
+    - cleared: a row present in the PRIOR cache's stations/Act that is ABSENT (Done/removed) in
+      the fresh gather — the completed-work the brief should visibly register.
+    - now_in_act: a fresh Act ROW (the court-filtered `_act_rows`, what the reader actually sees)
+      whose id was not in the prior cache's Act slice — the next urgency tier surfacing.
+    Identity is id (id/item_id) with a title fallback. Empty ids never match (can't diff)."""
+    prev_cache = prev_cache or {}
+    cache = cache or {}
+    present = {iid for iid, _ in _board_rows(cache) if iid}
+    seen, cleared = set(), []
+    for iid, title in _board_rows(prev_cache):
+        if iid and iid not in present and iid not in seen:
+            seen.add(iid)
+            cleared.append(title)
+    prev_act = {iid for iid, _ in _rows_id_title(_act_rows(prev_cache)) if iid}
+    seen2, now_in_act = set(), []
+    for iid, title in _rows_id_title(_act_rows(cache)):
+        if iid and iid not in prev_act and iid not in seen2:
+            seen2.add(iid)
+            now_in_act.append(title)
+    return {"cleared": cleared, "now_in_act": now_in_act}
+
+
+def render_movement(prev_cache, cache, collapse=5):
+    """The masthead movement block (A93 §3), engine-emitted and lifted verbatim. Zero-delta
+    renders NOTHING (no '0 cleared' line — same earn-your-line rule as the health lines). Past
+    `collapse` cleared titles, show a count + the first few + an expand marker."""
+    mv = compute_movement(prev_cache, cache)
+    lines = []
+    cleared = mv["cleared"]
+    if cleared:
+        if len(cleared) > collapse:
+            lines.append("✅ %d cleared since last brief — %s … [expand]"
+                         % (len(cleared), ", ".join(cleared[:collapse])))
+        else:
+            lines.append("✅ %d cleared since last brief — %s"
+                         % (len(cleared), ", ".join(cleared)))
+    if mv["now_in_act"]:
+        lines.append("↑ now in Act: %s" % ", ".join(mv["now_in_act"]))
+    return "\n".join(lines)
+
+
+# ─────────────────────────── A93 §4 — delta-gated health lines ───────────────────────────
+
+def _fingerprint(text):
+    """Whitespace-normalized SHA1 of a health line — the stored 'last rendered' identity."""
+    return hashlib.sha1(" ".join((text or "").split()).encode("utf-8")).hexdigest()
+
+
+def health_fingerprints(lines):
+    """Map {name: text} -> {name: fingerprint} — what the cache stores so the NEXT brief can
+    tell steady-state from a real change (A93 §4, generalizing A60's resolve steady-state)."""
+    return {name: _fingerprint(text) for name, text in (lines or {}).items()}
+
+
+def filter_health_lines(lines, prev_fingerprints=None):
+    """A health line earns its place only when it CHANGED since the last brief (A93 §4). Steady
+    state prints nothing; first appearance counts as changed (no prior fingerprint). Returns
+    (shown: dict {name: text} in input order, fingerprints: dict {name: fp} for storage).
+    `lines` is a {name: text} map (insertion-ordered)."""
+    prev = prev_fingerprints or {}
+    shown, fps = {}, {}
+    for name, text in (lines or {}).items():
+        fp = _fingerprint(text)
+        fps[name] = fp
+        if prev.get(name) != fp:
+            shown[name] = text
+    return shown, fps
+
+
 def _load(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -429,6 +556,9 @@ def main(argv):
               "       brief_render.py settle <cache.json> [--domain <kb> ...]\n"
               "       brief_render.py headline <cache.json> [standup.json]\n"
               "       brief_render.py unchanged <standup.json>\n"
+              "       brief_render.py movement <cache.json> <prev-cache.json>\n"
+              "       brief_render.py auto-cleared <brief-session.json>\n"
+              "       brief_render.py health-gate <cache.json> [prev-cache.json]\n"
               "       brief_render.py factory-health <latest.md path>",
               file=sys.stderr)
         return 2
@@ -461,6 +591,39 @@ def main(argv):
         # decision items reached Seth via unverified prose). This makes the rule runnable: the
         # brief lifts THIS op's stdout verbatim beneath the delta cards. argv[2] is standup.json.
         print(render_unchanged_line(_load(cache_path)))
+        return 0
+    if op == "movement":
+        # A93 §3: movement <fresh-cache.json> <prev-cache.json>. Lift stdout verbatim into the
+        # masthead. Zero-delta prints nothing (an empty line — the caller drops a blank block).
+        if key is None:
+            print("usage: brief_render.py movement <cache.json> <prev-cache.json>", file=sys.stderr)
+            return 2
+        prev = None
+        try:
+            prev = _load(key)
+        except (OSError, ValueError):
+            prev = None  # no prior cache yet (first brief) -> no movement, not an error
+        print(render_movement(prev, _load(cache_path)))
+        return 0
+    if op == "auto-cleared":
+        # A93 §2a: auto-cleared <brief-session.json>. Reports carryover deferrals whose task
+        # completed since deferral, one line each; empty -> nothing.
+        print(render_auto_cleared(_load(cache_path)))
+        return 0
+    if op == "health-gate":
+        # A93 §4: health-gate <cache.json> [<prev-cache.json>]. Prints only the health lines that
+        # CHANGED since the last brief (steady-state prints nothing). The cache carries the
+        # verbatim `health_lines` map {name: text}; the prior cache carries `health_fingerprints`.
+        cache_obj = _load(cache_path)
+        prev_fps = {}
+        if key:
+            try:
+                prev_fps = (_load(key) or {}).get("health_fingerprints") or {}
+            except (OSError, ValueError):
+                prev_fps = {}
+        shown, _fps = filter_health_lines(cache_obj.get("health_lines") or {}, prev_fps)
+        for _name, text in shown.items():
+            print(text)
         return 0
     cache = _load(cache_path)
     if op == "station":

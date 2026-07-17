@@ -73,10 +73,22 @@ from the exact data about to be shown — so it can never drift out of sync with
    python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" cache-status "<env_root>/state/brief-cache.json" \
      --max-age-min <profile brief.max_age_min, default 720> \
      [--notion-enabled] [--session-has-notion] \
+     --session "<env_root>/state/brief-session.json" \
+     --changelog "<env_root>/state/notion-changelog.jsonl" \
+     [--notion-watermark <max last_edited_time across the notion.write.writable task DBs, ISO>] \
      --cwd <session cwd> --domain-map '<session_capture.domain_map JSON>' \
      --vault-root "<vault>" --kb-map '<vault.live_kb_map JSON>'
    ```
    → `status`: `fresh` | `stale` | `degraded` | `missing`.
+   **Freshness is event-based, not a pure timer (A93 §1).** `--max-age-min` is now only a BACKSTOP
+   ceiling; the verdict flips to `stale` the moment any of three change signals is newer than the
+   cache's `generated_utc`: the walk ledger (`--session`, a decision/deferral recorded after the
+   gather), the newest write-back receipt (`--changelog`), or a direct-in-Notion edit
+   (`--notion-watermark` — the ONE cheap live query: `max(last_edited_time)` across the writable
+   task DBs, gathered via the same Notion path; skip the flag on a no-Notion or unreachable install
+   — the existing `degraded` semantics cover it). This is what the 2026-07-17 stale-brief incident
+   needed: the 07:02 cache was <720 min old, so the pure timer said `fresh` while the board had
+   already moved (walk 15:39Z). The tool does the comparison; do NOT re-derive it in prose.
    - **Stale / missing / degraded (the NORMAL at-desk case):** run the full gather
      (`references/gather.md` → `# Gather`), populate the cache data (`## Cache contract`),
      `validate_cache`, and **write the cache files back** (`brief-cache.{json,md}` only — there is no
@@ -89,14 +101,29 @@ from the exact data about to be shown — so it can never drift out of sync with
    - a **date + `as of {generated_utc}` masthead** (echo the scope: `All silos · as of …` at root,
      `Family Office · as of …` scoped);
    - the **count chips** lifted from `headline_bubbles` in the cache JSON;
+   - the **movement line (A93 §3)** — lift `brief_render.py movement "<env_root>/state/brief-cache.json"
+     "<env_root>/state/brief-cache.prev.json"` VERBATIM (the prior cache was snapshotted before this
+     gather overwrote it — see `references/gather.md` `## Cache contract`). It emits `✅ N cleared
+     since last brief — …` (work that completed since the last brief) and `↑ now in Act: …` (the next
+     urgency tier that just surfaced). **Zero-delta emits nothing** — drop the block entirely, never
+     print "0 cleared". On the very first brief (no prev cache) it prints only what is newly in Act.
+   - the **auto-cleared line (A93 §2)** — if the walk carried deferrals forward, lift
+     `brief_render.py auto-cleared "<env_root>/state/brief-session.json"` VERBATIM: a deferral whose
+     task is Done in the fresh gather renders once as `✅ auto-cleared: {title} (completed since
+     deferral)` and NEVER as a card (the revalidation happens in `resume_or_new` — see
+     `# Walk ledger` → `## Carryover deferrals`). Empty → nothing.
    - a **2–3 sentence narrative synthesis** — the week's theme/gravity in {{ENTITY_NAME}}'s voice
      (model-authored from the gathered payload; NOT a bare task line), the **Top** item + **First move**;
-   - the three **deterministic health lines**, each lifted VERBATIM (never hand-composed):
-     `pipeline_health.py --path "<env_root>/state/context-log.jsonl"` (pipeline health),
-     `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"` (factory health),
-     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"` (economic-figures flag).
-     If a tool is unreachable, OMIT its line — never hand-compose it.
-   Because this synthesis runs against the data being displayed, its `as of` stamp is always THIS run's — it cannot drift stale the way a precomputed preview file would.
+   - the **deterministic health lines, DELTA-GATED (A93 §4)** — each is still lifted VERBATIM (never
+     hand-composed) from `pipeline_health.py --path "<env_root>/state/context-log.jsonl"`,
+     `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"`, and
+     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"` — but a line prints ONLY when its
+     content changed since the last brief (steady-state = silence, generalizing A60). The gather
+     stored the current lines as `health_lines` and their fingerprints as `health_fingerprints` in
+     the cache; lift `brief_render.py health-gate "<env_root>/state/brief-cache.json"
+     "<env_root>/state/brief-cache.prev.json"` VERBATIM — it prints only the changed lines
+     (first appearance counts as changed). If a tool is unreachable, OMIT its line — never hand-compose it.
+   Because this synthesis runs against the data being displayed, its `as of` stamp is always THIS run's — it cannot drift stale the way a precomputed preview file would. **Citation honesty (A93 §2c):** a card's freshness cite is derived, never authored — a fact carries "queried live {date}" only when it was queried THIS run (`brief_render.render_citation`), else "as of {generated_utc}".
 4. **Then the stationed walk** — `brief_session.py status` (scope-match guard, Resume/Start-over),
    then ONE STATION AT A TIME: Stage 0 (Settle), Stage 1 (KB), Stage 2 (domain cards). Preserve the
    designed segmentation (icon H2 headers + counts, `---` rules, `### N · {title}` item headers, the
@@ -160,6 +187,13 @@ Every decision or deferral is written to the ledger **immediately** when taken �
 
 ## Carryover deferrals
 `resume_or_new` automatically seeds the new walk's `deferrals` list with `resurface:next-walk` entries from the prior walk. Render each carryover item at the top of its station with the stored one-word reason shown in brackets: `[deferred: timing]`.
+
+**Revalidate carryover against the fresh gather (A93 §2).** Pass the fresh gather's live item ids
+to `resume_or_new` (`--live-ids id1,id2,…` on the CLI, or `live_ids=` in-process): a carryover
+deferral whose task is Done/absent in the fresh gather is DROPPED from the walk and recorded to the
+ledger's `auto_cleared_deferrals` instead of re-surfacing as a card. This closes the 2026-07-17
+class where a task completed since its deferral still re-rendered as an overdue card. Report the
+cleared set once via the `brief_render.py auto-cleared` line (`## Render flow` step 3), never a card.
 
 # Scope — folder-aware (which silo's brief)
 
@@ -408,9 +442,13 @@ card about resolve candidate quality (`references/gather.md`). No line = resolve
 ## VERIFY step (before reporting success for any walk session)
 Run `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" validate_cache
 <env_root>/state/brief-cache.json --domains <the profile's domain-group keys, comma-separated>
---standup <env_root>/state/factory/standup.json` — `--domains` is REQUIRED (without it the
-expected set is derived from the cache itself, so a dropped silo validates OK) and `--standup`
-asserts every delta item has a card. Any INVALID output → do NOT present the brief; surface the error and re-gather (fix the data, not the render).
+--standup <env_root>/state/factory/standup.json --live-held-count <N>` — `--domains` is REQUIRED
+(without it the expected set is derived from the cache itself, so a dropped silo validates OK),
+`--standup` asserts every delta item has a card, and **`--live-held-count` (A93 §2) asserts the
+cache's `held[]` still matches the FRESH review-lane count** — pass the count from a live
+`queue_tx.py select --stage awaiting` recompute (lane review/confirm); a mismatch means the review
+panel would render a stale held set (the 2026-07-17 already-approved-item-re-rendered-as-pending
+class) and is INVALID. Any INVALID output → do NOT present the brief; surface the error and re-gather (fix the data, not the render).
 
 Data gate + format gate = the two-layer block cannot be dropped: `validate_cache` guarantees the data
 (every item has `claude_voice.text` + a valid/absent `system_voice`), the renderer guarantees the

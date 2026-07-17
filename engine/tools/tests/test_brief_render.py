@@ -620,3 +620,102 @@ def test_render_factory_standup_surfaces_unparsed_census():
     assert "60 unparsed" in out
     assert "A80 tail" in out
     assert "nothing waiting" not in out.lower()   # the panel renders, it is not the empty state
+
+
+# ─── A93 §2c — citation honesty ──────────────────────────────────────────────
+
+def test_render_citation_live_fact_cites_the_run():
+    assert R.render_citation({"queried_live": True}, "2026-07-17T11:02:00Z",
+                             run_date="2026-07-17") == "queried live 2026-07-17"
+    assert R.render_citation({"source": "live"}, "2026-07-17T11:02:00Z",
+                             run_date="2026-07-17") == "queried live 2026-07-17"
+
+
+def test_render_citation_cache_fact_cites_generated_utc():
+    assert R.render_citation({}, "2026-07-17T11:02:00Z") == "as of 2026-07-17T11:02:00Z"
+    # a non-live item can NEVER claim "queried live"
+    assert "queried live" not in R.render_citation({"queried_live": False}, "2026-07-17T11:02:00Z")
+
+
+# ─── A93 §2a — auto-cleared render ───────────────────────────────────────────
+
+def test_render_auto_cleared_reports_each_completed_deferral():
+    cleared = [{"item_id": "OI-9", "title": "Wire the transfer"},
+               {"item_id": "OI-8", "title": "File the note"}]
+    out = R.render_auto_cleared(cleared)
+    assert out == ("✅ auto-cleared: Wire the transfer (completed since deferral)\n"
+                   "✅ auto-cleared: File the note (completed since deferral)")
+
+
+def test_render_auto_cleared_reads_a_ledger_dict_and_empty_is_silent():
+    assert R.render_auto_cleared({"auto_cleared_deferrals": []}) == ""
+    assert R.render_auto_cleared([]) == ""
+    assert R.render_auto_cleared({"auto_cleared_deferrals":
+                                  [{"title": "X"}]}) == "✅ auto-cleared: X (completed since deferral)"
+
+
+# ─── A93 §3 — the movement line ──────────────────────────────────────────────
+
+def test_render_movement_shows_cleared_and_now_in_act():
+    prev = {"stations": {"dev": [{"id": "A", "title": "Alpha"}]},
+            "act": [{"id": "A", "title": "Alpha"}, {"id": "B", "title": "Beta"}]}
+    # Alpha is gone (done); Beta stays; Gamma is newly in Act
+    fresh = {"stations": {"dev": [{"id": "B", "title": "Beta"}]},
+             "act": [{"id": "B", "title": "Beta"}, {"id": "C", "title": "Gamma"}]}
+    out = R.render_movement(prev, fresh)
+    assert "✅ 1 cleared since last brief — Alpha" in out
+    assert "↑ now in Act: Gamma" in out
+    assert "Beta" not in out.split("now in Act")[0]  # Beta was already in Act, not "now"
+
+
+def test_render_movement_zero_delta_is_silent():
+    same = {"stations": {"dev": [{"id": "A", "title": "Alpha"}]},
+            "act": [{"id": "A", "title": "Alpha"}]}
+    assert R.render_movement(same, same) == ""
+    # no prior cache at all -> nothing cleared, everything "now in act" is NOT reported as cleared
+    assert R.render_movement(None, same) == "↑ now in Act: Alpha"
+
+
+def test_render_movement_collapses_many_cleared():
+    prev = {"act": [{"id": str(i), "title": "T%d" % i} for i in range(8)]}
+    fresh = {"act": []}
+    out = R.render_movement(prev, fresh, collapse=5)
+    assert "✅ 8 cleared" in out and "[expand]" in out
+    assert out.count(",") == 4  # exactly the first 5 titles shown
+
+
+def test_compute_movement_court_filtered_act_only():
+    # an item routed to In-motion (court others) is NOT an Act row, so it is not "now in Act"
+    prev = {"act": []}
+    fresh = {"act": [{"id": "W", "title": "Waiting", "in_motion": {"court": "others"}},
+                     {"id": "N", "title": "New move"}]}
+    mv = R.compute_movement(prev, fresh)
+    assert mv["now_in_act"] == ["New move"]
+
+
+# ─── A93 §4 — delta-gated health lines ───────────────────────────────────────
+
+def test_filter_health_lines_suppresses_unchanged():
+    lines = {"pipeline": "⚙️ Pipeline: 3 runs", "factory": "🔧 clear ✓"}
+    fps = R.health_fingerprints(lines)
+    # second run, same text -> nothing shows (steady state = silence)
+    shown, new_fps = R.filter_health_lines(lines, fps)
+    assert shown == {}
+    assert new_fps == fps
+
+
+def test_filter_health_lines_shows_changed_and_first_appearance():
+    prev = R.health_fingerprints({"pipeline": "⚙️ Pipeline: 3 runs", "factory": "🔧 clear ✓"})
+    lines = {"pipeline": "⚙️ Pipeline: 5 runs · ⚠ 2 anomalies",  # changed
+             "factory": "🔧 clear ✓",                            # unchanged
+             "economic": "⚠ 1 economic figure with no paper"}    # first appearance
+    shown, _ = R.filter_health_lines(lines, prev)
+    assert set(shown) == {"pipeline", "economic"}
+    assert "factory" not in shown
+
+
+def test_filter_health_lines_ignores_whitespace_only_changes():
+    a = {"pipeline": "⚙️  Pipeline:   3 runs"}
+    b = {"pipeline": "⚙️ Pipeline: 3 runs"}
+    shown, _ = R.filter_health_lines(b, R.health_fingerprints(a))
+    assert shown == {}  # only whitespace differs -> steady state
