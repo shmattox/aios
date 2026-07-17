@@ -101,13 +101,23 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > **No headline file.** The header prose (masthead + count chips + narrative + the movement line +
 > the delta-gated health lines) is synthesized at RENDER time from the data below, not written to a
 > file — see `SKILL.md` `## Render flow` step 3. `headline_bubbles` (the count chips) lives in the
-> JSON payload; the pipeline-health / factory-health / economic-figures lines are lifted verbatim at
-> render by `pipeline_health.py` / `brief_render.py factory-health` / `resolve_brief.py header`, then
+> JSON payload; the pipeline-health / factory-health / economic-figures / standing-check lines are
+> lifted verbatim at render by `pipeline_health.py` / `brief_render.py factory-health` /
+> `resolve_brief.py header` / `standing_checks.py render`, then
 > **delta-gated** (A93 §4): the gather stores each line's verbatim text as `health_lines`
-> (`{pipeline, factory, economic}`) AND its fingerprint via `brief_render.health_fingerprints` as
-> `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
+> (`{pipeline, factory, economic, standing}`) AND its fingerprint via `brief_render.health_fingerprints`
+> as `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
 > (silence) from a real change. A fact rendered from a live query THIS run is tagged
 > `queried_live: true` (or `source: "live"`) so `render_citation` cites the run, not the cache (A93 §2c).
+>
+> **Standing checks (A94).** Before lifting the `standing` line, run the perpetual-invariant registry
+> once: `standing_checks.py run --registry "<env_root>/state/standing-checks/checks.yaml" --out
+> "<env_root>/state/standing-checks/results.json" --cwd "<env_root>"` (zero-LLM, exit 0 always — a
+> missing registry degrades silent, a corrupt one becomes a loud `⛑ … registry error` line). Then lift
+> the `standing` health line from `standing_checks.py render --results "<…>/results.json"`. The results
+> sidecar also lists any `watching_clear` entries (`kind: watch` checks that just went green) — surface
+> them to the interactive session as "N Watching lines ready to delete"; the runner never edits
+> BACKLOG.md itself.
 
 1. `<env_root>/state/brief-cache.json` — the structured payload + `generated_utc` + the source
    counts the delta check uses. **`source_counts` MUST carry the capability manifest** — the

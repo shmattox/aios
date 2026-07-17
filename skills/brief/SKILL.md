@@ -116,8 +116,10 @@ from the exact data about to be shown — so it can never drift out of sync with
      (model-authored from the gathered payload; NOT a bare task line), the **Top** item + **First move**;
    - the **deterministic health lines, DELTA-GATED (A93 §4)** — each is still lifted VERBATIM (never
      hand-composed) from `pipeline_health.py --path "<env_root>/state/context-log.jsonl"`,
-     `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"`, and
-     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"` — but a line prints ONLY when its
+     `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"`,
+     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"`, and the **standing-check** line from
+     `standing_checks.py render --results "<env_root>/state/standing-checks/results.json"` (A94 —
+     `⛑`/`👁` reds only; empty when all invariants hold) — but a line prints ONLY when its
      content changed since the last brief (steady-state = silence, generalizing A60). The gather
      stored the current lines as `health_lines` and their fingerprints as `health_fingerprints` in
      the cache; lift `brief_render.py health-gate "<env_root>/state/brief-cache.json"
