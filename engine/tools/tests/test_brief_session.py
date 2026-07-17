@@ -972,3 +972,18 @@ def test_validate_cache_held_check_skipped_when_no_live_count():
     cache = _min_cache(3)
     ok, errs = bs.validate_cache(cache, required_domains=["dev"])  # no live count -> not checked
     assert ok, errs
+
+
+def test_cli_validate_cache_bad_live_held_count_fails_clean(tmp_path):
+    import subprocess
+    tool = os.path.join(TOOLS, "brief_session.py")
+    cache_path = str(tmp_path / "cache_ok.json")
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump({"station_counts": {"gm": 0}, "stations": {"gm": []}, "act": [], "held": []}, f)
+    proc = subprocess.run(
+        [sys.executable, tool, "validate_cache", cache_path, "--domains", "gm",
+         "--live-held-count", "not-an-int"],
+        capture_output=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 2
+    assert "Traceback" not in (proc.stderr or ""), proc.stderr
+    assert "must be an integer" in (proc.stderr or ""), (proc.stdout, proc.stderr)

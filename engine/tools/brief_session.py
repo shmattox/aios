@@ -138,8 +138,11 @@ def revalidate_carryover(carryover, live_ids):
     Match by `item_id` (the ledger's stable key). `live_ids` is a set/collection of ids; an
     empty-string / missing item_id can never match a live id, so such a deferral is treated as
     cleared (it cannot be re-surfaced deterministically anyway). `live_ids=None` means "no fresh
-    gather supplied" — everything is kept unchanged (the pre-A93 behavior). Origin: the
-    2026-07-17 incident — two tasks completed that day still re-rendered as overdue cards."""
+    gather supplied" — everything is kept unchanged (the pre-A93 behavior). NOTE: an empty
+    collection (`[]`/`set()`) is DISTINCT from None — it means "the fresh gather is live and has
+    zero open items," so every carryover is (correctly) cleared. Only pass `[]` when the gather
+    genuinely ran; pass None when it did not. Origin: the 2026-07-17 incident — two tasks
+    completed that day still re-rendered as overdue cards."""
     if live_ids is None:
         return list(carryover or []), []
     live = set(live_ids)
@@ -1047,7 +1050,15 @@ if __name__ == "__main__":
                 sys.exit(1)
         live_held = None
         if "--live-held-count" in rest:
-            live_held = int(rest[rest.index("--live-held-count") + 1])
+            idx = rest.index("--live-held-count") + 1
+            try:
+                live_held = int(rest[idx])
+            except (IndexError, ValueError):
+                # Same fail-clean posture as --standup below: a gate RETURNS/EXITS, never
+                # tracebacks. A malformed/absent count is a usage error, not a validation result.
+                print("FAIL: --live-held-count must be an integer (the live "
+                      "queue_tx select --stage awaiting count)", file=sys.stderr)
+                sys.exit(2)
         ok, errs = validate_cache(obj, required_domains=req, standup=standup_obj,
                                   live_held_count=live_held)
         if ok:
