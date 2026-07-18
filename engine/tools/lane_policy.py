@@ -70,6 +70,11 @@ def ship_action(item, review_passed=True, now_epoch=None, confirm_ttl_days=CONFI
     """
     if not review_passed:
         return "reject"
+    # A96: a proposal (a proposed operational-Notion write) is ALWAYS human-approved — it never
+    # auto-ships regardless of lane or kb. Producers set lane:review, but this makes the invariant
+    # independent of a mis-lane: auto_ship_kbs can never apply to a proposal.
+    if item.get("kind") == "proposal":
+        return "hold"
     lane = item.get("lane")
     # kb backstop: a KB not cleared for unattended promotion is ALWAYS human-gated. An auto-ship or
     # past-TTL confirm decision is downgraded to 'hold' for it. (review/unknown lanes already hold.)

@@ -118,6 +118,30 @@ try:
     check("validate accepts an absolute payload_path (legacy/e2e shape) with no .. segment",
           queue_tx.validate(abspp) is None)
 
+    # 8b. A96/A69 conflict_key relaxation — two DRAFTLESS non-wiki shapes admitted (one change-set)
+    check("validate accepts a {kb}/notion/tasks/{slug} proposal key (A96)",
+          queue_tx.validate({"queue": [mk_item("p1", "awaiting", "familyoffice/notion/tasks/file-the-labs",
+                                               "review")]}) is None)
+    check("validate accepts an env/lessons/{slug} key (A69)",
+          queue_tx.validate({"queue": [mk_item("p2", "awaiting", "env/lessons/verify-before-distill",
+                                               "review")]}) is None)
+    check("validate STILL rejects an unknown key shape (not wiki/notion/lessons)",
+          queue_tx.validate({"queue": [mk_item("p3", "sorted", "dev/random/thing", "review")]}) is not None)
+    check("validate rejects a .. in a notion/tasks key (traversal fence still bites)",
+          queue_tx.validate({"queue": [mk_item("p4", "awaiting", "fo/notion/tasks/../../evil",
+                                               "review")]}) is not None)
+    # a draft_path item MUST keep the wiki shape — a notion/tasks key with a draft_path is refused
+    draftless_ok = {"queue": [mk_item("p5", "awaiting", "gm/notion/tasks/pay-vendor", "review")]}
+    check("validate accepts a notion/tasks key WITHOUT a draft_path", queue_tx.validate(draftless_ok) is None)
+    bad_draft = {"queue": [mk_item("p6", "awaiting", "gm/notion/tasks/pay-vendor", "review")]}
+    bad_draft["queue"][0]["draft_path"] = "03_Dev/staging/x.md"
+    check("validate rejects a draft_path item with a non-wiki conflict_key (wiki stays mandatory)",
+          queue_tx.validate(bad_draft) is not None)
+    good_draft = {"queue": [mk_item("p7", "awaiting", "gm/wiki/entities/x.md", "review")]}
+    good_draft["queue"][0]["draft_path"] = "03_Dev/staging/x.md"
+    check("validate accepts a draft_path item with a wiki conflict_key (unchanged path)",
+          queue_tx.validate(good_draft) is None)
+
     # 9. advisory lock: a held lock blocks a writer (fail-loud), a stale lock is reclaimed
     lock_path = live + ".lock"
     open(lock_path, "w").write('{"pid": 0}')

@@ -282,7 +282,7 @@ def main(argv=None):
                         help="allowlisted db/data-source id (the profile's notion.write.writable); repeatable")
     common.add_argument("--change-log", required=True,
                         help="receipt JSONL path (the profile's notion.write.change_log) — REQUIRED, rule 3")
-    common.add_argument("--by", default="aios-writeback")
+    common.add_argument("--by", default=None)   # per-verb default resolved post-parse (see below)
     common.add_argument("--run-id", default=None)
     sp = sub.add_parser("log-row", parents=[common], help="create one row in an allowlisted db")
     sp.add_argument("--db", required=True)
@@ -299,13 +299,25 @@ def main(argv=None):
     arp.add_argument("--db", required=True)
     arp.add_argument("--title", required=True)
     arp.add_argument("--field", action="append", default=[], metavar="NAME=VALUE")
-    arp.set_defaults(by="aios-gate-conclusion")
+    # create-task (A96): on approve of a brief proposal, create the task row in the allowlisted
+    # task_status group. Same create machinery + fences as log-row (allowlist rule 1, pause_economic
+    # rule 2, read-back receipt rule 3); --field carries the proposal's Priority=/Due= etc. A distinct
+    # verb so the gate-proposal path reads intent-first and its receipts default to that author.
+    ctp = sub.add_parser("create-task", parents=[common],
+                         help="create an approved proposal's task in an allowlisted task DB (A96)")
+    ctp.add_argument("--db", required=True)
+    ctp.add_argument("--title", required=True)
+    ctp.add_argument("--field", action="append", default=[], metavar="NAME=VALUE")
     fp = sub.add_parser("flip", parents=[common], help="update one status/select/checkbox/date property")
     fp.add_argument("--page", required=True)
     fp.add_argument("--field", required=True)
     fp.add_argument("--to", required=True)
     args = ap.parse_args(argv)
-    if args.cmd in ("log-row", "add-row"):
+    if args.by is None:   # per-verb receipt author (set_defaults can't be used — the --by action is
+        # shared via parents=[common], so a subparser set_defaults would leak to every verb)
+        args.by = {"add-row": "aios-gate-conclusion",
+                   "create-task": "aios-gate-proposal"}.get(args.cmd, "aios-writeback")
+    if args.cmd in ("log-row", "add-row", "create-task"):
         return cmd_log_row(args)
     return cmd_flip(args)
 

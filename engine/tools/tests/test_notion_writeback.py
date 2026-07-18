@@ -197,6 +197,31 @@ def test_cli_add_row_refuses_economic_content(capsys):
     assert "economic" in capsys.readouterr().err.lower()
 
 
+def test_cli_create_task_refuses_db_not_in_writable(capsys):
+    """A96: an approved proposal's create-task inherits log-row's allowlist fence (rule 1) — an
+    unlisted task DB is refused before any network call."""
+    rc = nw.main(["create-task", "--db", "11111111-1111-1111-1111-111111111111",
+                  "--writable", "22222222-2222-2222-2222-222222222222",
+                  "--title", "File the Labrador lab results", "--change-log", "unused.jsonl"])
+    assert rc == 3
+    assert "not in the writable allowlist" in capsys.readouterr().err
+
+
+def test_cli_create_task_refuses_economic_content(capsys):
+    rc = nw.main(["create-task", "--db", "11111111-1111-1111-1111-111111111111",
+                  "--writable", "11111111-1111-1111-1111-111111111111",
+                  "--title", "wire transfer the purchase price", "--change-log", "unused.jsonl"])
+    assert rc == 3
+    assert "economic" in capsys.readouterr().err.lower()
+
+
+def test_cli_create_task_defaults_by_to_gate_proposal(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(nw, "cmd_log_row", lambda args: (seen.update(by=args.by, cmd=args.cmd) or 0))
+    nw.main(["create-task", "--db", "x", "--writable", "x", "--title", "t", "--change-log", "c.jsonl"])
+    assert seen == {"by": "aios-gate-proposal", "cmd": "create-task"}
+
+
 def test_cli_add_row_defaults_by_to_conclusion(monkeypatch):
     """add-row routes to cmd_log_row with --by defaulted to the conclusion writer (not the
     generic writeback author), while an explicit --by still wins."""

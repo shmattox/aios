@@ -763,6 +763,55 @@ def test_fold_no_matches_is_a_noop():
     assert cache == before                                          # untouched, no resolved_prior
 
 
+# ── A96: proposal_summary (the "Sync proposes" panel) + dedupe queryability ──────────
+
+def _proposal(cid, dedupe_key, stage="awaiting", title="File the labs", producer="sync-gmail-gdrive"):
+    return {"id": cid, "kind": "proposal", "stage": stage, "lane": "review",
+            "payload": {"producer": producer, "teamspace": "familyoffice", "db": "db-tasks-fo",
+                        "title": title, "priority": "P2", "due": "2026-07-25",
+                        "evidence": "gdrive report 07-18 · thread t-42", "dedupe_key": dedupe_key}}
+
+
+def _write_queue(tmp_path, items):
+    p = tmp_path / "queue.json"
+    p.write_text(json.dumps({"queue": items}), encoding="utf-8")
+    return str(p)
+
+
+def test_proposal_summary_renders_rows_with_evidence_and_affordances(tmp_path):
+    qp = _write_queue(tmp_path, [_proposal("pr1", "fo|labs"), _proposal("pr2", "fo|mortgage"),
+                                 {"id": "x", "kind": "draft", "stage": "awaiting"}])  # non-proposal ignored
+    s = bs.proposal_summary(qp)
+    assert s["count"] == 2
+    assert "Sync proposes: 2 tasks awaiting approval" in s["panel_line"]
+    row = next(r for r in s["rows"] if r["id"] == "pr1")
+    assert row["title"] == "File the labs" and row["priority"] == "P2" and row["due"] == "2026-07-25"
+    assert row["evidence"].startswith("gdrive report") and row["dedupe_key"] == "fo|labs"
+    assert row["affordances"] == ["approve", "adjust", "reject"]
+    # one producer+teamspace group
+    assert len(s["groups"]) == 1 and s["groups"][0]["count"] == 2
+
+
+def test_proposal_summary_groups_when_over_threshold(tmp_path):
+    qp = _write_queue(tmp_path, [_proposal("p%d" % i, "k%d" % i) for i in range(7)])
+    s = bs.proposal_summary(qp, group_threshold=5)
+    assert s["count"] == 7 and s["grouped"] is True
+
+
+def test_proposal_summary_empty_and_unreadable(tmp_path):
+    assert bs.proposal_summary(_write_queue(tmp_path, []))["panel_line"] == "Sync proposes: clear ✓"
+    assert "error" in bs.proposal_summary(str(tmp_path / "nope.json"))
+
+
+def test_proposal_dedupe_history_finds_a_rejected_proposal(tmp_path):
+    """A96 §1(b): a REJECTED proposal stays queryable by dedupe_key so the producer never re-proposes it."""
+    qp = _write_queue(tmp_path, [_proposal("pr1", "fo|labs", stage="rejected"),
+                                 _proposal("pr2", "fo|other", stage="awaiting")])
+    hits = bs.proposal_dedupe_history(qp, "fo|labs")
+    assert [h["id"] for h in hits] == ["pr1"] and hits[0]["stage"] == "rejected"
+    assert bs.proposal_dedupe_history(qp, "nonexistent") == []
+
+
 # ── validate_cache: standup delta -> stations.gm conservation (A88 / Task 7) ────────
 # The brief printed "21 need you" from standup.json's delta while the walk rendered four
 # unrelated cards from the cache, and nothing compared them. A delta item with no card in

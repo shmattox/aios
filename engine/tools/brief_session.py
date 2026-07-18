@@ -973,6 +973,51 @@ def held_summary(queue_path, now_epoch=None, nag_days=7.0, group_threshold=20):
             "groups": sorted(groups.values(), key=lambda g: -g["count"])}
 
 
+def proposal_summary(queue_path, group_threshold=5):
+    """A96 §3: the 'Sync proposes' panel — awaiting `kind:proposal` items rendered inside the brief's
+    existing approval flow. Each row carries the proposed title/priority/due, the evidence line, the
+    target db, and the dedupe_key, plus per-row affordances (approve/adjust/reject); a producer+
+    teamspace group over `group_threshold` renders as one batch row (mirrors `held_summary`'s grouped
+    shape, A15). Fail-loud: an unreadable queue returns {"error": ...}, never a silent zero."""
+    d = _read_json(queue_path)
+    if not isinstance(d, dict) or not isinstance(d.get("queue"), list):
+        return {"error": "queue not readable/parseable: %s" % queue_path}
+    props = [it for it in d["queue"] if isinstance(it, dict)
+             and it.get("kind") == "proposal" and it.get("stage") == "awaiting"]
+    groups, rows = {}, []
+    for it in props:
+        pl = it.get("payload") or {}
+        producer = str(pl.get("producer") or it.get("source") or "sync")
+        teamspace = str(pl.get("teamspace") or pl.get("db") or "?")
+        key = (producer, teamspace)
+        g = groups.setdefault(key, {"producer": producer, "teamspace": teamspace, "count": 0, "ids": []})
+        g["count"] += 1
+        g["ids"].append(it.get("id"))
+        rows.append({"id": it.get("id"), "title": pl.get("title"), "priority": pl.get("priority"),
+                     "due": pl.get("due"), "evidence": pl.get("evidence"),
+                     "dedupe_key": pl.get("dedupe_key"), "db": pl.get("db"),
+                     "producer": producer, "teamspace": teamspace,
+                     "affordances": ["approve", "adjust", "reject"]})
+    count = len(props)
+    panel_line = ("Sync proposes: %d task%s awaiting approval — Approve all · Approve/Adjust/Reject"
+                  % (count, "" if count == 1 else "s")) if count else "Sync proposes: clear ✓"
+    return {"count": count, "panel_line": panel_line,
+            "grouped": count > int(group_threshold), "group_threshold": int(group_threshold),
+            "groups": sorted(groups.values(), key=lambda g: -g["count"]), "rows": rows}
+
+
+def proposal_dedupe_history(queue_path, dedupe_key):
+    """A96 §1(b): every proposal — INCLUDING rejected ones — stays queryable by `dedupe_key`, so a
+    producer never re-litigates a remembered decision (a rejection is remembered, not re-proposed
+    daily). Returns every `kind:proposal` queue item at ANY stage whose payload carries this
+    dedupe_key (the producer reads this before enqueuing). Empty on an unreadable queue."""
+    d = _read_json(queue_path)
+    if not isinstance(d, dict) or not isinstance(d.get("queue"), list):
+        return []
+    return [it for it in d["queue"] if isinstance(it, dict) and it.get("kind") == "proposal"
+            and (it.get("payload") or {}).get("dedupe_key") == dedupe_key]
+
+
 # ─────────────────────────── CLI ───────────────────────────
 
 def _utf8_stdio():
@@ -1205,6 +1250,20 @@ if __name__ == "__main__":
         print(json.dumps(hs, indent=2, ensure_ascii=False))
         if "error" in hs:
             sys.exit(1)
+
+    elif op == "proposal_summary":
+        # proposal_summary <queue.json> [--group-threshold N]   (A96 "Sync proposes" panel)
+        path = args[1]
+        rest = args[2:]
+        gt = rest[rest.index("--group-threshold") + 1] if "--group-threshold" in rest else 5
+        ps = proposal_summary(path, group_threshold=int(gt))
+        print(json.dumps(ps, indent=2, ensure_ascii=False))
+        if "error" in ps:
+            sys.exit(1)
+
+    elif op == "proposal_dedupe_history":
+        # proposal_dedupe_history <queue.json> <dedupe_key>   (A96 §1b producer-side dedupe)
+        print(json.dumps(proposal_dedupe_history(args[1], args[2]), indent=2, ensure_ascii=False))
 
     else:
         print(f"FAIL: unknown op {op!r}", file=sys.stderr)

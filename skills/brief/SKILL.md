@@ -454,6 +454,29 @@ empty — zero pending packets renders nothing):
 4. A malformed packet never reaches this step — it was refused at gather as the `⚠ brainstorm packet
    malformed: …` health line (delta-gated), never rendered as a card.
 
+## Sync proposals (A96 — the "Sync proposes" approval panel, inside the front door)
+Scheduled sync tasks (`sync-gmail-gdrive`, later `sync-budget`/`sync-trello`) enqueue actionable
+findings as `kind:proposal` queue items — a proposed operational-Notion task that a human approves,
+NEVER an autonomous write (`lane_policy` forces a proposal to `hold` regardless of lane/kb). Surface
+them here, one more lane into the same front door — no new station, no new surface:
+
+1. Render the panel VERBATIM from `brief_session.py proposal_summary <env_root>/state/queue.json`
+   (deterministic — the model authors nothing): its `panel_line` ("Sync proposes: N tasks awaiting
+   approval — Approve all · Approve/Adjust/Reject") plus, per `rows[]`, the proposed
+   `title` · `priority` · `due` and the `evidence` line, so approval is a glance not an investigation.
+   A group over threshold renders as one **batch row** (reuses `held_summary`'s grouped shape, A15).
+   Empty → render nothing.
+2. **On Approve** (batch or per row), create the task through the fence — act-then-tell, one receipt:
+   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/notion_writeback.py" create-task --db <row.db>
+   --writable <the profile's task_status db(s)> --title "<row.title>" --field Priority=<row.priority>
+   --field Due=<row.due> --change-log <env_root>/state/notion-changelog.jsonl` — it REFUSES an
+   unlisted db (rule 1) and economic content (rule 2), and reads back a receipt (rule 3). Then mark
+   the queue item shipped. **Adjust** first edits title/priority/due (free text), then creates.
+   Update-type proposals (flip an existing task's field) use the existing `flip` op.
+3. **On Reject**, mark the queue item `rejected` with the reason. Its `dedupe_key` stays queryable
+   via `brief_session.py proposal_dedupe_history` so the producer never re-proposes it (a rejection
+   is remembered, not re-litigated daily).
+
 ## VERIFY step (before reporting success for any walk session)
 Run `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_session.py" validate_cache
 <env_root>/state/brief-cache.json --domains <the profile's domain-group keys, comma-separated>

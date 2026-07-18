@@ -32,10 +32,17 @@ KEYED_STAGES = {"sorted", "awaiting", "shipped"}   # conflict_key required from 
 LOCK_TIMEOUT_S = 30      # how long a writer waits for the lock before failing loud
 LOCK_STALE_S   = 300     # a lock older than this is a crashed writer -> reclaim
 
-# conflict_key shape: <kb>/wiki/<type>/<slug...>. The regex alone still admits a `..` inside the
-# tail (dots are legal in slugs), so a separate segment-level `..` fence catches path traversal
-# (`dev/wiki/../../etc/passwd.md`) that the regex would pass.
-_CONFLICT_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+/wiki/[A-Za-z0-9._/-]+$")
+# conflict_key shapes. The wiki shape <kb>/wiki/<type>/<slug...> is the ORIGINAL and stays MANDATORY
+# for any item carrying a draft_path (a vault-wiki draft). A96/A69 relaxed the guard to admit two
+# NON-wiki, DRAFTLESS key shapes (one change-set, two consumers): a proposed operational-Notion task
+# `<kb>/notion/tasks/<slug>` (A96 proposal items) and an env-target lessons rule `env/lessons/<slug>`
+# (A69 reflect Lessons). The regexes alone still admit a `..` inside a tail (dots are legal in slugs),
+# so a separate segment-level `..` fence catches path traversal (`dev/wiki/../../etc/passwd.md`) that
+# a regex would pass.
+_CONFLICT_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+/wiki/[A-Za-z0-9._/-]+$")          # wiki (draft_path)
+_NOTION_TASK_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+/notion/tasks/[A-Za-z0-9._-]+$")  # A96 proposals
+_LESSONS_KEY_RE = re.compile(r"^env/lessons/[A-Za-z0-9._-]+$")                        # A69 lessons
+_CONFLICT_KEY_SHAPES = (_CONFLICT_KEY_RE, _NOTION_TASK_KEY_RE, _LESSONS_KEY_RE)
 
 
 def _has_dotdot(path):
@@ -77,14 +84,21 @@ def validate(data):
         if ck2:
             if _has_dotdot(ck2):
                 return f"item {cid!r}: conflict_key {ck2!r} has a '..' path segment"
-            if not _CONFLICT_KEY_RE.match(str(ck2)):
-                return f"item {cid!r}: conflict_key {ck2!r} not of shape <kb>/wiki/<type>/<slug>"
+            if not any(r.match(str(ck2)) for r in _CONFLICT_KEY_SHAPES):
+                return (f"item {cid!r}: conflict_key {ck2!r} not of an accepted shape "
+                        f"(<kb>/wiki/<type>/<slug>, <kb>/notion/tasks/<slug>, or env/lessons/<slug>)")
         pp = it.get("payload_path")
         if pp and _has_dotdot(pp):
             return f"item {cid!r}: payload_path {pp!r} has a '..' path segment"
         dp = it.get("draft_path")
-        if dp and _has_dotdot(dp):
-            return f"item {cid!r}: draft_path {dp!r} has a '..' path segment"
+        if dp:
+            if _has_dotdot(dp):
+                return f"item {cid!r}: draft_path {dp!r} has a '..' path segment"
+            # a draft_path item is a vault-wiki draft — its conflict_key MUST be the wiki shape; the
+            # relaxed notion/tasks + env/lessons shapes are for DRAFTLESS proposals/lessons only.
+            if ck2 and not _CONFLICT_KEY_RE.match(str(ck2)):
+                return (f"item {cid!r}: draft_path items require a <kb>/wiki/<type>/<slug> "
+                        f"conflict_key, got {ck2!r}")
     return None
 
 

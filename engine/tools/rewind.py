@@ -243,7 +243,10 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
         if it.get("id") == cid:
             found = True
             snap_items.append(copy.deepcopy(it))
-            if not shipped_path:
+            if not shipped_path and it.get("kind") != "proposal":
+                # A96: a proposal ship created a Notion task row, NOT a vault file — leave
+                # shipped_path falsy so undo-ship never os.removes a colliding vault path; it just
+                # reverts the queue stage. (A file-based undo would be the wrong tool anyway.)
                 # same live-vault class as _reconcile_scan (A19): map the ck's kb segment,
                 # tolerate a legacy extensionless ck (the note on disk always carries .md)
                 shipped_path = _ck_path(vault_root, it.get("conflict_key", ""), kb_map)
@@ -311,6 +314,12 @@ def _reconcile_scan(d, queue_path, vault_root, kb_map=None):
     conflict_key join are mapped."""
     staging_missing, ship_missing = [], []
     for it in d["queue"]:
+        # A96: a proposal is a Notion-write lifecycle with NO vault file at any stage — reconcile
+        # scans vault-file-vs-queue, so it must skip proposals. Otherwise a shipped proposal (no
+        # file by design) reads as `ship_missing`, `reconcile --apply` resets it to `awaiting`, and
+        # it re-surfaces in the panel → duplicate Notion task, defeating the dedupe promise.
+        if it.get("kind") == "proposal":
+            continue
         ck = it.get("conflict_key") or ""
         slug = os.path.splitext(os.path.basename(ck))[0]
         kb = it.get("kb") or (ck.split("/")[0] if "/" in ck else "")

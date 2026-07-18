@@ -50,6 +50,17 @@ def test_scheduled_ship_action_default_ships_nothing_without_explicit_auto_ship_
     assert lane_policy.scheduled_ship_action({"lane": "auto-ship", "kb": "personal"}, True) == "hold"
 
 
+def test_a96_proposal_never_auto_ships_even_on_a_cleared_kb_and_auto_ship_lane():
+    # A96: a proposal is a proposed operational-Notion write — it ALWAYS holds for human approval,
+    # independent of lane/kb. Even mis-laned to auto-ship on an explicitly-cleared kb, it holds.
+    prop = {"kind": "proposal", "lane": "auto-ship", "kb": "dev"}
+    assert lane_policy.ship_action(prop, auto_ship_kbs={"dev"}) == "hold"
+    # a BLOCKing review still rejects a proposal (review verdict wins over the proposal hold)
+    assert lane_policy.ship_action(prop, review_passed=False, auto_ship_kbs={"dev"}) == "reject"
+    # a non-proposal on a cleared kb + auto-ship lane still ships (the guard is proposal-scoped)
+    assert lane_policy.ship_action({"lane": "auto-ship", "kb": "dev"}, auto_ship_kbs={"dev"}) == "ship"
+
+
 def test_ship_action_explicit_auto_ship_kbs_preserves_prior_behavior():
     # passing an explicit cleared set reproduces the pre-fix {"dev","personal"} default's ship outcomes —
     # explicit-argument behavior is bit-identical to before this fix.

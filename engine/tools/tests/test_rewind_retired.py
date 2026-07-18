@@ -143,6 +143,23 @@ def main():
         check("reset clears the retired marker (a rewound item is live again)",
               load_items(qp)["d"].get("retired") is not True)
         check("queue validates at the end", queue_tx.validate(queue_tx.load(qp)) is None)
+
+        # 8. A96: a shipped Notion-only proposal has NO vault file by design — reconcile must SKIP it,
+        # never flag ship_missing (else --apply resets it to awaiting -> re-approval -> duplicate task).
+        obj = queue_tx.load(qp)
+        obj["queue"].append({"id": "prop", "kind": "proposal", "stage": "shipped", "lane": "review",
+                             "conflict_key": "familyoffice/notion/tasks/file-the-labs",
+                             "history": [{"ts": "2026-07-18T00:00:00Z", "stage": "awaiting"}],
+                             "payload": {"title": "File the labs", "dedupe_key": "fo|labs"}})
+        with open(qp, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+        check("proposal fixture validates (notion/tasks key accepted)",
+              queue_tx.validate(queue_tx.load(qp)) is None)
+        _, ship_missing = rewind.reconcile(qp, vault, apply=False, snap_dir=snap_dir, kb_map=KB_MAP)
+        check("A96: reconcile skips a shipped proposal (no false ship_missing)", "prop" not in ship_missing)
+        rewind.reconcile(qp, vault, apply=True, snap_dir=snap_dir, kb_map=KB_MAP)
+        check("A96: --apply leaves the shipped proposal shipped (not bounced to awaiting)",
+              load_items(qp)["prop"]["stage"] == "shipped")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
