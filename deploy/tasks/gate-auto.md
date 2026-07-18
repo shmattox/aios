@@ -97,7 +97,12 @@ read/write LOCAL files; the local desktop vault is canonical and current.
       "<env_root>/state/revert"` (canonical write with the daily-note MERGE guard + pre-merge copy,
       revert pointer, queue flip). Non-zero exit → the item did NOT ship (nothing half-landed);
       record the anomaly and leave it for the manual pass.
-   e. **`reject`** → `ship.py reject … --reason "<the BLOCK reason>"`.
+   e. **`reject`** → `ship.py reject … --vault-root "<vault>" --revert-dir "<env_root>/state/revert"
+      --reason "<the BLOCK reason>"` (A98: archives the staging husk into the revert dir so a rejected
+      draft never lingers on `staging/` reading as pending work). A `ship` that exits with
+      `content refusal (…)` (A85/A86: an injection marker or a `>1`-H1 journal duplicate) is a HOLD —
+      nothing was written; leave the item `awaiting` for the manual pass, never pass `--content-ack`
+      unattended.
    Queue commits are already done per item by `ship.py` (atomic via `queue_tx` under the write lock)
    — there is NO batch change-set to assemble and NEVER a raw write to the queue file.
 

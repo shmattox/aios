@@ -53,8 +53,18 @@ Overview: `${CLAUDE_PLUGIN_ROOT}/engine/pipeline/PIPELINE.md`.
      --vault-root "<vault>" --kb-map '<live_kb_map JSON>' --id <id> \
      --approved-by <auto-ship | the approver | auto-ship-scheduled> --revert-dir "<env_root>/state/revert"
    python "${CLAUDE_PLUGIN_ROOT}/engine/tools/ship.py" reject --queue "<env_root>/state/queue.json" \
+     --vault-root "<vault>" --revert-dir "<env_root>/state/revert" \
      --id <id> --reason "<the BLOCK reason>" --decided-by <human if a person rejected | auto for a review BLOCK>
    ```
+   Always pass `--vault-root`/`--revert-dir` to `reject` (A98): reject archives the item's staging
+   draft husk into the revert dir instead of stranding it — a husk left on `staging/` reads as pending
+   work. **Content-integrity hold (A85/A86):** `ship` may exit non-zero with `content refusal (…)` when
+   the final page carries an injection marker (`<!-- SYSTEM: … -->`, an instruction-override phrasing)
+   or a journal note ends up with `>1` `# ` H1 (an append-path duplicate). That is a HOLD, not a
+   failure — nothing was written and the item stays `awaiting`. An unattended run **defers** it to the
+   next human pass; at the manual gate, after you confirm the draft is legitimate (e.g. engine-KB
+   meta-discussion of injection), re-run `ship` with `--content-ack` to ship past the flag. Never pass
+   `--content-ack` unattended.
    `resolve` → JSON facts (`slug`, `target_path`, `draft_found`, `draft_excerpt`, `is_journal`).
    `draft_found:false` → `ship.py reject … --reason "no draft found"`, skip the item; a non-zero
    `resolve` exit (e.g. kb not in the map) = HOLD + flag. A non-zero `ship` exit → the item did NOT
