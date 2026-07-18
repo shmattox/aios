@@ -4,7 +4,7 @@
 The setup VERIFY gate must NOT hardcode how many OS-native scheduled tasks a registration
 produces: the registrars (`deploy/{windows,mac,linux}/register-tasks.*`) create exactly the
 `substrate == 'native' and enabled` entries, and that set grows/shrinks as tasks are added or
-disabled (A34 added resolve-sweep, H42 added a disabled meetings-router). A literal count in the
+disabled (H42 added a disabled meetings-router; A91 retired resolve-sweep). A literal count in the
 skill prose silently goes stale and makes a correct fresh install report VERIFY failure (A46).
 
 So VERIFY derives the expected count from the manifest itself:

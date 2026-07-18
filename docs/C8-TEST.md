@@ -58,8 +58,8 @@ and anything that felt unclear, slow, wrong, or scary:
    ```powershell
    Get-ScheduledTask -TaskName "AIOS *"
    ```
-   You should see 7 tasks: capture-router, session-capture, ingest,
-   gate-auto, garden, resolve-sweep, and brief-cache. (The exact count is
+   You should see 6 tasks: capture-router, session-capture, ingest,
+   gate-auto, garden, and brief-cache. (The exact count is
    whatever `python engine/tools/task_manifest.py` prints — it's derived
    from the manifest, so it grows as tasks are added.) Send me that output too.
 

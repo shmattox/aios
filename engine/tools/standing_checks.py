@@ -24,9 +24,9 @@ its comments and reformat it. The registry stays read-only human data; the sidec
 memory (and is what cadence gating + the delta-gate read on the next run).
 
 The render line is delta-gated by the SHARED A93 health-gate (`brief_render.filter_health_lines`)
-exactly like the pipeline/factory/economic lines — steady-state all-green is silence. Render lives
+exactly like the pipeline/factory lines — steady-state all-green is silence. Render lives
 here (not in `pipeline_health`) for cohesion: the tool that runs the checks owns their formatting,
-mirroring how `resolve_brief` owns its own economic-header line.
+mirroring how `pipeline_health` owns its own overnight-pipeline line.
 
 stdlib only; fact-free (the registry path is an argument — the gather resolves it from the profile).
 Usage:

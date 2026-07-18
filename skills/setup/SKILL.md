@@ -162,18 +162,6 @@ One AskUserQuestion round where possible:
     `session_capture.domain_map` (cwd→domain).
   - `discipline.md` — only the rules they named (empty if none).
   - `goals.md` — the optimizing-for narrative.
-- **Seed the `resolve:` defaults into `domains.yaml`** so the task-resolution layer isn't inert on a
-  fresh install (without it `resolve_sweep` gets no keywords → flags nothing → deep-resolve never
-  fires). Run the deterministic seeder — a checked-in tool, NOT a hand-written block, so it can't be
-  skipped or drift (the A31 lesson) and a Refresh preserves an already-tuned block:
-  ```
-  python "${CLAUDE_PLUGIN_ROOT}/engine/tools/seed_resolve_defaults.py" "<env_root>/profile/domains.yaml"
-  ```
-  It appends a generic default `resolve:` block (economic keywords; `leaf_model`/`deep_model` as
-  profile fields per the fact-free rule; `cache_dir: state/resolve-cache`) only when none exists —
-  prints `SEED` on a fresh install, `SKIP` (idempotent) on re-run, exit 0 either way. Afterward you
-  MAY tune the keyword list to the declared domains, but never remove the block. (Python spelling
-  from Phase 0.)
 - For each declared domain that doesn't already exist, scaffold its KB folder (Phase 0 taxonomy) and
   add a `vault.live_kb_map` entry.
 - **Optional git history (only if Q7 = yes) — instruct, don't automate (matches `new-business-unit`).**

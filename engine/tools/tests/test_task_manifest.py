@@ -25,11 +25,12 @@ def _write_manifest(tasks):
 
 
 def test_real_manifest_enabled_native_count_matches_registrar_filter():
-    # The real manifest today has 7 enabled-native tasks (capture-router, session-capture, ingest,
-    # gate-auto, garden, resolve-sweep, brief-cache). meetings-router is native but disabled; the
-    # gate/manual/cloud entries are non-native. This is what registration produces.
+    # The real manifest today has 6 enabled-native tasks (capture-router, session-capture, ingest,
+    # gate-auto, garden, brief-cache). meetings-router is native but disabled; the gate/manual/cloud
+    # entries are non-native. resolve-sweep was retired with the resolve surface (A91). This is what
+    # registration produces.
     ids = tm.enabled_native_ids(_REAL_MANIFEST)
-    assert tm.enabled_native_count(_REAL_MANIFEST) == 7, ids
+    assert tm.enabled_native_count(_REAL_MANIFEST) == 6, ids
     assert "aios-brief-cache" in ids, "brief-cache is enabled:true now (not false as the old prose claimed)"
     assert "aios-meetings-router" not in ids, "meetings-router is native but enabled:false — excluded"
     assert "aios-gate" not in ids, "manual entries are not scheduled"
@@ -58,7 +59,7 @@ def test_cli_prints_the_count_and_ids():
     r = subprocess.run([sys.executable, _TOOL, "--manifest", _REAL_MANIFEST],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "7", r.stdout
+    assert r.stdout.strip() == "6", r.stdout
     r2 = subprocess.run([sys.executable, _TOOL, "--manifest", _REAL_MANIFEST, "--ids"],
                         capture_output=True, text=True)
     assert r2.returncode == 0, r2.stderr

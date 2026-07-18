@@ -39,36 +39,7 @@ For each domain group in `domains.yaml`, in parallel:
    show, the "sale leads but nothing's locked," the playbook stance. **A brief with no vault read
    has no opinion — it is just a task list.**
 3. **Drive — paper, as needed.** Pull an executed doc only to confirm a Paper-Governs flag.
-4. **Resolve — economic FO tasks (A31, warm-cache driven).** The overnight sweep (`aios-resolve-sweep`,
-   A34) has already flagged the economic tasks + candidate governing docs. `resolve.cache_dir` comes
-   from `profile/domains.yaml` (default `state/resolve-cache`) — never hardcode the path. Do NOT
-   re-run the sweep — READ its worklist and resolve each item:
-   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/resolve_brief.py" worklist "<resolve.cache_dir>/sweep.json"`
-   → `{worklist: [{task_id, title, candidates[]}]}`. For EACH worklist item, in parallel (one
-   `deep_model` sub-agent per task — dispatching-parallel-agents): (a) for each candidate, read the
-   source doc and build a typed evidence row `{source, ref, says, value, qty, tier, executed}`
-   (`tier` derived from `source`: drive→`paper`, notion→`operational`, trello→`verbal`; `executed`
-   true only for an executed Drive doc); (b) SELECT the governing doc for the claim's quantity;
-   (c) run `resolve_verdict.py` over the per-claim `evidence[]` — NEVER set the verdict yourself;
-   (d) persist the dossier via the tool, so the path is sanitized and the sweep hash stamped —
-   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/resolve_brief.py" write "<resolve.cache_dir>" "<task_id>" <dossier.json> "<sweep content_hash>"`
-   (the `content_hash` is the top-level field in `sweep.json`) — never a raw file write. Dossier
-   field list: `{task_id, title, claim_qty, verdict, canonical, conflict, provenance, sweep_source}`
-   (verdict/canonical/conflict/provenance copied from the `resolve_verdict` result).
-   If the entity has no crosswalk or the candidates are empty, fall back to semantic search and, on a
-   hit, propose adding the link back to the entity page **via `gate`** (self-heal; the brief never
-   writes). **Every worklist item MUST end with a dossier file — the completeness check
-   verifies this and the brief fails loud if one is missing.**
-
-   **Steady-state = quiet, don't re-editorialize (A60).** When `resolve_brief.py check` returns a
-   `ℹ resolve steady-state …` line (the overnight sweep found the SAME unresolved worklist for
-   ≥ `STEADY_STATE_DAYS` runs — a known ceiling, not fresh news), that verbatim line IS the resolve
-   surface for the day. Do **NOT** also synthesize a System-station card about resolve candidate
-   quality ("Nth day running", "same doc list") — the quiet line already says it. Only raise a
-   System card when `check` is LOUD (`⚠ resolve INCOMPLETE`) or `⚠ … DEGRADED` — a genuinely new or
-   worsening state. The counter lives in `sweep-status.json` (`candidates_unchanged_days`), written
-   by the sweep; the brief only reads the tool's verdict, never re-derives it.
-5. **Dev slice — the item SET is CODE's, the VOICE is yours (A88).** Do NOT read the backlogs to
+4. **Dev slice — the item SET is CODE's, the VOICE is yours (A88).** Do NOT read the backlogs to
    decide which Dev items exist — `factory_standup` already derived that from the same files, and a
    model re-derivation racing the code one is exactly what went stale three times on 2026-07-15.
    Refresh the standup (read-only):
@@ -101,12 +72,12 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > **No headline file.** The header prose (masthead + count chips + narrative + the movement line +
 > the delta-gated health lines) is synthesized at RENDER time from the data below, not written to a
 > file — see `SKILL.md` `## Render flow` step 3. `headline_bubbles` (the count chips) lives in the
-> JSON payload; the pipeline-health / factory-health / economic-figures / standing-check /
+> JSON payload; the pipeline-health / factory-health / standing-check /
 > brainstorm-packet lines are
 > lifted verbatim at render by `pipeline_health.py` / `brief_render.py factory-health` /
-> `resolve_brief.py header` / `standing_checks.py render` / `brainstorm_packets.py render`, then
+> `standing_checks.py render` / `brainstorm_packets.py render`, then
 > **delta-gated** (A93 §4): the gather stores each line's verbatim text as `health_lines`
-> (`{pipeline, factory, economic, standing, packets}`) AND its fingerprint via `brief_render.health_fingerprints`
+> (`{pipeline, factory, standing, packets}`) AND its fingerprint via `brief_render.health_fingerprints`
 > as `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
 > (silence) from a real change. A fact rendered from a live query THIS run is tagged
 > `queried_live: true` (or `source: "live"`) so `render_citation` cites the run, not the cache (A93 §2c).

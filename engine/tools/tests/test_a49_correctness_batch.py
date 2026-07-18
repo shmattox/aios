@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A49 — review-surfaced correctness batch: one regression per bug (all silent-until-it-bites).
 
-  1. resolve sweep staleness surfaces loudly (a permanently-degrading source can't freeze the worklist)
+  (bug 1, resolve sweep staleness, retired with the resolve surface — A91, 2026-07-18)
   2. a cp1252 (non-UTF-8) raw ingests instead of stalling 'unreadable' forever
   3. a mixed-case cwd resolves the intended silo on a case-insensitive FS
   4. brief_render tolerates an item with no title (unvalidated live-gather path) — degrades, not crashes
@@ -14,8 +14,6 @@ import json, os, sys, tempfile, shutil
 
 _TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _TOOLS)
-import resolve_sweep_task as rst
-import resolve_brief as rb
 import capture
 import sort as sortmod
 import brief_session as bs
@@ -29,39 +27,6 @@ def check(name, cond):
 
 d = tempfile.mkdtemp(prefix="a49_")
 try:
-    # ── bug 1: resolve sweep staleness ───────────────────────────────────────────────────────
-    cache_dir = os.path.join(d, "cache")
-    _orig_cfg, _orig_gather = rst.resolve_config, rst.gather_tasks
-    rst.resolve_config = lambda er: {"keywords": ["mortgage"], "cache_dir": cache_dir,
-                                     "task_dbs": ["x"], "entities_dirs": []}
-    try:
-        rst.gather_tasks = lambda cfg, tf: ([], "error")            # source unreachable -> degraded
-        r1 = rst.run("envroot", now="2026-07-09T06:30:00Z")
-        r2 = rst.run("envroot", now="2026-07-10T06:30:00Z")
-        check("degraded run reports + increments consecutive_degraded",
-              r1["status"] == "degraded" and r1["consecutive_degraded"] == 1 and r2["consecutive_degraded"] == 2)
-        st = rst._read_status(cache_dir)
-        check("sidecar records the degraded streak with no last_good",
-              st["consecutive_degraded"] == 2 and st.get("last_good_utc") is None)
-        rst.gather_tasks = lambda cfg, tf: ([{"id": "t1", "title": "pay the mortgage"}], "notion")
-        r3 = rst.run("envroot", now="2026-07-11T06:30:00Z")
-        check("a reached source resets the degraded streak to 0",
-              r3["status"] in ("written", "warm") and rst._read_status(cache_dir)["consecutive_degraded"] == 0)
-    finally:
-        rst.resolve_config, rst.gather_tasks = _orig_cfg, _orig_gather
-
-    # the brief surfaces a degraded sweep LOUDLY even when every dossier is present (sweep complete)
-    json.dump({"stage": "resolve-sweep", "content_hash": "h", "flagged": []},
-              open(os.path.join(cache_dir, "sweep.json"), "w", encoding="utf-8"))
-    rst._write_status(cache_dir, {"last_attempt_utc": "2026-07-12T06:30:00Z", "last_source": "error",
-                                  "last_good_utc": "2026-07-08T06:30:00Z", "consecutive_degraded": 3})
-    res = rb.check(os.path.join(cache_dir, "sweep.json"), cache_dir)
-    check("resolve_brief.check surfaces DEGRADED loudly on a complete-but-stale sweep",
-          "DEGRADED" in res["line"] and res.get("stale") is True and res["complete"] is True)
-    rst._write_status(cache_dir, {"consecutive_degraded": 0})
-    check("a reached last sweep is quiet (no false staleness alarm)", rb._staleness_line(cache_dir) == "")
-    check("no sidecar (pre-A49 cache) is quiet", rb._staleness_line(tempfile.mkdtemp()) == "")
-
     # ── bug 2: cp1252 raw ingests, never stalls ──────────────────────────────────────────────
     cp = os.path.join(d, "cp1252.md")
     with open(cp, "wb") as f:

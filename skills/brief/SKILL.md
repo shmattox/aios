@@ -43,8 +43,8 @@ restating them:
    The one exception is *tactical* Notion write-back from an action THREAD (not the brief surface),
    under the `notion_writeback.py` fences — see `# Notion write-back`.
 2. **Every rendered card/line is engine-emitted and lifted VERBATIM** — `brief_render.py`
-   (`station`/`card`/`overview`/`settle`/`render_dossier`), `brief_session.py held-summary`, and the
-   resolve `check` line. Never re-word, re-order, re-grade, or drop a line; if you catch yourself
+   (`station`/`card`/`overview`/`settle`), `brief_session.py held-summary`, and the health lines.
+   Never re-word, re-order, re-grade, or drop a line; if you catch yourself
    typing a `🔵`/`🟠`/age line by hand, STOP and call the renderer — that is exactly how the two-layer
    block silently drops.
 3. **Read absolutely from the env root, never cwd-relative** (`# Scope` → Access ≠ scope). Scope filters
@@ -117,7 +117,7 @@ from the exact data about to be shown — so it can never drift out of sync with
    - the **deterministic health lines, DELTA-GATED (A93 §4)** — each is still lifted VERBATIM (never
      hand-composed) from `pipeline_health.py --path "<env_root>/state/context-log.jsonl"`,
      `brief_render.py factory-health "<env_root>/state/factory-health/latest.md"`,
-     `resolve_brief.py header "<resolve.cache_dir>/sweep.json"`, the **standing-check** line from
+     the **standing-check** line from
      `standing_checks.py render --results "<env_root>/state/standing-checks/results.json"` (A94 —
      `⛑`/`👁` reds only; empty when all invariants hold), and the **brainstorm-packet** line from
      `brainstorm_packets.py render --results "<env_root>/state/brainstorm-packets/cards.json"` (A77 —
@@ -417,31 +417,10 @@ Grade the system voice top-to-bottom, stop at first match:
 - **Grade 2 NEVER styled or worded like Grade 1.** "implies/loosely" vs "says"; dashed/faint vs solid. Conflating an extrapolation with a papered fact is the Paper-Governs failure mode.
 - **Honesty floor — round down.** Unsure 1↔2 → call it 2. Unsure 2↔0 → call it 0. The system earns its voice.
 - Use the `system_voice` field from `brief-cache.json` (graded at gather time + cite); the engine renders, never re-grades.
-- **Resolved economic items (A31):** the `system_voice` grade comes from the dossier verdict, not a
-  vault-page scan: `papered` → **Grade 1**, text = dossier `canonical`, cite = the Drive file_id;
-  `conflict` → **Grade 1, flagged** ("$X per paper, but {source} says $Y — reconcile", from
-  `dossier.conflict`); `verbal-only` → **Grade 2b** (verbal, unpapered — never Grade 1);
-  `silent` → **Grade 0**, emitted ONLY after the resolve step's search genuinely found nothing.
-  The verdict is ADVISORY — it sets the grade/cite so the decision is faster, but every economic
-  promotion waits for Seth's approval (resolve-fate decision 2026-07-10; the brief never writes).
 
 The exact chat format of the graded block (Grade 1 solid / 2a precedent / 2b principle / 0 silent, then
 the `🟠 Claude` line) is emitted by `brief_render.py` and lifted verbatim (Invariant 2) — it is not
 mirrored here, so this doc can't drift from the renderer.
-
-## Resolve section (A31 — after the walk render, before done)
-For each dossier file in
-`<resolve.cache_dir>` (from `profile/domains.yaml`, default `state/resolve-cache`) matching a
-flagged task, lift its card VERBATIM: `brief_render.render_dossier(<dossier>)` — do NOT hand-write
-the papered/conflict/verbal-only line (the format is the engine's). Then run the completeness
-check and lift its output VERBATIM:
-`python "${CLAUDE_PLUGIN_ROOT}/engine/tools/resolve_brief.py" check "<resolve.cache_dir>/sweep.json" "<resolve.cache_dir>"`
-— if it prints ANY `⚠ resolve …` OR `ℹ resolve …` line(s), each MUST appear in the brief body verbatim —
-never suppress or reword. `⚠ resolve INCOMPLETE …` = a flagged economic task went unresolved; `⚠ resolve
-sweep DEGRADED …` = the overnight sweep could not reach the source, so the worklist may be stale even when
-it looks complete (A49); `ℹ resolve steady-state …` (A60) = the unresolved worklist has been unchanged for
-≥ N sweeps (a known ceiling, not fresh news) — surface this quiet line and do NOT also raise a System-station
-card about resolve candidate quality (`references/gather.md`). No line = resolve complete and the sweep is fresh.
 
 ## Brainstorm-packet decision cards (A77 — after the walk render, before done)
 The GM19 `factory-packet` skill pre-runs a seed's solo-runnable brainstorm legs and freezes the

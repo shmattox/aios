@@ -389,28 +389,6 @@ def render_card_by_id(cache, item_id):
     raise KeyError(item_id)
 
 
-def render_dossier(dossier):
-    """Dossier dict -> verbatim resolve verdict card. The papered/conflict/verbal-only/silent
-    distinction is Paper-Governs and MUST NOT drift between renders, so it is emitted here (lifted
-    verbatim by the brief), never hand-written in skill prose. The verdict itself comes from
-    resolve_verdict.compute_verdict — this only formats it."""
-    title = dossier.get("title", "")
-    verdict = dossier.get("verdict")
-    header = "**%s**" % title
-    if verdict == "papered":
-        body = "🟢 **Papered** — %s" % (dossier.get("canonical") or "(figure cited)")
-    elif verdict == "conflict":
-        body = "🔴 **Conflict (held for you)** — %s" % (dossier.get("conflict") or "unresolved discrepancy")
-    elif verdict == "verbal-only":
-        prov = ", ".join(str(p) for p in (dossier.get("provenance") or []) if p is not None) or "verbal"
-        body = "🟠 **Verbal only — no executed paper** (%s)" % prov
-    elif verdict == "silent":
-        body = "— *resolve silent (no aligned evidence)* —"
-    else:
-        body = "— *resolve verdict unavailable* —"
-    return header + "\n" + body
-
-
 def render_settle(cache, domains=None):
     """Stage-0 settle panel: auto-heal summary + candidates grouped by proposed_transition.
     Deterministic render (never hand-composed in prose) — the brief lifts this verbatim.

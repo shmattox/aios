@@ -39,19 +39,18 @@ Setup detects your OS + connected tools (Notion, Gmail, Drive, Calendar), maps o
 
 **Phase 4: Smoke test.** Runs the pipeline once in-session (capture → sort → ingest) to prove everything wires, shows you a seeded example item and what the gate would do with it, then renders your brief — all without writing anything permanent.
 
-**Windows, macOS & Linux:** Registers seven native scheduled tasks (capture-router 01:15, session-capture 01:32, ingest 02:00, gate-auto 04:00, garden Sun 03:10, resolve-sweep 06:30, brief-cache 06:50) — via Task Scheduler on Windows, launchd on macOS, a managed crontab block on Linux. You can decline scheduling and run the pipeline in-session (`/aios:pipeline`) instead.
+**Windows, macOS & Linux:** Registers six native scheduled tasks (capture-router 01:15, session-capture 01:32, ingest 02:00, gate-auto 04:00, garden Sun 03:10, brief-cache 06:50) — via Task Scheduler on Windows, launchd on macOS, a managed crontab block on Linux. You can decline scheduling and run the pipeline in-session (`/aios:pipeline`) instead.
 
 ---
 
 ## Daily flow
 
-**Windows & macOS — Automatic.** Your seven scheduled tasks run unattended overnight:
+**Windows & macOS — Automatic.** Your six scheduled tasks run unattended overnight:
 - **01:15 — capture-router:** Moves inbox items from `auto/` to their mapped KBs.
 - **01:32 — session-capture:** Packages session records (if any) into the queue.
 - **02:00 — ingest:** Drafts all queued items into your vault.
 - **04:00 — gate-auto:** Auto-ships low-risk items in your opted-in KBs; holds everything else.
 - **Sunday 03:10 — garden:** Maintenance: renews expired views, reconciles drift.
-- **06:30 — resolve-sweep:** Flags economic tasks and warms the resolution crosswalk cache so the morning brief reads warm (opt-in).
 - **06:50 — brief-cache:** Precomputes the brief cache (optional; Notion-wired installs benefit most).
 
 **If you decline scheduling — In-session.** Run the pipeline manually:
