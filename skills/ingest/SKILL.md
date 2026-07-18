@@ -82,6 +82,17 @@ items sorted this run + pre-existing `sorted` items; the rest stay `sorted` for 
    - `first_drafted_utc`: set to **now (UTC ISO)** when first drafted; preserve verbatim across
      carry-forward. (The confirm-lane TTL clocks from this stamp — an unset stamp reads as
      infinitely old and would ship a confirm item at the very next unattended gate.)
+   - **Paper-evidence enrichment (A75) — FO economic/ownership holds only (schema carries
+     `legal_status`/`papered_source`; never `gm`).** When you draft such a hold on the `review` lane,
+     resolve its subject entity page and run
+     `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/paper_evidence.py" resolve --entity-page <page> --vault-root <vault>`
+     (or `resolve-batch` for several holds on one paper — reads the projection once). If `readable`,
+     read the surfaced `projection_text` and, taking an **adversarial** stance (does the paper actually
+     support the drafted number/term?), decide `verdict: matches | conflicts`; if not readable /
+     absent, `no-paper-found`. Attach it with `paper_evidence.py attach --queue … --id … --verdict …
+     [--doc --section --quote]`. **Advisory ONLY** — the packet never changes the lane/ballot (the hold
+     still holds for human approval; `matches` never auto-approves). This is a cheap-tier read; use the
+     cheap model. Skip entirely for non-FO / non-economic drafts.
 3. Set `draft_path` = the **vault-relative** staging path you just wrote
    (`<live_kb_map[kb]>/wiki/staging/{slug}.md`), then `stage: awaiting` (the draft is written; it's
    now queued for review). `queue_tx` REFUSES any item entering `awaiting` without a `draft_path` —

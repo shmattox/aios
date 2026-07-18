@@ -74,6 +74,23 @@ def _reframe_line(item):
     return f"↻ In motion — {na}" if na else "↻ In motion"
 
 
+def render_paper_evidence(item):
+    """A75: the ONE brief hold-card line for a pre-computed `paper_evidence` packet (no LLM at render —
+    the verification cost was paid once at ingest). '' when the item carries no packet. Advisory: this
+    only DISPLAYS the verdict beside the Paper-Governs flag; it never affects lane/ship."""
+    pe = item.get("paper_evidence")
+    if not isinstance(pe, dict) or not pe.get("verdict"):
+        return ""
+    icon = {"matches": "✅", "conflicts": "⛔", "no-paper-found": "❓"}.get(pe["verdict"], "•")
+    parts = [f"Paper evidence: {icon} {pe['verdict']}"]
+    if pe.get("quote"):
+        parts.append('“%s”' % str(pe["quote"])[:160])
+    tail = " · ".join(x for x in (pe.get("doc"), pe.get("section")) if x)
+    if tail:
+        parts.append(f"({tail})")
+    return "- " + " ".join(parts)
+
+
 def render_card(item, display_map=None):
     """Full per-item card markdown. The two-layer block is ALWAYS present;
     optional context lines (urgency/playbook/flags) appear only when the item
@@ -94,6 +111,9 @@ def render_card(item, display_map=None):
         flags = item["flags"]
         flags_str = ", ".join(flags) if isinstance(flags, list) else str(flags)
         lines.append(f"- Flags: {flags_str}")
+    ev = render_paper_evidence(item)   # A75: pre-computed paper_evidence packet, no LLM at render
+    if ev:
+        lines.append(ev)
     lines.append("")
     lines.append(render_system_line(_voice(item, "system_voice")))
     lines.append(render_claude_line(_voice(item, "claude_voice")))
