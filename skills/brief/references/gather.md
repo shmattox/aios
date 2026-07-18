@@ -185,8 +185,8 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    it (`court:"you"` for an open thread, else `"others"`). The renderer reads `in_motion` to keep
    open-thread items in Act (reframed to `next_action`) and route waiting/done items to the ⏳ In-motion
    track. **Do NOT hand-populate `in_motion` or `thread_id` in prose** — the tool is the sole populator
-   (the old ad-hoc `thread_id` guesswork is exactly what let OI-1000/OI-1027 re-surface cold). The one
-   judgment the gather still owns: when an item's cache `id` is synthetic (e.g. `FO-DEMO1`, not an
+   (the old ad-hoc `thread_id` guesswork is exactly what let OI-1000/OI-1027 re-surface cold). The one  <!-- sanitize:allow: anonymized incident example -->
+   judgment the gather still owns: when an item's cache `id` is synthetic (e.g. `FO-DEMO1`, not an  <!-- sanitize:allow: anonymized incident example -->
    `OI-N`) and you recognize it corresponds to an open action thread, set that item's `thread_id` to the
    thread's id so `annotate` can honor it — the deterministic OI-id/conflict_key join cannot see a link
    the ids don't share.

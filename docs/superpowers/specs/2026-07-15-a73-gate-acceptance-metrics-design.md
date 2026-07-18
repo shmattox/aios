@@ -1,3 +1,4 @@
+<!-- sanitize:allow-file — worked examples use synthetic/anonymized ids (A79) -->
 # A73 — Gate + factory acceptance metrics ($/accepted-result) — design
 
 **Date:** 2026-07-15 · **Item:** aios A73 (+ env-leg in `Scripts/factory-gate`) · **Status:** approved

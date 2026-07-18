@@ -1,0 +1,43 @@
+#!/bin/sh
+# AIOS pre-push leak guard (A79) — blocks a push whose tracked tree OR outgoing commits carry
+# instance-identifier leaks (spec: docs/superpowers/specs/2026-07-18-sanitize-tree-history-design.md).
+#
+# Install (per machine, from the repo root):
+#   cp engine/tools/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+# Any finding OR guard error blocks (fail-loud — a broken guard must never wave a push through).
+# The explicit, deliberate human override is:  git push --no-verify
+#
+# SANITIZE_CHECK_TOOL overrides the tool path (used by the test fixtures); PYTHON overrides the
+# interpreter (defaults to `python`, which git-for-Windows resolves via PATH).
+
+root="$(git rev-parse --show-toplevel)" || exit 2
+tool="${SANITIZE_CHECK_TOOL:-$root/engine/tools/sanitize_check.py}"
+if [ ! -f "$tool" ]; then
+    # the guard being absent must BLOCK, never silently wave a push through (spec §4: fail-open
+    # is the incident class itself). --no-verify remains the deliberate human override.
+    echo "pre-push: BLOCKED — leak guard not found at $tool" >&2
+    exit 2
+fi
+py="${PYTHON:-python}"
+
+"$py" "$tool" --tree --root "$root" || {
+    echo "pre-push: BLOCKED — tracked tree carries instance-identifier leaks (or the guard errored)." >&2
+    exit 1
+}
+
+zero=0000000000000000000000000000000000000000
+while read local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref: nothing outgoing
+    if [ "$remote_sha" = "$zero" ]; then
+        range="$local_sha"                          # brand-new ref: everything we are publishing
+    else
+        range="$remote_sha..$local_sha"
+    fi
+    "$py" "$tool" --history "$range" --root "$root" || {
+        echo "pre-push: BLOCKED — outgoing commits ($range) carry leaks (or the guard errored)." >&2
+        echo "pre-push: tree-clean does not clear this; amend/rebase the offending commit." >&2
+        exit 1
+    }
+done
+exit 0

@@ -52,6 +52,22 @@ STRUCTURAL = [
 
 DEFAULT_INSTANCE_PATTERNS = os.path.join("state", "sanitize-patterns.txt")
 
+# Inline allowlist marker (A79): a line carrying this literal (in a comment) is exempt — the repo
+# legitimately holds anonymized example ids in reference docs/tests. Deliberately NEVER honored
+# for the EIN pattern: a real tax-id format is never an acceptable example (use XX-XXXXXXX).
+ALLOW_MARKER = "sanitize:allow"
+# File-level form (A79 §2): in the first N lines, exempts the whole file (fixture-dense tests,
+# archived example docs). Neither form ever exempts the EIN pattern.
+ALLOW_FILE_MARKER = ALLOW_MARKER + "-file"
+_ALLOW_FILE_HEAD_LINES = 10
+_BINARY_SNIFF_BYTES = 8192
+
+
+def _file_allowed(text):
+    """True when the first _ALLOW_FILE_HEAD_LINES lines carry the file-level allow marker."""
+    head = text.splitlines()[:_ALLOW_FILE_HEAD_LINES]
+    return any(ALLOW_FILE_MARKER in line for line in head)
+
 
 def structural_patterns():
     """The shipped, instance-agnostic id-format patterns as [(name, compiled_regex)]."""
@@ -106,13 +122,112 @@ def resolve_instance_path(explicit, root):
 
 
 def scan_text(text, patterns):
-    """Return [(lineno, match_text, pattern_name)] for every pattern hit, in file order."""
+    """Return [(lineno, match_text, pattern_name)] for every pattern hit, in file order.
+
+    A line carrying ALLOW_MARKER is exempt for every pattern EXCEPT "ein" (A79 §2)."""
     out = []
+    file_allowed = _file_allowed(text)
     for lineno, line in enumerate(text.splitlines(), 1):
+        allowed = file_allowed or ALLOW_MARKER in line
         for name, rx in patterns:
+            if allowed and name != "ein":
+                continue
             for m in rx.finditer(line):
                 out.append((lineno, m.group(0), name))
     return out
+
+
+# ── A79: tree + history tiers ──────────────────────────────────────────────────────────────────
+# Both reuse the SAME compiled patterns as the file tier — no git-regex translation layer (the
+# 2026-07-15 incident traps all came from -S/-G quirks). Fail-loud rules: any git failure or a
+# scan that inspected nothing is an ERROR, never "clean".
+
+class ScanError(Exception):
+    """A guard failure that must surface as exit 2 — never as a false 'clean'."""
+
+
+def _git(root, *args):
+    """Run git in `root`; raise ScanError on any failure (a broken guard must not pass)."""
+    import subprocess
+    r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        raise ScanError("git %s failed (%d): %s" % (" ".join(args), r.returncode,
+                                                    (r.stderr or r.stdout).strip()[:400]))
+    return r.stdout
+
+
+def _is_binary(path):
+    """Null-byte sniff on the first _BINARY_SNIFF_BYTES."""
+    try:
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(_BINARY_SNIFF_BYTES)
+    except OSError:
+        return True   # unreadable -> skip rather than crash; the tracked list is git's, not ours
+
+
+def scan_tree(root, patterns):
+    """Scan every git-TRACKED text file under `root` (the actual published surface).
+
+    Returns (findings, files_scanned) where findings = [(relpath, lineno, match, name)].
+    Raises ScanError when git fails or zero files are tracked (never a false 'clean')."""
+    out = _git(root, "ls-files", "-z")
+    files = [f for f in out.split("\0") if f]
+    if not files:
+        raise ScanError("zero tracked files — scanned nothing, refusing to report clean")
+    findings, scanned = [], 0
+    for rel in files:
+        path = os.path.join(root, rel)
+        # a tracked file absent from the working tree (staged delete) has no bytes to scan here;
+        # its committed content is the --history tier's job
+        if not os.path.isfile(path) or _is_binary(path):
+            continue
+        scanned += 1
+        for lineno, match, name in scan_file(path, patterns):
+            findings.append((rel, lineno, match, name))
+    return findings, scanned
+
+
+def scan_history(root, range_spec, patterns):
+    """Scan the ADDED lines of every commit in `range_spec` (e.g. 'A..B', a sha, or '--all').
+
+    Streams one `git log -p` pass and applies the SAME compiled patterns as the file tier.
+    Returns (findings, commits, added_lines) with findings = [(sha7, file, match, name)].
+    Raises ScanError on git failure or when zero commits were scanned (empty range)."""
+    # --end-of-options stops a leading-dash range being parsed as a git option (argument-injection
+    # hardening); it cannot wrap the literal --all mode, which IS an option by design.
+    range_args = ["--all"] if range_spec == "--all" else ["--end-of-options", range_spec]
+    out = _git(root, "log", "-p", "--no-color", "--format=commit %H", *range_args)
+    findings, commits, added = [], 0, 0
+    sha7, cur_file = "?", "?"
+    allowed_files = {}   # relpath -> file-level marker in the CURRENT tree (a reviewed declaration)
+
+    def _cur_file_allowed(rel):
+        if rel not in allowed_files:
+            p = os.path.join(root, rel)
+            try:
+                with open(p, encoding="utf-8", errors="replace") as f:
+                    allowed_files[rel] = _file_allowed(f.read())
+            except OSError:
+                allowed_files[rel] = False   # absent from the tree -> no exemption
+        return allowed_files[rel]
+
+    for line in out.splitlines():
+        if line.startswith("commit ") and len(line) >= 47 and " " not in line[7:47]:
+            sha7, cur_file = line[7:14], "?"
+            commits += 1
+        elif line.startswith("+++ "):
+            target = line[4:]
+            cur_file = target[2:] if target.startswith("b/") else target
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+            for _, match, name in scan_text(line[1:], patterns):
+                if name != "ein" and cur_file != "?" and _cur_file_allowed(cur_file):
+                    continue
+                findings.append((sha7, cur_file, match, name))
+    if commits == 0:
+        raise ScanError("scanned 0 commits for range %r — refusing to report clean" % range_spec)
+    return findings, commits, added
 
 
 def scan_file(path, patterns):
@@ -127,6 +242,10 @@ def main(argv=None):
     ap.add_argument("files", nargs="*", help="files to scan (default: ./BACKLOG.md if present)")
     ap.add_argument("--patterns", help="out-of-repo instance patterns file (entity names)")
     ap.add_argument("--root", default=".", help="dir to resolve default target + env_root from")
+    ap.add_argument("--tree", action="store_true",
+                    help="scan every git-TRACKED text file under --root (A79)")
+    ap.add_argument("--history", metavar="RANGE",
+                    help="scan ADDED lines of commits in RANGE (e.g. A..B, a sha, or --history=--all)")
     args = ap.parse_args(argv)
 
     patterns = structural_patterns()
@@ -137,11 +256,50 @@ def main(argv=None):
         return 2
     patterns += load_instance_patterns(pat_path)
 
+    modes = sum([bool(args.tree), bool(args.history), bool(args.files)])
+    if modes > 1:
+        print("error: pass files OR --tree OR --history, not a combination", file=sys.stderr)
+        return 2
+
+    if args.tree:
+        try:
+            findings, scanned = scan_tree(args.root, patterns)
+        except ScanError as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 2
+        for rel, lineno, match, name in findings:
+            print("%s:%d: [%s] %s" % (rel, lineno, name, match))
+        if findings:
+            print("\n%d instance-identifier leak(s) in the tracked tree — scrub before pushing."
+                  % len(findings), file=sys.stderr)
+            return 1
+        print("clean — no instance-identifier leaks in %d tracked file(s)." % scanned)
+        return 0
+
+    if args.history:
+        try:
+            findings, commits, added = scan_history(args.root, args.history, patterns)
+        except ScanError as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 2
+        for sha7, fname, match, name in findings:
+            print("%s:%s: [%s] %s" % (sha7, fname, name, match))
+        summary = "scanned %d commit(s) / %d added line(s)" % (commits, added)
+        if findings:
+            print("\n%s — %d leak(s) in committed history (tree-clean does NOT clear this; "
+                  "a purge or history rewrite is required)." % (summary, len(findings)),
+                  file=sys.stderr)
+            return 1
+        print("%s — clean." % summary)
+        return 0
+
     files = list(args.files)
     if not files:
         bl = os.path.join(args.root, "BACKLOG.md")
         if os.path.isfile(bl):
             files = [bl]
+            print("note: default single-file mode — prefer --tree to scan the whole tracked "
+                  "surface (A79)", file=sys.stderr)
     if not files:
         # a guard that scanned nothing must never report "clean"
         print("error: no files to scan (pass files, or run where ./BACKLOG.md exists)", file=sys.stderr)

@@ -1,3 +1,4 @@
+<!-- sanitize:allow-file — worked examples use synthetic/anonymized ids (A79) -->
 # Brief thread-reconciliation — design
 
 **Date:** 2026-07-11

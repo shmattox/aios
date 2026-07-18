@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# sanitize:allow-file — fixtures use synthetic/out-of-range ids by design (A79)
 """Hermetic tests for brief_session.py (the brief-walk ledger helper).
 
 Covers: new_walk schema; resume_or_new detection; record_decision counts; record_deferral

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# sanitize:allow-file — fixtures use synthetic/out-of-range ids by design (A79)
 """G14b — dynamic end-to-end pipeline test (ALL-IN-CODE, hermetic).
 
 Drives the full chain inbox-capture -> sort -> ingest -> gate -> brief -> garden on an ISOLATED temp

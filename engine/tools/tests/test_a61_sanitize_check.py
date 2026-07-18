@@ -1,3 +1,4 @@
+# sanitize:allow-file — fixtures use synthetic/out-of-range ids by design (A79)
 """A61 — pre-tag sanitize guard (`sanitize_check.py`): instance-identifier leak scan.
 
 The recurrence guard for the A59/A60 leak class (BACKLOG A61). Two tiers:

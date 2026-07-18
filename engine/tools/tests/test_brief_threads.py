@@ -1,3 +1,4 @@
+# sanitize:allow-file — fixtures use synthetic/out-of-range ids by design (A79)
 import os
 import sys
 

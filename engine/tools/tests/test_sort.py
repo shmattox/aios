@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# sanitize:allow-file — fixtures use synthetic/out-of-range ids by design (A79)
 """sort.py test harness — deterministic sort tables (A25): type→path conflict_keys, kb→lane
 proposals + escalation signals, session-record pass-through, needs_judgment routing.
 Scratch; safe to delete."""
