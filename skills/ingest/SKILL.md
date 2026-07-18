@@ -44,10 +44,16 @@ items sorted this run + pre-existing `sorted` items; the rest stay `sorted` for 
    **Clobber guard — MERGE, never overwrite:** if that daily note **already exists** (drafted earlier
    this run OR a pre-existing note on disk, i.e. substantive content from another producer), draft the
    addition as a *merge* — re-emit the **whole note**, folding this session's entries into the note's
-   own H2 sections (`## What We Built`, `## Key Decisions`, `## Open Threads`, …) where they belong —
-   and set `lane: review` + `recommended: hold` (`rec_reason: "daily-note exists — confirm merge"`) in
-   step 2. Only when the target is **absent** (the pipeline is the sole producer for that date) may it
-   stay `auto-ship`.
+   own H2 sections (`## What We Built`, `## Key Decisions`, `## Open Threads`, …) where they belong.
+   **Lane (A99):** a merge you produced by ADDING lines only — every incumbent line preserved
+   byte-identical, i.e. a proven in-place **superset** (the same A43 predicate `ship.py` uses to take
+   its safe replace path) — is additive and safe, so lane it **per the KB's normal clearance** (the
+   lane the item would get absent the merge), `recommended: approve`
+   (`rec_reason: "additive daily-note merge (superset)"`). Set `lane: review` + `recommended: hold`
+   (`rec_reason: "daily-note merge alters an incumbent line — confirm"`) ONLY when you could not keep
+   every incumbent line byte-identical (you altered one — the append-duplicate hazard); the A86
+   ship-side guard also holds that case. When the target is **absent** (the pipeline is the sole
+   producer for that date) it stays `auto-ship` as before.
    **The draft you stage IS the note that ships.** `ship.py` writes your draft to the note — the gate
    is a shipper, not an editor, and folds nothing on approval. So never stage a delimiter block, a
    `## Merged sessions — pending gate confirmation` heading, or an HTML comment telling a later reader

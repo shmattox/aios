@@ -178,15 +178,89 @@ def worthiness_floor(raw, fm, econ_hit, len_floor, dollar_floor):
                                  f"$<{dollar_floor or 'any'} & unlinked"}
 
 
-def propose_lane(kb, auto_ship_kbs, econ_hit, confirm_signal, collision):
-    """The kb→lane proposal table, plus the escalation signals. Deterministic."""
-    if econ_hit or collision:
+def propose_lane(kb, auto_ship_kbs, econ_hit, confirm_signal, collision,
+                 paper_governs=True, fo_entity_hit=False):
+    """The kb→lane proposal table, plus the escalation signals. Deterministic.
+
+    A99: an economic signal escalates to `review` ONLY when the KB is Paper-Governs, OR (for a
+    non-Paper-Governs KB, e.g. the engine-dev KB) when the raw actually names a known FamilyOffice
+    entity. This kills the 2026-07-12 false positive — the token "Paper-Governs" (governance vocab in
+    the engine-dev KB) tripped the currency tripwire with no real economic content. A non-PG KB whose
+    econ hit is pure vocabulary de-escalates to its normal kb-backstop lane; a real FamilyOffice-entity mention
+    still escalates. The kb backstop below is unchanged (a non-auto-ship KB is still review)."""
+    escalate_econ = econ_hit and (paper_governs or fo_entity_hit)
+    if escalate_econ or collision:
         return "review"
     if kb not in auto_ship_kbs:
         return "review"
     if confirm_signal:
         return "confirm"
     return "auto-ship"
+
+
+def _pg_flag(paper_governs, kb):
+    """A99: a KB is Paper-Governs (escalate on econ) unless EXPLICITLY set to boolean false. A non-bool
+    value (null / 0 / "") reads as the SAFE default True, not as de-escalate — an author who writes
+    `null` meaning 'unset' must not silently get the opposite (review-caught foot-gun F5)."""
+    v = (paper_governs or {}).get(kb, True)
+    return v if isinstance(v, bool) else True
+
+
+def _fm_list_items(raw, key):
+    """Values of a frontmatter list `key`, covering BOTH inline `key: [a, b]` and BLOCK
+    `key:\\n  - a`. The flat reader collapses a block list to "", so relying on it alone silently
+    drops block-style entries (the A89 flat-reader class)."""
+    out = []
+    v = _frontmatter(raw or "").get(key)
+    if isinstance(v, str) and v.strip():
+        out.extend(t.strip().strip("'\"") for t in re.split(r"[\[\],]", v) if t.strip())
+    lines = (raw or "").split("\n")
+    for i, ln in enumerate(lines):
+        if i > 0 and ln.strip() == "---":
+            break
+        if ln[:1] not in (" ", "\t") and ":" in ln and ln.split(":", 1)[0].strip() == key:
+            for nxt in lines[i + 1:]:
+                if nxt.strip() == "---" or (nxt.strip() and nxt[:1] not in (" ", "\t")):
+                    break
+                item = nxt.lstrip().lstrip("-").strip().strip("'\"")
+                if nxt[:1] in (" ", "\t") and item:
+                    out.append(item)
+    return out
+
+
+def _fo_entity_ids(vault_root, kb_map, fo_kb):
+    """A99: the set of lowercased FamilyOffice entity identifiers (slug + title + inline AND block-style
+    aliases) read from `<vault>/<fo_folder>/wiki/entities/*.md` at runtime. Fact-free (the fo_kb + path
+    come from args); empty when unconfigured / no such folder, so a non-PG KB never escalates on econ
+    alone unless the FamilyOffice-entity guard is actually wired. Short (<3-char) ids are dropped."""
+    ids = set()
+    folder = kb_map.get(fo_kb) if fo_kb else None
+    if not folder:
+        return ids
+    ent_dir = os.path.join(vault_root, folder, "wiki", "entities")
+    try:
+        names = os.listdir(_win_long(ent_dir))
+    except OSError:
+        return ids
+    for name in names:
+        if not name.endswith(".md"):
+            continue
+        ids.add(os.path.splitext(name)[0].replace("-", " ").lower())
+        raw = _read_text(os.path.join(ent_dir, name)) or ""
+        title = _frontmatter(raw).get("title")
+        if isinstance(title, str) and title.strip():
+            ids.add(title.strip().lower())
+        for a in _fm_list_items(raw, "aliases"):
+            ids.add(a.lower())
+    return {i for i in ids if len(i) >= 3}
+
+
+def _fo_entity_hit(raw, entity_ids):
+    """True if the raw text names any known FO entity identifier as a whole word (case-insensitive)."""
+    if not entity_ids:
+        return False
+    low = (raw or "").lower()
+    return any(re.search(r"\b" + re.escape(i) + r"\b", low) for i in entity_ids)
 
 
 def _finalize_lane(kb, proposed, auto_ship_kbs, review_gates):
@@ -212,7 +286,7 @@ def _journal_collision(vault_root, kb_map, ck):
 
 
 def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates,
-               len_floor=0, dollar_floor=0):
+               len_floor=0, dollar_floor=0, paper_governs=None, fo_entity_ids=None):
     """Returns (sorted_item, None) or (None, needs_judgment_record). A below-bar capture (A89) is
     returned as a `sorted_item` carrying stage `reference` (terminal) instead of `sorted`."""
     kb = item.get("kb")
@@ -263,7 +337,10 @@ def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates,
         return out, None
 
     collision = _journal_collision(vault_root, kb_map, ck)
-    proposed = propose_lane(kb, auto_ship_kbs, econ_hit, rtype in CONFIRM_TYPES, collision)
+    pg = _pg_flag(paper_governs, kb)   # A99: default Paper-Governs (escalate on econ) unless explicit false
+    fo_hit = _fo_entity_hit(raw, fo_entity_ids) if (econ_hit and not pg) else False
+    proposed = propose_lane(kb, auto_ship_kbs, econ_hit, rtype in CONFIRM_TYPES, collision,
+                            paper_governs=pg, fo_entity_hit=fo_hit)
     lane = _finalize_lane(kb, proposed, auto_ship_kbs, review_gates)
 
     out = dict(item)
@@ -293,15 +370,18 @@ def _log_floored(context_log, floored):
 
 
 def run(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, limit=None,
-        len_floor=0, dollar_floor=0, context_log=None):
+        len_floor=0, dollar_floor=0, context_log=None, paper_governs=None, fo_kb=None):
     data = queue_tx.load(queue_path)
     captured = [it for it in data["queue"] if it.get("stage") == "captured"]
     if limit:
         captured = captured[:int(limit)]
+    # A99: load FO entity identifiers once per run (only needed when a non-PG KB has an econ hit).
+    fo_entity_ids = _fo_entity_ids(vault_root, kb_map, fo_kb) if fo_kb else set()
     sorted_items, needs_judgment = [], []
     for it in captured:
         done, needs = _sort_item(it, vault_root, kb_map, auto_ship_kbs, review_gates,
-                                 len_floor=len_floor, dollar_floor=dollar_floor)
+                                 len_floor=len_floor, dollar_floor=dollar_floor,
+                                 paper_governs=paper_governs, fo_entity_ids=fo_entity_ids)
         (sorted_items.append(done) if done else needs_judgment.append(needs))
     if sorted_items:
         queue_tx._apply_items(queue_path, sorted_items, "update")
@@ -318,7 +398,8 @@ def run(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, limit=None,
                       "needs_judgment": needs_judgment}, ensure_ascii=False, indent=2))
 
 
-def one(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, cid, ck):
+def one(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, cid, ck,
+        paper_governs=None, fo_kb=None):
     data = queue_tx.load(queue_path)
     item = next((it for it in data["queue"] if it.get("id") == cid), None)
     if item is None:
@@ -330,7 +411,11 @@ def one(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, cid, ck):
     econ_hit = bool(lane_policy.ECONOMIC_TRIPWIRE_RE.search(raw))
     collision = _journal_collision(vault_root, kb_map, ck)
     rtype = (_frontmatter(raw).get("type") or "").lower()
-    proposed = propose_lane(kb, auto_ship_kbs, econ_hit, rtype in CONFIRM_TYPES, collision)
+    pg = _pg_flag(paper_governs, kb)   # A99: same de-escalation as the bulk `run` path
+    fo_hit = (_fo_entity_hit(raw, _fo_entity_ids(vault_root, kb_map, fo_kb))
+              if (econ_hit and not pg and fo_kb) else False)
+    proposed = propose_lane(kb, auto_ship_kbs, econ_hit, rtype in CONFIRM_TYPES, collision,
+                            paper_governs=pg, fo_entity_hit=fo_hit)
     lane = _finalize_lane(kb, proposed, auto_ship_kbs, review_gates)
     out = dict(item)
     out.update(kb=kb, conflict_key=ck, lane=lane, stage="sorted")
@@ -362,6 +447,13 @@ def main(argv=None):
                        help='JSON list, e.g. ["dev","personal"] (empty = everything review)')
         p.add_argument("--review-gates", default=None,
                        help='optional JSON map kb -> full|collapsed (profile review_gates)')
+        # A99 KB-aware de-escalation. --paper-governs: JSON map kb -> bool (default true = escalate on
+        # econ). --familyoffice-kb: the kb whose wiki/entities/ define the FamilyOffice-entity signal that lets a
+        # NON-Paper-Governs kb still escalate a real FO mention. Both absent = pre-A99 behavior.
+        p.add_argument("--paper-governs", default=None,
+                       help='optional JSON map kb -> bool (default true; false de-escalates vocab-only econ hits)')
+        p.add_argument("--familyoffice-kb", default=None,
+                       help='kb key whose wiki/entities/ define the FamilyOffice-entity escalation signal (A99)')
 
     pr = sub.add_parser("run"); common(pr)
     pr.add_argument("--limit", type=int, default=None)
@@ -382,14 +474,18 @@ def main(argv=None):
         auto = json.loads(args.auto_ship_kbs); assert isinstance(auto, list)
         gates = json.loads(args.review_gates) if args.review_gates else None
         assert gates is None or isinstance(gates, dict)
+        pgov = json.loads(args.paper_governs) if args.paper_governs else None
+        assert pgov is None or isinstance(pgov, dict)
     except (ValueError, AssertionError):
-        _die("--kb-map must be a JSON object; --auto-ship-kbs a JSON list; --review-gates a JSON object")
+        _die("--kb-map/--review-gates/--paper-governs must be JSON objects; --auto-ship-kbs a JSON list")
 
     if args.op == "run":
         run(args.queue, args.vault_root, kb_map, auto, gates, limit=args.limit,
-            len_floor=args.len_floor, dollar_floor=args.dollar_floor, context_log=args.context_log)
+            len_floor=args.len_floor, dollar_floor=args.dollar_floor, context_log=args.context_log,
+            paper_governs=pgov, fo_kb=args.familyoffice_kb)
     else:
-        one(args.queue, args.vault_root, kb_map, auto, gates, args.id, args.ck)
+        one(args.queue, args.vault_root, kb_map, auto, gates, args.id, args.ck,
+            paper_governs=pgov, fo_kb=args.familyoffice_kb)
     return 0
 
 

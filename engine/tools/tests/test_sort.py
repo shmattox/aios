@@ -199,6 +199,79 @@ try:
     check("A89: unset thresholds -> floor disabled, capture drafts (safe default)",
           queue_tx.load(q4)["queue"][0]["stage"] == "sorted")
 
+    # ── A99 KB-aware de-escalation ────────────────────────────────────────────────────────────
+    os.makedirs(os.path.join(vault, "02_FO", "wiki", "entities"), exist_ok=True)
+    open(os.path.join(vault, "02_FO", "wiki", "entities", "northwind-holdings.md"),
+         "w", encoding="utf-8").write("---\ntype: entity\ntitle: Northwind Holdings\n---\n\nan FO asset.\n")
+    d_vocab = raw("03_Dev", "vocab.md", {"type": "article", "title": "Gate Design"},
+                  "the gate escalates on Paper-Governs material. design notes.\n")
+    d_foent = raw("03_Dev", "foent.md", {"type": "article", "title": "Note"},
+                  "Northwind Holdings refinance discussion.\n")
+    q6 = os.path.join(d, "q6.json")
+    json.dump({"queue": [
+        {"id": "a-vocab", "stage": "captured", "kb": "dev", "payload_path": d_vocab, "history": []},
+        {"id": "a-foent", "stage": "captured", "kb": "dev", "payload_path": d_foent, "history": []},
+    ]}, open(q6, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q6, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": False}), "--familyoffice-kb", "fo")
+    q6b = {i["id"]: i for i in queue_tx.load(q6)["queue"]}
+    check("A99: non-PG KB + governance-vocab econ hit (no FO entity) de-escalates (not review)",
+          q6b["a-vocab"]["lane"] == "auto-ship")
+    check("A99: non-PG KB + econ hit naming a real FO entity still escalates to review",
+          q6b["a-foent"]["lane"] == "review")
+    # regression: default (paper_governs unset) keeps the pre-A99 econ escalation
+    q7 = os.path.join(d, "q7.json")
+    json.dump({"queue": [{"id": "a-def", "stage": "captured", "kb": "dev",
+                          "payload_path": d_vocab, "history": []}]}, open(q7, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q7, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto)
+    check("A99: default (PG unset) still escalates an econ hit to review (unchanged)",
+          queue_tx.load(q7)["queue"][0]["lane"] == "review")
+    # PG-true KB with an econ hit still escalates even when --paper-governs is passed for other kbs
+    q8 = os.path.join(d, "q8.json")
+    json.dump({"queue": [{"id": "a-pg", "stage": "captured", "kb": "dev",
+                          "payload_path": p_econ, "history": []}]}, open(q8, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q8, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": True}), "--familyoffice-kb", "fo")
+    check("A99: paper_governs:true KB + econ_hit -> review (invariant)",
+          queue_tx.load(q8)["queue"][0]["lane"] == "review")
+    # F3: a BLOCK-style aliases list on an FO entity is still caught by the FO-entity net
+    open(os.path.join(vault, "02_FO", "wiki", "entities", "zephyr.md"), "w", encoding="utf-8").write(
+        "---\ntype: entity\ntitle: Zephyr\naliases:\n  - Zephyr Trust\n  - ZT Holdings\n---\n\nx.\n")
+    d_alias = raw("03_Dev", "alias.md", {"type": "article", "title": "Note"},
+                  "Zephyr Trust refinance terms.\n")
+    q9 = os.path.join(d, "q9.json")
+    json.dump({"queue": [{"id": "a-alias", "stage": "captured", "kb": "dev",
+                          "payload_path": d_alias, "history": []}]}, open(q9, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q9, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": False}), "--familyoffice-kb", "fo")
+    check("A99 F3: block-style FO-entity alias still escalates a non-PG econ hit to review",
+          queue_tx.load(q9)["queue"][0]["lane"] == "review")
+    # F4: the `one()` path de-escalates identically to `run`
+    q10 = os.path.join(d, "q10.json")
+    json.dump({"queue": [{"id": "a-one", "stage": "captured", "kb": "dev",
+                          "payload_path": d_vocab, "history": []}]}, open(q10, "w", encoding="utf-8"), indent=2)
+    run_cli("one", "--queue", q10, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": False}), "--familyoffice-kb", "fo",
+            "--id", "a-one", "--ck", "dev/wiki/sources/gate-design.md")
+    check("A99 F4: one() de-escalates a non-PG governance-vocab econ hit (matches run)",
+          queue_tx.load(q10)["queue"][0]["lane"] == "auto-ship")
+    # F4: fail-open posture — a non-PG econ hit with NO --familyoffice-kb wired de-escalates (documented)
+    q11 = os.path.join(d, "q11.json")
+    json.dump({"queue": [{"id": "a-open", "stage": "captured", "kb": "dev",
+                          "payload_path": d_vocab, "history": []}]}, open(q11, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q11, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": False}))
+    check("A99 F4: non-PG econ hit with the FO net unwired de-escalates (fail-open posture)",
+          queue_tx.load(q11)["queue"][0]["lane"] == "auto-ship")
+    # F5: a non-bool paper_governs value (null) reads as the safe default True (escalate), not de-escalate
+    q12 = os.path.join(d, "q12.json")
+    json.dump({"queue": [{"id": "a-null", "stage": "captured", "kb": "dev",
+                          "payload_path": d_vocab, "history": []}]}, open(q12, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q12, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--paper-governs", json.dumps({"dev": None}), "--familyoffice-kb", "fo")
+    check("A99 F5: paper_governs null reads as the safe default (escalate), not de-escalate",
+          queue_tx.load(q12)["queue"][0]["lane"] == "review")
+
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
