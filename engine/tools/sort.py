@@ -100,6 +100,84 @@ def _resolve_raw(vault_root, payload_path):
     return _read_text(os.path.join(vault_root, p.replace("/", os.sep)))
 
 
+_MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s?(k|m|mm|bn|b|thousand|million|billion)?", re.I)
+_MONEY_MULT = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mm": 1e6, "million": 1e6,
+               "b": 1e9, "bn": 1e9, "billion": 1e9}
+_LINK_FIELDS = ("papered_source", "entity", "entities", "owner_entity")
+
+
+def _body_len(raw):
+    """Char count of the body (frontmatter stripped) — the A89 length signal."""
+    text = raw or ""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4:]
+    return len(text.strip())
+
+
+def _max_dollar(raw):
+    """Largest currency magnitude in the body (0.0 if none), k/m/bn suffixes honored so a `$5k`
+    charge is not under-counted as $5 and wrongly floored."""
+    vals = []
+    for m in _MONEY_RE.finditer(raw or ""):
+        try:
+            v = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        vals.append(v * _MONEY_MULT.get((m.group(2) or "").lower(), 1))
+    return max(vals) if vals else 0.0
+
+
+def _entity_or_paper_linked(fm, raw):
+    """A89 invariant signal — a capture naming a known entity / carrying a papered_source is never
+    floored (Paper-Governs subordinate). Covers an inline scalar / inline `[..]` list (via the flat
+    reader) AND a BLOCK-style multi-line list (`entities:\\n  - X`), which the flat reader collapses to
+    `""` — so the flat check alone would leak the invariant and floor an entity-linked capture."""
+    if any(isinstance(fm.get(k), str) and fm.get(k).strip() for k in _LINK_FIELDS):
+        return True
+    lines = (raw or "").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    for i in range(1, len(lines)):
+        ln = lines[i]
+        if ln.strip() == "---":
+            break
+        if ln[:1] in (" ", "\t") or ":" not in ln:
+            continue
+        if ln.split(":", 1)[0].strip() in _LINK_FIELDS:
+            for nxt in lines[i + 1:]:                 # any indented non-empty item before the next key?
+                if nxt.strip() == "---" or (nxt.strip() and nxt[:1] not in (" ", "\t")):
+                    break
+                if nxt[:1] in (" ", "\t") and nxt.lstrip().lstrip("-").strip():
+                    return True
+    return False
+
+
+def worthiness_floor(raw, fm, econ_hit, len_floor, dollar_floor):
+    """A89: zero-LLM deterministic below-bar test. Returns (floored, signals|None). Below-bar iff
+    length < LEN_FLOOR AND source_tier == tertiary AND (not economic) AND (no material $) AND not
+    entity/paper-linked. INVARIANT: econ_hit / $≥DOLLAR_FLOOR / entity-or-paper-linked are NEVER
+    floored (Paper-Governs subordinate). Disabled (never floors) when len_floor is unset/≤0 — the safe
+    default is to floor nothing until a value is set."""
+    if not len_floor or len_floor <= 0:
+        return False, None                                   # floor disabled (safe default)
+    if econ_hit or _entity_or_paper_linked(fm, raw):
+        return False, None                                   # Paper-Governs subordinate — never floor
+    if (fm.get("source_tier") or "").lower() != "tertiary":
+        return False, None
+    blen = _body_len(raw)
+    if blen >= len_floor:
+        return False, None
+    md = _max_dollar(raw)
+    dollar_below = (md < dollar_floor) if dollar_floor else (md == 0)
+    if not dollar_below:
+        return False, None
+    return True, {"length": blen, "source_tier": "tertiary", "max_dollar": md,
+                  "failing_bar": f"length<{len_floor} & tertiary & non-economic & "
+                                 f"$<{dollar_floor or 'any'} & unlinked"}
+
+
 def propose_lane(kb, auto_ship_kbs, econ_hit, confirm_signal, collision):
     """The kb→lane proposal table, plus the escalation signals. Deterministic."""
     if econ_hit or collision:
@@ -133,8 +211,10 @@ def _journal_collision(vault_root, kb_map, ck):
         return False
 
 
-def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates):
-    """Returns (sorted_item, None) or (None, needs_judgment_record)."""
+def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates,
+               len_floor=0, dollar_floor=0):
+    """Returns (sorted_item, None) or (None, needs_judgment_record). A below-bar capture (A89) is
+    returned as a `sorted_item` carrying stage `reference` (terminal) instead of `sorted`."""
     kb = item.get("kb")
     raw = _resolve_raw(vault_root, item.get("payload_path"))
     fm = _frontmatter(raw or "")
@@ -172,6 +252,16 @@ def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates):
         return needs(f"undeclared/unknown type {rtype!r} — classify, then `sort.py one --ck`")
 
     econ_hit = bool(lane_policy.ECONOMIC_TRIPWIRE_RE.search(raw or ""))
+    floored, floor_signals = worthiness_floor(raw, fm, econ_hit, len_floor, dollar_floor)
+    if floored:
+        # A89: below-bar, non-Paper-Governs capture → terminal `reference` (stays searchable in raw/,
+        # never drafted, never gated). Keep the derived conflict_key (a re-open via rewind can draft it).
+        out = dict(item)
+        out.update(kb=kb, conflict_key=ck, lane=None, stage="reference")
+        out.setdefault("history", []).append(
+            {"ts": _now(), "stage": "reference", "kb": kb, "floor": floor_signals})
+        return out, None
+
     collision = _journal_collision(vault_root, kb_map, ck)
     proposed = propose_lane(kb, auto_ship_kbs, econ_hit, rtype in CONFIRM_TYPES, collision)
     lane = _finalize_lane(kb, proposed, auto_ship_kbs, review_gates)
@@ -182,22 +272,49 @@ def _sort_item(item, vault_root, kb_map, auto_ship_kbs, review_gates):
     return out, None
 
 
-def run(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, limit=None):
+def _log_floored(context_log, floored):
+    """A89 no-silent-caps: append one JSONL line per floored item (id + signals + the failing bar) so
+    a dropped draft leaves a trace. Best-effort — a log write must never fail the sort."""
+    if not context_log or not floored:
+        return
+    try:
+        os.makedirs(os.path.dirname(_win_long(context_log)) or ".", exist_ok=True)
+        with open(_win_long(context_log), "a", encoding="utf-8") as f:
+            for it in floored:
+                sig = next((h.get("floor") for h in reversed(it.get("history", []))
+                            if h.get("floor")), {})
+                # no "stage" key on purpose — pipeline_health's run scan keys on `stage`, so a floored
+                # trace must not read as a pipeline run; it is counted via its `event` instead.
+                f.write(json.dumps({"ts": _now(), "event": "floored",
+                                    "id": it.get("id"), "kb": it.get("kb"), "floor": sig},
+                                   ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def run(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, limit=None,
+        len_floor=0, dollar_floor=0, context_log=None):
     data = queue_tx.load(queue_path)
     captured = [it for it in data["queue"] if it.get("stage") == "captured"]
     if limit:
         captured = captured[:int(limit)]
     sorted_items, needs_judgment = [], []
     for it in captured:
-        done, needs = _sort_item(it, vault_root, kb_map, auto_ship_kbs, review_gates)
+        done, needs = _sort_item(it, vault_root, kb_map, auto_ship_kbs, review_gates,
+                                 len_floor=len_floor, dollar_floor=dollar_floor)
         (sorted_items.append(done) if done else needs_judgment.append(needs))
     if sorted_items:
         queue_tx._apply_items(queue_path, sorted_items, "update")
+    floored = [i for i in sorted_items if i.get("stage") == "reference"]
+    _log_floored(context_log, floored)
+    routed = [i for i in sorted_items if i.get("stage") == "sorted"]
     by_kb = {}
-    for it in sorted_items:
+    for it in routed:
         by_kb[it["kb"]] = by_kb.get(it["kb"], 0) + 1
-    print(json.dumps({"ok": True, "sorted": len(sorted_items), "by_kb": by_kb,
-                      "review_laned": sum(1 for i in sorted_items if i["lane"] == "review"),
+    print(json.dumps({"ok": True, "sorted": len(routed), "by_kb": by_kb,
+                      "review_laned": sum(1 for i in routed if i["lane"] == "review"),
+                      "floored": len(floored),
+                      "floored_ids": [i.get("id") for i in floored],
                       "needs_judgment": needs_judgment}, ensure_ascii=False, indent=2))
 
 
@@ -248,6 +365,13 @@ def main(argv=None):
 
     pr = sub.add_parser("run"); common(pr)
     pr.add_argument("--limit", type=int, default=None)
+    # A89 worthiness floor — thresholds are profile knobs (fact-free). Unset/0 = floor disabled.
+    pr.add_argument("--len-floor", type=int, default=0,
+                    help="A89: body chars below this (with the other signals) → terminal `reference`")
+    pr.add_argument("--dollar-floor", type=float, default=0,
+                    help="A89: a $ amount at/above this is never floored (0 = any $ blocks flooring)")
+    pr.add_argument("--context-log", default=None,
+                    help="A89: append one floored-item line here (no-silent-caps trace)")
     po = sub.add_parser("one"); common(po)
     po.add_argument("--id", required=True)
     po.add_argument("--ck", required=True)
@@ -262,7 +386,8 @@ def main(argv=None):
         _die("--kb-map must be a JSON object; --auto-ship-kbs a JSON list; --review-gates a JSON object")
 
     if args.op == "run":
-        run(args.queue, args.vault_root, kb_map, auto, gates, limit=args.limit)
+        run(args.queue, args.vault_root, kb_map, auto, gates, limit=args.limit,
+            len_floor=args.len_floor, dollar_floor=args.dollar_floor, context_log=args.context_log)
     else:
         one(args.queue, args.vault_root, kb_map, auto, gates, args.id, args.ck)
     return 0

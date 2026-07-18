@@ -24,7 +24,7 @@ Usage:
 """
 import json, os, sys, time, re
 
-STAGES   = {"captured", "sorted", "awaiting", "shipped", "reverted", "rejected"}
+STAGES   = {"captured", "sorted", "awaiting", "shipped", "reverted", "rejected", "reference"}
 LANES    = {"auto-ship", "confirm", "review", None}
 REQUIRED = {"id", "stage"}
 KEYED_STAGES = {"sorted", "awaiting", "shipped"}   # conflict_key required from sort onward

@@ -119,6 +119,86 @@ try:
     g = queue_tx.load(q2)["queue"][0]
     check("review_gates 'full' forces the review lane", g["lane"] == "review")
 
+    # ── A89 worthiness floor ──────────────────────────────────────────────────────────────────
+    import pipeline_health
+    b_short   = raw("03_Dev", "b-short.md",  {"type": "bookmark", "source_tier": "tertiary",
+                                              "title": "Cool Link"}, "a neat link.\n")
+    b_econ    = raw("03_Dev", "b-econ.md",   {"type": "article", "source_tier": "tertiary",
+                                              "title": "Note"}, "cap table thoughts.\n")
+    b_linked  = raw("03_Dev", "b-linked.md", {"type": "bookmark", "source_tier": "tertiary",
+                                              "title": "Linked", "papered_source": "raw/foo.pdf"},
+                    "short.\n")
+    b_chg_lo  = raw("03_Dev", "b-chg-lo.md", {"type": "bookmark", "source_tier": "tertiary",
+                                              "title": "Charge"}, "vendor charge of $3.50 today.\n")
+    b_chg_hi  = raw("03_Dev", "b-chg-hi.md", {"type": "bookmark", "source_tier": "tertiary",
+                                              "title": "Big"}, "a $250 charge landed.\n")
+    b_long    = raw("03_Dev", "b-long.md",   {"type": "bookmark", "source_tier": "tertiary",
+                                              "title": "Long"}, "word " * 60)
+    b_second  = raw("03_Dev", "b-second.md", {"type": "bookmark", "source_tier": "secondary",
+                                              "title": "Sec"}, "short secondary.\n")
+    fl_items = [{"id": cid, "stage": "captured", "kb": "dev", "payload_path": pp,
+                 "history": [{"ts": "2026-07-05T00:00:00Z", "stage": "captured"}]}
+                for cid, pp in [("f-short", b_short), ("f-econ", b_econ), ("f-linked", b_linked),
+                                ("f-chglo", b_chg_lo), ("f-chghi", b_chg_hi), ("f-long", b_long),
+                                ("f-second", b_second)]]
+    q3 = os.path.join(d, "q3.json")
+    clog = os.path.join(d, "context-log.jsonl")
+    json.dump({"queue": fl_items}, open(q3, "w", encoding="utf-8"), indent=2)
+    rf = run_cli("run", "--queue", q3, "--vault-root", vault, "--kb-map", kb_map,
+                 "--auto-ship-kbs", auto, "--len-floor", "200", "--dollar-floor", "100",
+                 "--context-log", clog)
+    fo = json.loads(rf.stdout[rf.stdout.index("{"):])
+    fb = {i["id"]: i for i in queue_tx.load(q3)["queue"]}
+    check("A89: short tertiary non-economic capture -> reference (floored, not drafted)",
+          fb["f-short"]["stage"] == "reference" and fb["f-short"]["lane"] is None)
+    check("A89 invariant: econ-flagged short capture NOT floored (drafted + held review)",
+          fb["f-econ"]["stage"] == "sorted" and fb["f-econ"]["lane"] == "review")
+    check("A89 invariant: entity/paper-linked capture NOT floored",
+          fb["f-linked"]["stage"] == "sorted")
+    # block-style multi-line `entities:` list — the flat reader collapses it to "", so the invariant
+    # must be enforced by scanning the raw block (else an entity-linked capture leaks to `reference`).
+    b_ents = os.path.join(vault, "03_Dev", "raw", "inbox", "x", "b-ents.md")
+    open(b_ents, "w", encoding="utf-8").write(
+        "---\ntype: bookmark\nsource_tier: tertiary\ntitle: Ents\nentities:\n  - Largo\n  - Jenkins\n---\n\nshort.\n")
+    q5 = os.path.join(d, "q5.json")
+    json.dump({"queue": [{"id": "f-ents", "stage": "captured", "kb": "dev",
+                          "payload_path": "03_Dev/raw/inbox/x/b-ents.md", "history": []}]},
+              open(q5, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q5, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto,
+            "--len-floor", "200", "--dollar-floor", "100")
+    check("A89 invariant: block-style multi-line entities list NOT floored (flat-reader leak closed)",
+          queue_tx.load(q5)["queue"][0]["stage"] == "sorted")
+    check("A89: sub-DOLLAR_FLOOR charge floored", fb["f-chglo"]["stage"] == "reference")
+    check("A89: >=DOLLAR_FLOOR charge held (not floored)", fb["f-chghi"]["stage"] == "sorted")
+    check("A89: above-LEN_FLOOR item drafts as today (regression)", fb["f-long"]["stage"] == "sorted")
+    check("A89: non-tertiary tier not floored", fb["f-second"]["stage"] == "sorted")
+    check("A89: run summary reports floored count + ids",
+          fo["floored"] == 2 and set(fo["floored_ids"]) == {"f-short", "f-chglo"})
+    check("A89: reference item still carries its conflict_key (re-openable draft target)",
+          fb["f-short"].get("conflict_key") == "dev/wiki/sources/cool-link.md")
+    check("A89 no-silent-caps: each floored item logged to the context-log",
+          sum(1 for ln in open(clog, encoding="utf-8") if '"event": "floored"' in ln) == 2)
+    check("A89 health line reports the floored count",
+          "floored→raw" in pipeline_health.render(clog, hours=100000,
+                                                   now="2026-07-05T12:00:00Z"))
+    check("A89: a floored queue still validates (reference is a terminal stage)",
+          queue_tx.validate(queue_tx.load(q3)) is None)
+    # re-open: nothing is lost — the raw is untouched and the item flips back to captured cleanly
+    reopened = {i["id"]: i for i in queue_tx.load(q3)["queue"]}["f-short"]
+    reopened["stage"] = "captured"
+    queue_tx._apply_items(q3, [reopened], "update")
+    reloaded = {i["id"]: i for i in queue_tx.load(q3)["queue"]}["f-short"]
+    check("A89: a floored item re-opens to captured (raw untouched, nothing lost)",
+          os.path.exists(os.path.join(vault, b_short.replace("/", os.sep)))
+          and reloaded["stage"] == "captured")
+    # floor DISABLED by default (no thresholds) — the same short capture drafts as today
+    q4 = os.path.join(d, "q4.json")
+    json.dump({"queue": [{"id": "f-off", "stage": "captured", "kb": "dev", "payload_path": b_short,
+                          "history": []}]}, open(q4, "w", encoding="utf-8"), indent=2)
+    run_cli("run", "--queue", q4, "--vault-root", vault, "--kb-map", kb_map, "--auto-ship-kbs", auto)
+    check("A89: unset thresholds -> floor disabled, capture drafts (safe default)",
+          queue_tx.load(q4)["queue"][0]["stage"] == "sorted")
+
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

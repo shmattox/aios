@@ -56,6 +56,7 @@ def render(path, hours=30, now=None):
     cutoff = now_dt - timedelta(hours=hours)
 
     runs = []
+    floored = 0  # A89: below-bar captures routed to searchable raw (no-silent-caps count)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -69,14 +70,19 @@ def render(path, hours=30, now=None):
                 if not isinstance(rec, dict):
                     continue  # parses-but-wrong-shape line — same policy
                 ts = _parse_ts(rec.get("ts"))
-                if ts and ts >= cutoff and rec.get("stage"):
+                if not (ts and ts >= cutoff):
+                    continue
+                if rec.get("stage"):
                     runs.append((ts, rec))
+                elif rec.get("event") == "floored":
+                    floored += 1  # A89 floored trace carries no `stage` — count it separately
     except OSError:
         pass
 
     window = f"last {hours}h"
     if not runs:
-        return f"⚙️ Pipeline ({window}): no runs logged"
+        base = f"⚙️ Pipeline ({window}): no runs logged"
+        return base + (f" · {floored} floored→raw" if floored else "")
 
     runs.sort(key=lambda r: r[0])
     stages = {rec["stage"] for _, rec in runs}
@@ -99,6 +105,8 @@ def render(path, hours=30, now=None):
         parts.append(f"⚠ {sum(anomalies.values())} anomalies ({by_stage})")
     else:
         parts.append("✅ no anomalies")
+    if floored:
+        parts.append(f"{floored} floored→raw")  # A89: earn-your-line, only when >0
     return f"⚙️ Pipeline ({window}): " + " · ".join(parts)
 
 
