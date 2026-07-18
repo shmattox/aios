@@ -134,6 +134,64 @@ def test_tasks_output_shape_offline(monkeypatch, capsys):
     assert "network error" in out["sources"][0]["error"]
 
 
+# ── A95 retrieve (Done-vs-vanished direct read) ──────────────────────────────
+_PID = "22222222-2222-2222-2222-222222222222"
+
+
+def _page(status, archived=False, in_trash=False):
+    return {"id": _PID, "url": "https://n/x", "archived": archived, "in_trash": in_trash,
+            "last_edited_time": "2026-07-18T00:00:00Z",
+            "properties": {"Name": {"type": "title", "title": [{"plain_text": "Druid Fund Q1"}]},
+                           "Status": {"type": "status", "status": {"name": status}}}}
+
+
+def test_retrieve_found_done_page(monkeypatch):
+    """A page present with Status=Done → found:True and the status readable → 'completed', not a hedge."""
+    monkeypatch.setattr(ng, "_request", lambda m, u, t, v, body=None, timeout=30: (200, _page("Done")))
+    r = ng.retrieve_page(_PID, "tok")
+    assert r["ok"] is True and r["found"] is True and r["archived"] is False
+    assert r["page"]["status"] == "Done" and r["page"]["title"] == "Druid Fund Q1"
+
+
+def test_retrieve_archived_flag(monkeypatch):
+    monkeypatch.setattr(ng, "_request", lambda *a, **k: (200, _page("Done", in_trash=True)))
+    assert ng.retrieve_page(_PID, "tok")["archived"] is True
+
+
+def test_retrieve_404_is_genuinely_absent(monkeypatch):
+    """HTTP 404 → found:False — the only verdict that licenses 'no longer reachable'."""
+    monkeypatch.setattr(ng, "_request", lambda *a, **k: (404, {"message": "Could not find page"}))
+    r = ng.retrieve_page(_PID, "tok")
+    assert r["ok"] is False and r["found"] is False and r["http"] == 404
+
+
+def test_retrieve_network_error_is_undecided_never_absent(monkeypatch):
+    """A network/degraded read must NOT report absent (found:None) — the caller degrades to 'unverified'."""
+    monkeypatch.setattr(ng, "_request", lambda *a, **k: (0, {"message": "network error: offline"}))
+    r = ng.retrieve_page(_PID, "tok")
+    assert r["ok"] is False and r["found"] is None  # NOT False
+
+
+def test_retrieve_falls_back_to_db_version(monkeypatch):
+    """A page the data-source version 404s but the database version serves is still found (like flip)."""
+    calls = {"n": 0}
+    def fake(m, u, t, v, body=None, timeout=30):
+        calls["n"] += 1
+        return (404, {"message": "x"}) if calls["n"] == 1 else (200, _page("Open"))
+    monkeypatch.setattr(ng, "_request", fake)
+    r = ng.retrieve_page(_PID, "tok")
+    assert r["found"] is True and r["page"]["status"] == "Open" and calls["n"] == 2
+
+
+def test_retrieve_cli_offline_envelope(monkeypatch, capsys):
+    monkeypatch.setenv("AIOS_NG_TEST_TOKEN", "secret_abc")
+    monkeypatch.setattr(ng, "_request", lambda *a, **k: (404, {"message": "gone"}))
+    rc = ng.main(["--token-env", "AIOS_NG_TEST_TOKEN", "retrieve", "--page", _PID])
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["found"] is False and out["http"] == 404
+
+
 if __name__ == "__main__":
     # suite_test.py runs each test_*.py as a subprocess and asserts exit 0 - without this
     # block a pytest-style file passes VACUOUSLY (defines functions, exits 0; A7 finding).

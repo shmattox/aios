@@ -325,6 +325,50 @@ def cmd_tasks(args):
     return 0 if live else 1
 
 
+def retrieve_page(page_id, token):
+    """GET one page by id → a decision-ready record, trying the data-source API version then the
+    database one (a page can belong to either, exactly like cmd_flip's read). Returns a dict:
+
+      {ok, found, archived, page, http, error}
+
+    - found=True  → the page exists (record in `page`, `archived` flags trashed/archived);
+    - found=False → Notion says genuinely absent (HTTP 404) — the "vanished for real" verdict;
+    - found=None  → the query could not decide (network/degraded/other HTTP) — the caller must
+                    NOT conclude 'absent', it degrades to 'unverified'.
+
+    This is the A95 Done-vs-vanished primitive: the open-task view filters Status≠Done, so a
+    completed task simply disappears between gathers — ONE direct by-id read distinguishes
+    'completed' from 'genuinely gone' instead of hedging 'status unconfirmed'."""
+    status, body = _request("GET", f"{API_BASE}/pages/{page_id}", token, DS_VERSION)
+    if status != 200:
+        status, body = _request("GET", f"{API_BASE}/pages/{page_id}", token, DB_VERSION)
+    if status == 200:
+        rec = normalize_page(body)
+        archived = bool(body.get("archived") or body.get("in_trash"))
+        return {"ok": True, "found": True, "archived": archived, "page": rec,
+                "http": status, "error": None}
+    if status == 404:
+        return {"ok": False, "found": False, "archived": None, "page": None,
+                "http": 404, "error": (body or {}).get("message")}
+    # 0 (network/TLS) or any other HTTP — undecided, never a false 'absent'
+    return {"ok": False, "found": None, "archived": None, "page": None,
+            "http": status, "error": (body or {}).get("message")}
+
+
+def cmd_retrieve(args):
+    token, _source = resolve_token(args.token_env)
+    if not token:
+        _no_token_exit(args.token_env)
+    try:
+        page_id = normalize_id(args.page)
+    except ValueError as e:
+        print(json.dumps({"ok": False, "found": None, "page": None, "error": str(e)}, indent=1))
+        return 1
+    result = retrieve_page(page_id, token)
+    print(json.dumps(result, indent=1, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
 def main(argv=None):
     _utf8_stdio()
     ap = argparse.ArgumentParser(description="Read-only Notion API gather for headless aios runs (A18).")
@@ -339,8 +383,14 @@ def main(argv=None):
                     help="drop items whose status equals this (client-side, case-insensitive); repeatable")
     sp.add_argument("--page-size", type=int, default=100,
                     help="total item cap per source (fetched in API pages of <=100; default 100)")
+    rp = sub.add_parser("retrieve", help="GET one page by id (A95 Done-vs-vanished direct read)")
+    rp.add_argument("--page", required=True, help="page id (bare uuid or collection://uuid)")
     args = ap.parse_args(argv)
-    return cmd_check(args) if args.cmd == "check" else cmd_tasks(args)
+    if args.cmd == "check":
+        return cmd_check(args)
+    if args.cmd == "retrieve":
+        return cmd_retrieve(args)
+    return cmd_tasks(args)
 
 
 if __name__ == "__main__":
