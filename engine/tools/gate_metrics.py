@@ -76,9 +76,25 @@ def terminal_date(item):
     return None
 
 
+def revert_event_dates(item):
+    """A97 honest counter-metric — the dates of every ship→undo in this item's history. Reads the
+    durable `undo_of: "shipped"` marker rewind.undo_ship stamps (falling back to the by/note signature
+    for pre-A97 reverts). This counts reverts from HISTORY, not the item's current stage: undo-ship
+    lands an item at `awaiting`, so a terminal-stage count (`totals[reverted]`) misses every real
+    revert. A ship that was undone and then re-shipped still leaves its revert event here."""
+    out = []
+    for h in item.get("history", []) or []:
+        if h.get("undo_of") == "shipped" or (
+                h.get("by") == "rewind" and str(h.get("note", "")).startswith("undo-ship")):
+            if h.get("ts"):
+                out.append(str(h["ts"])[:10])
+    return out
+
+
 def _empty_window():
     return {"n": 0, "unknown_ts": 0,
             "totals": {"accepted": 0, "rejected": 0, "reverted": 0},
+            "reverts_hist": 0,  # A97: reverts counted from ship→undo history markers (honest counter)
             "deciders": {"human": 0, "auto": 0, "scheduled": 0, "unknown": 0},
             "agreement": {"agree": 0, "override": 0, "hold": 0, "na": 0},
             "override_ids": [], "by_kb_lane": {}}
@@ -119,6 +135,14 @@ def rollup(items, today):
             key = f"{it.get('kb') or '?'}|{it.get('lane') or '?'}"
             cell = w["by_kb_lane"].setdefault(key, {"accepted": 0, "rejected": 0, "reverted": 0})
             cell[out] += 1
+    # A97: reverts are a SEPARATE axis — count each ship→undo event from history into its window by
+    # the event date, independent of the item's current stage (an undone item sits at `awaiting`).
+    for it in items:
+        for rdate in revert_event_dates(it):
+            age = _days_ago(today, rdate)
+            for name, span in WINDOWS:
+                if span is None or (age is not None and 0 <= age <= span):
+                    wins[name]["reverts_hist"] += 1
     return {"generated": today, "windows": wins}
 
 
@@ -136,8 +160,11 @@ def _render_lines(rep):
         t = w["totals"]
         pct = round(100 * t["accepted"] / n)
         d = w["deciders"]
+        # A97: every throughput beside its counter — accepted ↔ (rejects + reverts). The revert
+        # figure is counted from ship→undo HISTORY (w["reverts_hist"]), not the terminal stage, so an
+        # undone-then-reopened item is not silently dropped from the honest picture.
         head = (f"📊 Gate acceptance (30d): {pct}% accepted "
-                f"(n={n}: {t['accepted']} ship / {t['rejected']} reject / {t['reverted']} revert) · "
+                f"(n={n}: {t['accepted']} ship / {t['rejected']} reject / {w['reverts_hist']} revert) · "
                 f"human {d['human']} / auto {d['auto']} / sched {d['scheduled']} / unk {d['unknown']}")
     lines = [head]
     ov = w["agreement"]["override"]

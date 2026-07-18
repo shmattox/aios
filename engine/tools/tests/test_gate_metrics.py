@@ -84,6 +84,61 @@ def test_rollup_ignores_non_terminal_stages():
     assert r["windows"]["all"]["n"] == 0
 
 
+# --- A97: honest revert capture from history (not terminal stage) ---
+
+def _undone(ship_ts, undo_ts, legacy=False):
+    undo = {"ts": undo_ts, "stage": "awaiting", "by": "rewind",
+            "note": "undo-ship (removed_vault_file=True)"}
+    if not legacy:
+        undo["undo_of"] = "shipped"          # A97 durable marker
+    return _item(stage="awaiting", history=[
+        {"ts": ship_ts, "stage": "shipped", "approved_by": "auto-ship"}, undo])
+
+
+def test_revert_event_dates_reads_undo_marker():
+    assert gm.revert_event_dates(
+        _undone("2026-07-10T00:00:00Z", "2026-07-11T00:00:00Z")) == ["2026-07-11"]
+
+
+def test_revert_counted_from_history_not_terminal_stage():
+    # shipped then undone → the item now sits at `awaiting`, so the terminal-stage count is blind
+    r = gm.rollup([_undone("2026-07-14T00:00:00Z", "2026-07-14T01:00:00Z")], today="2026-07-15")
+    assert r["windows"]["all"]["totals"]["reverted"] == 0   # terminal-stage count misses it
+    assert r["windows"]["all"]["reverts_hist"] == 1         # history count captures it
+    assert r["windows"]["7d"]["reverts_hist"] == 1
+    assert r["windows"]["all"]["n"] == 0                    # awaiting is not a terminal decision
+
+
+def test_revert_legacy_marker_via_by_note_signature():
+    # a pre-A97 revert (no undo_of key) is still counted via the by/note signature
+    r = gm.rollup([_undone("2026-07-14T00:00:00Z", "2026-07-14T02:00:00Z", legacy=True)],
+                  today="2026-07-15")
+    assert r["windows"]["all"]["reverts_hist"] == 1
+
+
+def test_revert_counts_reconcile_reset_from_shipped():
+    # rewind.reset() bouncing a shipped item back to awaiting (reconcile desync repair) is a real ship
+    # revert — A97 stamps undo_of on it so the honest counter isn't blind (review finding #1)
+    it = _item(stage="awaiting", history=[
+        {"ts": "2026-07-14T00:00:00Z", "stage": "shipped", "approved_by": "auto-ship"},
+        {"ts": "2026-07-14T03:00:00Z", "stage": "awaiting", "by": "rewind",
+         "undo_of": "shipped", "note": "rewind from shipped: reconcile"}])
+    assert gm.rollup([it], today="2026-07-15")["windows"]["all"]["reverts_hist"] == 1
+
+
+def test_render_shows_honest_revert_from_history(tmp_path):
+    it1 = _item(id="x", history=[{"ts": "2026-07-14T00:00:00Z", "stage": "shipped",
+                                  "approved_by": "auto-ship"}])
+    it1["conflict_key"] = "demo/wiki/item/x"
+    it2 = _undone("2026-07-13T00:00:00Z", "2026-07-13T05:00:00Z")
+    it2["id"] = "y"
+    it2["conflict_key"] = "demo/wiki/item/y"   # awaiting is a keyed stage
+    r = _run(["render", "--queue", _mkqueue(tmp_path, [it1, it2]), "--today", "2026-07-15"])
+    assert r.returncode == 0
+    # n counts only the 1 terminal ship (it2 is back at awaiting); the revert is surfaced from history
+    assert "n=1: 1 ship / 0 reject / 1 revert" in r.stdout
+
+
 # --- CLI: report + render ---
 
 def _mkqueue(tmp_path, items):

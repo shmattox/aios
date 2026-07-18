@@ -171,10 +171,13 @@ def reset(queue_path, ids, to_stage, reason="", snap_dir=None):
             it["stage"] = to_stage
             it["claimed_by"] = None
             it["claimed_at"] = None
-            it.setdefault("history", []).append({
+            entry = {
                 "ts": now, "stage": to_stage, "by": "rewind", "snap_id": sid,
                 "note": f"rewind from {frm}" + (f": {reason}" if reason else ""),
-            })
+            }
+            if frm == "shipped":
+                entry["undo_of"] = "shipped"   # A97: a reset FROM shipped is a real ship revert too —
+            it.setdefault("history", []).append(entry)   # mark it so the honest counter isn't blind
             touched.append(it.get("id"))
     missing = want - set(touched)
     if missing:
@@ -288,7 +291,8 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
             it["claimed_at"] = None
             it.setdefault("history", []).append({
                 "ts": now, "stage": to_stage, "by": "rewind", "snap_id": sid,
-                "note": f"undo-ship (removed_vault_file={removed})",
+                "undo_of": "shipped",   # A97: durable ship→undo marker — honest revert capture reads
+                "note": f"undo-ship (removed_vault_file={removed})",   # this, not the terminal stage
             })
     if not found:
         _die(f"id not found: {cid}")
