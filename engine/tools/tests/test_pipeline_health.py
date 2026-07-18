@@ -86,6 +86,49 @@ try:
                        capture_output=True, text=True, encoding="utf-8")
     check("CLI exit 0", r.returncode == 0)
     check("CLI prints the same line", r.stdout.strip() == line)
+
+    # ── A92: missed-run detector ───────────────────────────────────────────────
+    # A fixture task-logs tree: one job that ran "today" and one that last ran days ago.
+    tl = os.path.join(d, "task-logs")
+    def _seed(job, stamp):
+        jd = os.path.join(tl, job); os.makedirs(jd, exist_ok=True)
+        open(os.path.join(jd, "last-result-%s.txt" % stamp), "w").close()
+    _seed("aios-ingest", "20260705-060000")      # ran within 30h of NOW (2026-07-05T12:00)
+    _seed("aios-garden", "20260702-031000")       # last ran 3+ days ago → a miss
+    os.makedirs(os.path.join(tl, "aios-brand-new"), exist_ok=True)  # dir exists, no run files yet
+
+    missed = pipeline_health.missed_runs(tl, ["aios-ingest", "aios-garden", "aios-brand-new"],
+                                         window_hours=30, now=NOW)
+    missed_ids = [m[0] for m in missed]
+    check("A92 detects the stale daily job", "aios-garden" in missed_ids)
+    check("A92 same-day job is NOT a miss", "aios-ingest" not in missed_ids)
+    check("A92 no-history job degrades silent (not a miss)", "aios-brand-new" not in missed_ids)
+    ml = pipeline_health.render_missed(missed)
+    print("  rendered: " + ml)
+    check("A92 render names the job + its last-run date", "aios-garden last ran 2026-07-02" in ml)
+    check("A92 render marks it expected daily", "expected daily" in ml)
+
+    # config-driven: an empty expected set → the tool emits nothing (no hardcoded job list)
+    check("A92 empty expected set → no lines",
+          pipeline_health.render_missed(pipeline_health.missed_runs(tl, [], now=NOW)) == "")
+    # a job unknown to the tree is skipped, never a crash
+    check("A92 unknown job degrades silent",
+          pipeline_health.missed_runs(tl, ["nonexistent-job"], now=NOW) == [])
+
+    # CLI: the detector appends the miss line after the summary; --expected-daily is the config
+    r2 = subprocess.run([sys.executable, os.path.join(HARNESS_TOOLS, "pipeline_health.py"),
+                         "--path", p2, "--hours", "30", "--now", NOW,
+                         "--task-logs", tl, "--expected-daily", "aios-ingest,aios-garden",
+                         "--window-hours", "30"],
+                        capture_output=True, text=True, encoding="utf-8")
+    check("A92 CLI exit 0", r2.returncode == 0)
+    check("A92 CLI appends the miss line", "aios-garden last ran 2026-07-02" in r2.stdout)
+    check("A92 CLI still prints the summary line first", r2.stdout.splitlines()[0].startswith("⚙️ Pipeline"))
+    # CLI with the detector OFF (no --task-logs) is byte-identical to the plain summary
+    r3 = subprocess.run([sys.executable, os.path.join(HARNESS_TOOLS, "pipeline_health.py"),
+                         "--path", p2, "--hours", "30", "--now", NOW],
+                        capture_output=True, text=True, encoding="utf-8")
+    check("A92 detector off → summary only", r3.stdout.strip() == line2)
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
