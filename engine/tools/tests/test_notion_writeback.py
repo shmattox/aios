@@ -175,6 +175,41 @@ def test_cli_requires_change_log():
         nw.main(["log-row", "--db", "x", "--writable", "x", "--title", "t"])
 
 
+# ── A95 add-row (conclusion write): inherits log-row's fences ────────────────
+
+def test_cli_add_row_refuses_db_not_in_writable(capsys):
+    """A conclusion whose target log is NOT allowlisted is refused (rule 1) — the fact-free
+    degrade an install with no session_log group falls back on (threads-only)."""
+    rc = nw.main(["add-row", "--db", "11111111-1111-1111-1111-111111111111",
+                  "--writable", "22222222-2222-2222-2222-222222222222",
+                  "--title", "resolved radiology purpose", "--change-log", "unused.jsonl"])
+    assert rc == 3
+    assert "not in the writable allowlist" in capsys.readouterr().err
+
+
+def test_cli_add_row_refuses_economic_content(capsys):
+    """pause_economic guards conclusion rows exactly as it guards flips (rule 2)."""
+    rc = nw.main(["add-row", "--db", "11111111-1111-1111-1111-111111111111",
+                  "--writable", "11111111-1111-1111-1111-111111111111",
+                  "--title", "record the promissory note payoff terms",
+                  "--change-log", "unused.jsonl"])
+    assert rc == 3
+    assert "economic" in capsys.readouterr().err.lower()
+
+
+def test_cli_add_row_defaults_by_to_conclusion(monkeypatch):
+    """add-row routes to cmd_log_row with --by defaulted to the conclusion writer (not the
+    generic writeback author), while an explicit --by still wins."""
+    seen = {}
+    monkeypatch.setattr(nw, "cmd_log_row", lambda args: (seen.update(by=args.by, cmd=args.cmd) or 0))
+    nw.main(["add-row", "--db", "x", "--writable", "x", "--title", "t", "--change-log", "c.jsonl"])
+    assert seen == {"by": "aios-gate-conclusion", "cmd": "add-row"}
+    seen.clear()
+    nw.main(["add-row", "--db", "x", "--writable", "x", "--title", "t", "--change-log", "c.jsonl",
+             "--by", "someone"])
+    assert seen["by"] == "someone"
+
+
 if __name__ == "__main__":
     # suite_test.py runs each test_*.py as a subprocess and asserts exit 0 — a pytest-style
     # file with no self-exec block would pass VACUOUSLY (define functions, exit 0). Run

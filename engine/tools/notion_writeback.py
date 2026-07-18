@@ -288,12 +288,26 @@ def main(argv=None):
     sp.add_argument("--db", required=True)
     sp.add_argument("--title", required=True)
     sp.add_argument("--field", action="append", default=[], metavar="NAME=VALUE")
+    # add-row (A95): the conclusion-write op — append one row to an allowlisted session_log /
+    # decision_log group so every walk conclusion lands in a durable, gather-readable home. Same
+    # create machinery + fences as log-row (allowlist rule 1, pause_economic rule 2, read-back
+    # receipt rule 3); a distinct verb so the mandate reads intent-first and its receipts default
+    # to a conclusion --by. An install whose profile lacks these groups simply never lists them
+    # writable, so add-row refuses — the fact-free degrade to threads-only.
+    arp = sub.add_parser("add-row", parents=[common],
+                         help="append a conclusion row to an allowlisted session/decision log (A95)")
+    arp.add_argument("--db", required=True)
+    arp.add_argument("--title", required=True)
+    arp.add_argument("--field", action="append", default=[], metavar="NAME=VALUE")
+    arp.set_defaults(by="aios-gate-conclusion")
     fp = sub.add_parser("flip", parents=[common], help="update one status/select/checkbox/date property")
     fp.add_argument("--page", required=True)
     fp.add_argument("--field", required=True)
     fp.add_argument("--to", required=True)
     args = ap.parse_args(argv)
-    return cmd_log_row(args) if args.cmd == "log-row" else cmd_flip(args)
+    if args.cmd in ("log-row", "add-row"):
+        return cmd_log_row(args)
+    return cmd_flip(args)
 
 
 if __name__ == "__main__":
