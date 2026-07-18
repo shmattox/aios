@@ -340,6 +340,7 @@ def retrieve_page(page_id, token):
     completed task simply disappears between gathers — ONE direct by-id read distinguishes
     'completed' from 'genuinely gone' instead of hedging 'status unconfirmed'."""
     status, body = _request("GET", f"{API_BASE}/pages/{page_id}", token, DS_VERSION)
+    first = status
     if status != 200:
         status, body = _request("GET", f"{API_BASE}/pages/{page_id}", token, DB_VERSION)
     if status == 200:
@@ -347,10 +348,14 @@ def retrieve_page(page_id, token):
         archived = bool(body.get("archived") or body.get("in_trash"))
         return {"ok": True, "found": True, "archived": archived, "page": rec,
                 "http": status, "error": None}
-    if status == 404:
+    if status == 404 and first == 404:
+        # BOTH endpoints agree the page is absent — the only verdict that licenses 'no longer
+        # reachable'. A transient (500/network-0) on one endpoint followed by a 404 on the other
+        # is NOT proof of absence — fall through to 'undecided' so a blip never renders a false
+        # 'genuinely gone' line.
         return {"ok": False, "found": False, "archived": None, "page": None,
                 "http": 404, "error": (body or {}).get("message")}
-    # 0 (network/TLS) or any other HTTP — undecided, never a false 'absent'
+    # 0 (network/TLS), a transient-then-404, or any other HTTP — undecided, never a false 'absent'
     return {"ok": False, "found": None, "archived": None, "page": None,
             "http": status, "error": (body or {}).get("message")}
 

@@ -58,6 +58,36 @@ For each domain group in `domains.yaml`, in parallel:
    path) — never hand-typed; see the `## Cache contract` section below for the command and the gate
    that enforces it.
 
+## Session memory (A95) — reconcile against yesterday BEFORE writing the cache
+
+The gather must know what happened since the last brief, or it hedges on a Done task and re-surfaces
+a card the owner already resolved. Three reconciliations, all deterministic, run after the item set
+is gathered and before `validate_cache`:
+
+1. **Done-vs-vanished — never hedge on a hidden row.** The open-task view filters `Status ≠ Done`,
+   so a completed task simply DISAPPEARS between gathers. For each task id present in the prior cache
+   (`<env_root>/state/brief-cache.prev.json`, kept by A93 §3) but ABSENT from the fresh open-view
+   pull, make ONE direct by-id read:
+   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/notion_gather.py" retrieve --page "<page_id>"`.
+   Read its `{found, page.status, archived}`: `found:true` + a Done/closed status → the item is
+   **completed** — feed A93's `✅ cleared` movement line with its date, never render it as a card or a
+   hedge; `found:false` (HTTP 404) → **genuinely gone**, render one line
+   `⚠ {title} — no longer reachable (was open on {prev date})`; `found:null` (offline/degraded) →
+   keep the item tagged `unverified since {prev generated_utc}` — NEVER "status unconfirmed".
+
+2. **Session-resolution ingest — a concluded item never re-surfaces cold.** Load the current walk
+   ledger (`<env_root>/state/brief-session.json`) plus the recent archives
+   (`<env_root>/state/brief-sessions/`, last 3 days) and fold their EXECUTED decisions onto the
+   gathered cache with `brief_session.fold_session_resolutions(cache, ledgers)` — it suppresses any
+   `act`/station card whose id matches an executed decision and records it under `resolved_prior`
+   (`{id, title, action, date}`) for the render's cleared section ("resolved {date}: {action}"). The
+   owner gave those conclusions in the walk; the gather must not re-ask them.
+
+3. **Stable ids are MANDATORY.** Every `act`/station item carries a non-null `id` — the Notion task
+   page id when it is a task, else a deterministic slug of `(domain, title)`. `validate_cache`
+   REJECTS a null/absent id (it silently breaks the thread join, the A93 movement diff, and standup
+   matching). Never emit `id: null`.
+
 ## Cache contract — the two files (the tail of EVERY full gather)
 
 Whoever gathered — the on-trigger live gather (normal) or the optional scheduled cache-writer —

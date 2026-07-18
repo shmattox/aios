@@ -183,6 +183,18 @@ def test_retrieve_falls_back_to_db_version(monkeypatch):
     assert r["found"] is True and r["page"]["status"] == "Open" and calls["n"] == 2
 
 
+def test_retrieve_transient_then_404_is_undecided_not_absent(monkeypatch):
+    """A DS-endpoint transient (500) followed by a DB-endpoint 404 must NOT report 'absent' — only
+    BOTH endpoints agreeing 404 licenses found:False, else a blip would render a false 'gone' line."""
+    calls = {"n": 0}
+    def fake(m, u, t, v, body=None, timeout=30):
+        calls["n"] += 1
+        return (500, {"message": "server error"}) if calls["n"] == 1 else (404, {"message": "x"})
+    monkeypatch.setattr(ng, "_request", fake)
+    r = ng.retrieve_page(_PID, "tok")
+    assert r["found"] is None and r["ok"] is False   # undecided, NOT a false absent
+
+
 def test_retrieve_cli_offline_envelope(monkeypatch, capsys):
     monkeypatch.setenv("AIOS_NG_TEST_TOKEN", "secret_abc")
     monkeypatch.setattr(ng, "_request", lambda *a, **k: (404, {"message": "gone"}))

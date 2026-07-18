@@ -195,6 +195,7 @@ try:
                 sv["cite"] = "Decision log 2026-01-01"
         return {
             "item_id": "F1",
+            "id": "F1",   # A95 §3 — station/act items carry a non-null id (thread join / movement diff)
             "title": "Fix backup sync",
             "domain": domain,
             "claude_voice": {"text": "Consider reviewing the backup config."},
@@ -344,7 +345,7 @@ try:
         "station_counts": {"system": 1, "personal": 0, "familyoffice": 0, "dev": 0},
         "stations": {
             "system":       [{
-                "item_id": "X", "title": "T", "domain": "system",
+                "item_id": "X", "id": "X", "title": "T", "domain": "system",
                 "claude_voice": {"text": "Do it"},
                 "system_voice": {"grade": "2b", "text": "Loosely, by your rule…"},  # no cite
             }],
@@ -545,10 +546,42 @@ def test_validate_cache_rejects_an_act_item_missing_voice():
 def test_validate_cache_accepts_a_well_formed_act():
     cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
              "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
-             "act": [{"title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+             "act": [{"id": "a1", "title": "T", "domain": "gm", "claude_voice": {"text": "c"},
                       "system_voice": None}]}
     ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
     assert ok, errs
+
+
+# ── A95 §3: a non-null id is REQUIRED on every station/act item ──────────────────────
+# The 2026-07-18 all-null-id cache silently broke the thread join, the A93 movement diff, and
+# standup delta matching. A required-field gate makes that class impossible.
+
+def test_validate_cache_rejects_an_act_item_with_null_id():
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": [{"id": None, "title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+                      "system_voice": None}]}
+    ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
+    assert not ok and any("act" in e and "id" in e for e in errs), errs
+
+
+def test_validate_cache_rejects_an_act_item_missing_id():
+    cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": [{"title": "T", "domain": "gm", "claude_voice": {"text": "c"},
+                      "system_voice": None}]}
+    ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
+    assert not ok and any("act" in e and "id" in e for e in errs), errs
+
+
+def test_validate_cache_rejects_a_station_item_with_null_id():
+    cache = {"stations": {"system": [{"id": None, "title": "T", "domain": "system",
+                                      "claude_voice": {"text": "c"}, "system_voice": None}],
+                          "personal": [], "familyoffice": [], "gm": []},
+             "station_counts": {"system": 1, "personal": 0, "familyoffice": 0, "gm": 0},
+             "act": []}
+    ok, errs = bs.validate_cache(cache, required_domains=["system", "personal", "familyoffice", "gm"])
+    assert not ok and any("id" in e for e in errs), errs
 
 
 def test_validate_cache_rejects_act_not_a_list():
@@ -643,7 +676,7 @@ def test_validate_cache_catches_the_spec_empty_act_under_a_nonzero_chip():
 
 
 def test_validate_cache_passes_when_headline_bubbles_agree_with_act():
-    item = {"title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
+    item = {"id": "a1", "title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
     c = dict(_MIN, act=[item], headline_bubbles=["1 need you", "3 to review"])
     ok, errs = bs.validate_cache(c)
     assert ok, errs
@@ -660,11 +693,74 @@ def test_validate_cache_headline_chip_matches_the_renderer_format_exactly():
     together so a format change in one cannot silently pass the other."""
     sys.path.insert(0, TOOLS)
     import brief_render as R
-    item = {"title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
+    item = {"id": "a1", "title": "T", "domain": "gm", "claude_voice": {"text": "c"}, "system_voice": None}
     cache = dict(_MIN, act=[dict(item) for _ in range(3)])
     computed = R.compute_headline_bubbles(cache)
     ok, errs = bs.validate_cache(dict(cache, headline_bubbles=computed))
     assert ok, ("validate_cache must accept what compute_headline_bubbles emits", errs)
+
+
+# ── A95 §2: fold_session_resolutions (executed walk decisions suppress cold cards) ──
+
+def _act_item(iid, title="T"):
+    return {"id": iid, "title": title, "domain": "gm", "claude_voice": {"text": "c"},
+            "system_voice": None}
+
+
+def test_fold_suppresses_an_executed_decisions_act_card():
+    cache = {"act": [_act_item("OI-42", "Druid Fund report"), _act_item("OI-99", "still open")]}
+    ledgers = [{"decisions": [
+        {"item_id": "OI-42", "title": "Druid Fund report", "action": "flip Status=Done",
+         "executed": True, "ts": "2026-07-17T14:00:00Z"}]}]
+    n = bs.fold_session_resolutions(cache, ledgers)
+    assert n == 1
+    assert [it["id"] for it in cache["act"]] == ["OI-99"]         # resolved card suppressed
+    rp = cache["resolved_prior"]
+    assert rp[0]["id"] == "OI-42" and rp[0]["action"] == "flip Status=Done"
+    assert rp[0]["date"] == "2026-07-17"                          # date from the decision ts
+
+
+def test_fold_matches_legacy_item_id_key():
+    cache = {"act": [{"item_id": "OI-7", "title": "T", "domain": "gm",
+                      "claude_voice": {"text": "c"}, "system_voice": None}]}
+    ledgers = [{"decisions": [{"item_id": "OI-7", "action": "resolved", "executed": True,
+                               "ts": "2026-07-18T00:00:00Z"}]}]
+    assert bs.fold_session_resolutions(cache, ledgers) == 1 and cache["act"] == []
+
+
+def test_fold_ignores_a_non_executed_decision():
+    cache = {"act": [_act_item("OI-42")]}
+    ledgers = [{"decisions": [{"item_id": "OI-42", "action": "deferred", "executed": False,
+                               "ts": "2026-07-18T00:00:00Z"}]}]
+    assert bs.fold_session_resolutions(cache, ledgers) == 0
+    assert [it["id"] for it in cache["act"]] == ["OI-42"]          # still surfaced
+
+
+def test_fold_decrements_station_count_and_records_station():
+    cache = {"stations": {"gm": [_act_item("H54", "Retirement sweep")], "system": []},
+             "station_counts": {"gm": 1, "system": 0}, "act": []}
+    ledgers = [{"decisions": [{"item_id": "H54", "action": "shipped", "executed": True,
+                               "ts": "2026-07-18T09:00:00Z"}]}]
+    assert bs.fold_session_resolutions(cache, ledgers) == 1
+    assert cache["stations"]["gm"] == [] and cache["station_counts"]["gm"] == 0
+    assert cache["resolved_prior"][0]["station"] == "gm"
+
+
+def test_fold_latest_decision_per_item_wins():
+    cache = {"act": [_act_item("OI-1")]}
+    ledgers = [{"decisions": [
+        {"item_id": "OI-1", "action": "old", "executed": True, "ts": "2026-07-16T00:00:00Z"},
+        {"item_id": "OI-1", "action": "new", "executed": True, "ts": "2026-07-18T00:00:00Z"}]}]
+    bs.fold_session_resolutions(cache, ledgers)
+    assert cache["resolved_prior"][0]["action"] == "new"
+
+
+def test_fold_no_matches_is_a_noop():
+    cache = {"act": [_act_item("OI-42")], "stations": {"gm": []}, "station_counts": {"gm": 0}}
+    before = json.loads(json.dumps(cache))
+    assert bs.fold_session_resolutions(cache, [{"decisions": [
+        {"item_id": "OTHER", "executed": True, "ts": "2026-07-18T00:00:00Z"}]}]) == 0
+    assert cache == before                                          # untouched, no resolved_prior
 
 
 # ── validate_cache: standup delta -> stations.gm conservation (A88 / Task 7) ────────
@@ -690,7 +786,7 @@ def test_validate_cache_fails_when_a_delta_item_has_no_card():
 def test_validate_cache_passes_when_every_delta_item_has_a_card():
     standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"}]}
     cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
-                          "gm": [{"item_id": "H54", "title": "Retirement sweep", "domain": "gm",
+                          "gm": [{"item_id": "H54", "id": "H54", "title": "Retirement sweep", "domain": "gm",
                                   "claude_voice": {"text": "c"}, "system_voice": None}]},
              "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": 1},
              "act": []}
@@ -784,7 +880,7 @@ def test_validate_cache_against_a_real_shaped_standup_fixture():
         standup = json.load(f)
     ids = [i["id"] for i in standup["delta"]]
     assert ids, "fixture must carry delta items or it asserts nothing"
-    cards = [{"item_id": i, "title": "T", "domain": "gm",
+    cards = [{"item_id": i, "id": i, "title": "T", "domain": "gm",
               "claude_voice": {"text": "c"}, "system_voice": None} for i in ids]
     cache = {"stations": {"system": [], "personal": [], "familyoffice": [], "gm": cards},
              "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "gm": len(cards)},
@@ -830,11 +926,11 @@ def test_real_shaped_fixture_carries_the_documented_delta_item_keys():
 # chip must FAIL. Before the fix the assertion demanded len(act)=7 and REJECTED the honest chip.
 
 def _act_5_of_7():
-    act = [{"title": "you%d" % i, "domain": "gm", "claude_voice": {"text": "c"},
+    act = [{"id": "you%d" % i, "title": "you%d" % i, "domain": "gm", "claude_voice": {"text": "c"},
             "system_voice": None} for i in range(5)]
-    act.append({"title": "w1", "domain": "gm", "claude_voice": {"text": "c"},
+    act.append({"id": "w1", "title": "w1", "domain": "gm", "claude_voice": {"text": "c"},
                 "system_voice": None, "in_motion": {"court": "others"}})
-    act.append({"title": "w2", "domain": "gm", "claude_voice": {"text": "c"},
+    act.append({"id": "w2", "title": "w2", "domain": "gm", "claude_voice": {"text": "c"},
                 "system_voice": None, "in_motion": {"court": "done"}})
     return act
 
@@ -871,7 +967,7 @@ def test_validate_cache_rejects_the_len_act_chip_over_a_filtered_list():
 def test_validate_cache_delta_card_in_dev_keyed_station_is_accounted():
     standup = {"delta": [{"repo": "Claude", "id": "H54", "title": "Retirement sweep"}]}
     cache = {"stations": {"system": [], "personal": [], "familyoffice": [],
-                          "dev": [{"item_id": "H54", "title": "Retirement sweep", "domain": "dev",
+                          "dev": [{"item_id": "H54", "id": "H54", "title": "Retirement sweep", "domain": "dev",
                                    "claude_voice": {"text": "c"}, "system_voice": None}]},
              "station_counts": {"system": 0, "personal": 0, "familyoffice": 0, "dev": 1},
              "act": []}

@@ -390,6 +390,86 @@ def _validate_system_voice(sv, prefix):
     return errs
 
 
+def fold_session_resolutions(cache, ledgers):
+    """A95 §2 (read side): fold EXECUTED walk/session decisions onto the cache so a concluded item
+    never re-surfaces cold. `ledgers` is the current walk ledger PLUS the recent archives (each a
+    dict carrying a `decisions` list — the caller loads them; this stays pure/offline, the
+    `settle_reconcile.py` ledger-scan precedent generalized to all executed decisions).
+
+    An `act`/station item whose id matches an executed decision's `item_id` is SUPPRESSED (removed
+    from `act` and its station, its station_count decremented) and recorded under
+    `cache['resolved_prior']` as `{id, title, action, date, station}` — the render's movement/
+    cleared section shows "resolved {date}: {action}", never a live card. Matching is by the item's
+    `id` OR legacy `item_id` (both are stable keys the ledger's item_id can name). Latest decision
+    per item_id wins. Returns the count folded (0 → cache untouched).
+
+    Render note: a suppressed card ALSO reads as A93 `movement.cleared` (prev-vs-current diff), so
+    the future render leg that consumes `resolved_prior` (for its action text) must dedupe against
+    `movement.cleared` by id to avoid double-surfacing the same cleared item."""
+    resolved = {}
+    for led in (ledgers or []):
+        if not isinstance(led, dict):
+            continue
+        for d in (led.get("decisions") or []):
+            if not isinstance(d, dict) or not d.get("executed"):
+                continue
+            iid = d.get("item_id")
+            if iid in (None, ""):
+                continue
+            prev = resolved.get(iid)
+            if prev is None or str(d.get("ts") or "") >= str(prev.get("ts") or ""):
+                resolved[iid] = d
+    if not resolved:
+        return 0
+
+    def _key(item):
+        if item.get("id") in resolved:
+            return item.get("id")
+        if item.get("item_id") in resolved:
+            return item.get("item_id")
+        return None
+
+    folded = []
+
+    def _rec(item, station, key):
+        d = resolved[key]
+        folded.append({"id": key, "title": item.get("title") or d.get("title"),
+                       "action": d.get("action"), "date": (str(d.get("ts") or ""))[:10],
+                       "station": station})
+
+    kept_act = []
+    for it in (cache.get("act") or []):
+        k = _key(it) if isinstance(it, dict) else None
+        if k is not None:
+            _rec(it, "act", k)
+        else:
+            kept_act.append(it)
+    if isinstance(cache.get("act"), list):
+        cache["act"] = kept_act
+
+    stations = cache.get("stations")
+    counts = cache.get("station_counts")
+    if isinstance(stations, dict):
+        for dom, items in list(stations.items()):
+            if not isinstance(items, list):
+                continue
+            kept, removed = [], 0
+            for it in items:
+                k = _key(it) if isinstance(it, dict) else None
+                if k is not None:
+                    _rec(it, dom, k)
+                    removed += 1
+                else:
+                    kept.append(it)
+            stations[dom] = kept
+            if removed and isinstance(counts, dict) and isinstance(counts.get(dom), int):
+                counts[dom] = max(0, counts[dom] - removed)
+
+    if folded:
+        cache.setdefault("resolved_prior", []).extend(folded)
+    return len(folded)
+
+
 def validate_cache(cache_obj, required_domains=None, standup=None, live_held_count=None):
     """Validate a brief-cache.json payload for the new stations/station_counts keys (spec §3.2).
 
@@ -473,6 +553,14 @@ def validate_cache(cache_obj, required_domains=None, standup=None, live_held_cou
                     errors.append(f"{prefix}: missing 'title'")
                 if "domain" not in item:
                     errors.append(f"{prefix}: missing 'domain'")
+                # A95 §3: a non-null id is REQUIRED (task page id, or a deterministic slug of
+                # domain+title). The 07-18 all-null-id cache silently broke the thread join, the
+                # A93 movement diff, and standup delta matching — a required-field gate makes that
+                # class impossible (same INVALID semantics as the A93 held-parity assert). ABSENT
+                # or null both break the join, so both are errors.
+                if item.get("id") in (None, ""):
+                    errors.append(f"{prefix}: missing or null 'id' (A95 — required for the thread "
+                                  f"join / movement diff / standup match)")
                 cv = item.get("claude_voice")
                 if not isinstance(cv, dict) or not cv.get("text"):
                     errors.append(f"{prefix}: missing claude_voice.text")
@@ -511,6 +599,9 @@ def validate_cache(cache_obj, required_domains=None, standup=None, live_held_cou
                     errors.append(f"{prefix}: missing 'title'")
                 if "domain" not in item:
                     errors.append(f"{prefix}: missing 'domain'")
+                if item.get("id") in (None, ""):   # A95 §3 — required non-null id (see stations loop)
+                    errors.append(f"{prefix}: missing or null 'id' (A95 — required for the thread "
+                                  f"join / movement diff / standup match)")
                 cv = item.get("claude_voice")
                 if not isinstance(cv, dict) or not cv.get("text"):
                     errors.append(f"{prefix}: missing claude_voice.text")
