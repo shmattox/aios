@@ -131,6 +131,18 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > line from `brainstorm_packets.py render --results "<…>/cards.json"` — it is FINDINGS ONLY (a
 > malformed packet refused with `⚠ brainstorm packet malformed: …`); the valid pending packets never
 > appear as a header line, only as cards. Steady-state (no pending, no malformed) → both are silent.
+>
+> **State→wiki reconcile (A104).** After the standing-check run, detect wiki economic snapshots that
+> have drifted from their `state/domains` row:
+> `reconcile_state_knowledge.py run --env-root "<env_root>" --vault-root "<vault_root>" --kb-map
+> '<profile vault.live_kb_map JSON>' --today <today> --emit` (zero-LLM, exit 0 always — a malformed
+> page becomes a parse warning, never a crash; reads `state/domains`, never Notion). Each drifted,
+> `track:true`, not-`already_proposed` `snapshots:` anchor stages a corrected page under
+> `<vault>/<folder>/wiki/staging/` and enqueues a `review`-lane draft via `queue_tx add` — so the
+> item rides the EXISTING review panel and the gate ships it (the gate validates the figure vs Drive
+> at ship; economic KBs stay human-gated — this tool never auto-copies an economic value as truth).
+> Lift its one-line `♻ reconcile: N drift proposal(s) staged` health line like the others (silent at
+> steady state); its items surface as ordinary review-lane cards, not a header line.
 1. `<env_root>/state/brief-cache.json` — the structured payload + `generated_utc` + the source
    counts the delta check uses. **`source_counts` MUST carry the capability manifest** — the
    machine-readable truth the render flow's parity check reads (never prose): `notion_live` (true ONLY if
