@@ -44,6 +44,14 @@ CONFIRM_TTL_DAYS = 3   # default; a profile may override via pipeline.confirm_tt
 DEFAULT_AUTO_SHIP_KBS = frozenset()
 
 
+def is_mechanical_hygiene(item):
+    """A102: True for a garden mechanical-hygiene proposal — the connect pass's dead-link repoints /
+    "see also" de-bloat / index-refresh class, the ONLY garden tier laned `auto-ship` (F8 + every
+    semantic pass always ride `review`). Conservative by construction: a non-garden item, or a garden
+    item on any other lane, is never eligible for the familyoffice links-only exception below."""
+    return item.get("source") == "garden" and item.get("lane") == "auto-ship"
+
+
 def _epoch(iso):
     """UTC ISO stamp -> epoch. timegm, NOT mktime — first_drafted_utc is written with gmtime,
     and mktime would parse it as local time, skewing the confirm-TTL by the timezone offset."""
@@ -55,7 +63,7 @@ def _epoch(iso):
 
 
 def ship_action(item, review_passed=True, now_epoch=None, confirm_ttl_days=CONFIRM_TTL_DAYS,
-                auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS):
+                auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS, hygiene_links_only=None):
     """Map (lane, kb, independent-review verdict, clock) -> the action gate must take.
 
       'reject' : independent review BLOCKed it (critical finding) — terminal, regardless of lane/kb.
@@ -67,6 +75,13 @@ def ship_action(item, review_passed=True, now_epoch=None, confirm_ttl_days=CONFI
     The PASS/BLOCK is the agent's judgment (caller passes it as review_passed); everything else here
     is deterministic. This is the single source of two invariants: 'never auto-ship a review-lane item'
     AND 'never auto-ship a KB outside auto_ship_kbs' (familyoffice by default — Paper-Governs).
+
+    A102 FO hygiene exception (OFF by default — `hygiene_links_only` is None). The kb backstop below
+    normally holds EVERY non-cleared-KB (familyoffice) item. The one narrow exception: a mechanical
+    garden-hygiene draft whose change is PROVABLY links-only (the caller computed
+    `links_only.hygiene_auto_ship_ok(incumbent, draft)` and passes it here as `hygiene_links_only`).
+    With the default None the exception never fires and behavior is byte-identical to before — enabling
+    it is a caller/profile choice, the same dormant-until-opted-in pattern as A85/A99.
     """
     if not review_passed:
         return "reject"
@@ -80,7 +95,12 @@ def ship_action(item, review_passed=True, now_epoch=None, confirm_ttl_days=CONFI
     # past-TTL confirm decision is downgraded to 'hold' for it. (review/unknown lanes already hold.)
     kb_cleared = item.get("kb") in auto_ship_kbs
     if lane == "auto-ship":
-        return "ship" if kb_cleared else "hold"
+        if kb_cleared:
+            return "ship"
+        # A102: a non-cleared KB normally HOLDS — except a provable links-only mechanical-hygiene draft.
+        if hygiene_links_only is True and is_mechanical_hygiene(item):
+            return "ship"
+        return "hold"
     if lane == "review":
         return "hold"                      # NEVER auto-ship a review-lane item
     if lane == "confirm":
@@ -179,15 +199,32 @@ def economic_tripwire(item):
 
 
 def _ship_with_economic_floor(item, review_passed, now_epoch, confirm_ttl_days, auto_ship_kbs,
-                              require_body):
+                              require_body, hygiene_links_only=None):
     """Shared core of the two tripwire-guarded gate variants: ship_action + the economic_tripwire
     floor, single-sourced so the two public wrappers can't drift (the exact copy-paste class this
     module's header warns against). Only ever DOWNGRADES a would-be `ship` to `hold`; a `reject`/
     `hold`/non-ship base is returned untouched. `require_body` adds HOLE A's body-presence guard
     (unattended only — see the wrappers)."""
     base = ship_action(item, review_passed=review_passed, now_epoch=now_epoch,
-                       confirm_ttl_days=confirm_ttl_days, auto_ship_kbs=auto_ship_kbs)
+                       confirm_ttl_days=confirm_ttl_days, auto_ship_kbs=auto_ship_kbs,
+                       hygiene_links_only=hygiene_links_only)
     if base == "ship":
+        # A102: a would-be ship from the FO links-only hygiene exception is EXEMPT from BOTH whole-body
+        # economic floors here — the tripwire AND HOLE A's body-presence guard. This is NOT dropping the
+        # backstop: `hygiene_links_only` is `links_only.hygiene_auto_ship_ok`, which ALREADY (a) proves
+        # via a structural masked diff that nothing human-visible was added and the only removal is a
+        # bare slug — so displayed economic content cannot change — AND (b) screens that removed content
+        # against ECONOMIC_TRIPWIRE_RE. The backstop therefore lives on the CHANGED content, where it
+        # belongs; re-running the whole-body tripwire HERE would only re-scan the incumbent's own
+        # (unchanged) economic body and false-hold every FO hygiene draft (the reason it is exempted).
+        # The body-presence floor is likewise moot: `hygiene_links_only` was computed by the caller from
+        # the real incumbent+draft files, not the bare queue item. Scoped to the exception itself
+        # (non-cleared KB + hygiene class + links-only proven), so every cleared-KB ship keeps both
+        # floors and no other ship path is affected.
+        fo_hygiene_exempt = (hygiene_links_only is True and is_mechanical_hygiene(item)
+                             and item.get("kb") not in auto_ship_kbs)
+        if fo_hygiene_exempt:
+            return "ship"
         if require_body and not _has_scannable_body(item):
             return "hold"      # HOLE A: unenriched body — the tripwire is blind, defer to a human
         if economic_tripwire(item):
@@ -196,7 +233,8 @@ def _ship_with_economic_floor(item, review_passed, now_epoch, confirm_ttl_days, 
 
 
 def scheduled_ship_action(item, review_passed=True, now_epoch=None,
-                          confirm_ttl_days=CONFIRM_TTL_DAYS, auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS):
+                          confirm_ttl_days=CONFIRM_TTL_DAYS, auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS,
+                          hygiene_links_only=None):
     """The action for the UNATTENDED scheduled auto-ship variant (ON4). ship_action PLUS two floors,
     because NO human is present: (1) the economic_tripwire holds an item whose CONTENT smells economic/
     ownership/Paper-Governs even when its kb/lane label would auto-ship it (the mis-label the kb backstop
@@ -204,13 +242,16 @@ def scheduled_ship_action(item, review_passed=True, now_epoch=None,
     tripwire would scan blind) is deferred, so a skipped/failed enrichment can't silently ship past the
     screen. All other invariants (review-lane / confirm-TTL / kb-backstop / BLOCK) stay single-sourced in
     ship_action. Use this — never bare ship_action — wherever the ship runs with NO human present. A
-    `reject`/`hold` is never upgraded; only a would-be `ship` can be downgraded."""
+    `reject`/`hold` is never upgraded; only a would-be `ship` can be downgraded. A102: `hygiene_links_only`
+    (default None = off) carries the FO links-only hygiene exception so the unattended path drains the
+    provable FO hygiene slice too — see _ship_with_economic_floor's exemption."""
     return _ship_with_economic_floor(item, review_passed, now_epoch, confirm_ttl_days, auto_ship_kbs,
-                                     require_body=True)
+                                     require_body=True, hygiene_links_only=hygiene_links_only)
 
 
 def manual_ship_action(item, review_passed=True, now_epoch=None,
-                       confirm_ttl_days=CONFIRM_TTL_DAYS, auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS):
+                       confirm_ttl_days=CONFIRM_TTL_DAYS, auto_ship_kbs=DEFAULT_AUTO_SHIP_KBS,
+                       hygiene_links_only=None):
     """The action for the MANUAL gate (`aios-gate`, a human present). ship_action plus an ADVISORY
     economic floor (HOLE C, 2026-07-09): an auto-ship/past-TTL-confirm item whose text smells economic/
     ownership/Paper-Governs is surfaced for the human's EXPLICIT approval ('hold') instead of being
@@ -221,9 +262,10 @@ def manual_ship_action(item, review_passed=True, now_epoch=None,
     Unlike scheduled_ship_action it does NOT impose the body-presence floor (`require_body=False`): a
     human is present to notice a thin item, and the manual flow may decide the lane before enriching the
     draft excerpt — so it scans whatever is on the item (the economic SUBJECT identity — e.g. a
-    `cap-table-2026` slug — is caught even without body enrichment). A `reject`/`hold` is never upgraded."""
+    `cap-table-2026` slug — is caught even without body enrichment). A `reject`/`hold` is never upgraded.
+    A102: `hygiene_links_only` (default None = off) carries the FO links-only hygiene exception."""
     return _ship_with_economic_floor(item, review_passed, now_epoch, confirm_ttl_days, auto_ship_kbs,
-                                     require_body=False)
+                                     require_body=False, hygiene_links_only=hygiene_links_only)
 
 
 def ballot_consistent(lane, recommended):
