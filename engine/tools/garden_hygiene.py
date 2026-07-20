@@ -190,12 +190,7 @@ def hygiene(vault_root, kb_map):
             for kb, folder in sorted((kb_map or {}).items())}
 
 
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 if __name__ == "__main__":

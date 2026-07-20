@@ -141,14 +141,7 @@ def _load_raw(args):
     return sys.stdin.read()
 
 
-def _utf8_stdio():
-    """Force UTF-8 on stdout/stderr — records may carry emoji/flag glyphs and a native Windows
-    console defaults to cp1252, which would crash the JSON print."""
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 def main(argv=None):

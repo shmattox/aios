@@ -147,12 +147,7 @@ def attach(queue_path, cid, verdict, doc=None, section=None, quote=None):
                       "paper_evidence": item["paper_evidence"]}, ensure_ascii=False))
 
 
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 def main(argv=None):

@@ -425,12 +425,7 @@ def one(queue_path, vault_root, kb_map, auto_ship_kbs, review_gates, cid, ck,
                      ensure_ascii=False))
 
 
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 def main(argv=None):

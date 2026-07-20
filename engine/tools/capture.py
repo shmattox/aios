@@ -493,15 +493,7 @@ def _add_common(ap):
     ap.add_argument("--cap", type=int, default=50)
 
 
-def _utf8_stdio():
-    """Force UTF-8 on stdout/stderr — items carry emoji/flag glyphs (⚑, 🔵) and a native Windows
-    console defaults to cp1252, which would crash the JSON print. A non-Windows console is already UTF-8, so
-    this only ever helps."""
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 def main(argv=None):

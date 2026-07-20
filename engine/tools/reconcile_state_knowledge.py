@@ -305,12 +305,7 @@ def run(env_root, vault_root, kb_map, today, emit=False):
     return {"proposals": proposals, "emitted": emitted, "parse_warnings": warnings, "details": details}
 
 
-def _utf8_stdio():
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 def render(result):

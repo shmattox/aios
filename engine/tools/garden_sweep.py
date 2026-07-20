@@ -225,15 +225,7 @@ def sweep(install_dir, ttl_days=7, apply=False, evidence_dir=None, evidence_ttl_
     return backups, orphans, evidence
 
 
-def _utf8_stdio():
-    """Force UTF-8 on stdout/stderr — vault slugs/filenames can carry non-cp1252 glyphs and a native
-    Windows console defaults to cp1252, which would crash the print. A non-Windows console is already UTF-8, so
-    this only ever helps."""
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+from _util import utf8_stdio as _utf8_stdio
 
 
 if __name__ == "__main__":
