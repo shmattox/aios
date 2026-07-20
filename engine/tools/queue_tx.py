@@ -312,13 +312,21 @@ def _apply_items(live_path, items, mode):
     with _Lock(live_path):
         data = load(live_path)
         by_id = {it.get("id"): it for it in data["queue"]}
+        # A107: an id paged out to the archive is STILL taken — otherwise archival would free an id
+        # for silent reuse. The add fence consults the archive; update stays live-only (it mutates a
+        # live item, and an archived item must be `unarchive`d before it can be updated). This fence
+        # fails LOUD on a corrupt archive (via _load_archive) — deliberately stricter than the two
+        # degrade-silent dedupe READERS, matching load()'s fail-loud discipline on the write path.
+        arch_ids = archived_ids(live_path) if mode == "add" else set()
         for it in items:
             if not isinstance(it, dict) or "id" not in it:
                 _die("each change-set item must be an object with an 'id'")
             cid = it["id"]
             exists = cid in by_id
-            if mode == "add" and exists:
-                _die(f"add refused: id {cid!r} already exists (dedupe fence - use update to mutate)")
+            if mode == "add" and (exists or cid in arch_ids):
+                where = "queue" if exists else "archive"
+                _die(f"add refused: id {cid!r} already exists in the {where} (dedupe fence - "
+                     f"use update to mutate a live item, or unarchive an archived one first)")
             if mode == "update" and not exists:
                 _die(f"update refused: id {cid!r} does not exist (use add to append)")
             _guard_awaiting_transition(by_id, it, mode)
@@ -398,6 +406,117 @@ def claim(path, ids, worker, ttl_min=15):
     return [it.get("id") for it in claimed_items]
 
 
+# ─────────────────────────── archival (A107) ───────────────────────────
+#
+# 1,231 of 1,322 items were terminal (shipped/rejected/reverted/reference) yet re-parsed on every
+# read of the 1.5 MB hot queue. `archive` pages terminal items PAST A WINDOW out to a sibling
+# `<name>-archive.json` (same {"queue":[...]} shape, so it validates + stays queryable), keeping the
+# live queue small. The archive is written BEFORE the queue shrinks, so a crash between the two
+# writes duplicates an item across both files (a re-run/validate tolerates it) but NEVER loses one.
+# `unarchive` is the revert/recover path. The rejection-memory invariant is load-bearing: every
+# dedupe scanner that remembers a rejection (proposal_dedupe_history, reconcile.already_proposed) and
+# the add id-fence consult the archive too, so archival can NEVER reopen a door a rejection closed.
+
+TERMINAL_STAGES = {"shipped", "rejected", "reverted", "reference"}
+
+
+def archive_path_for(queue_path):
+    """The sibling archive path `<name>-archive.json` (A103-ready: it moves WITH the queue when the
+    path seam lands, and every dedupe scanner derives it the same way)."""
+    base, ext = os.path.splitext(str(queue_path))
+    return base + "-archive" + (ext or ".json")
+
+
+def _terminal_ts(it):
+    """The item's terminal-transition time = the `ts` of its last history entry (present on 100% of
+    terminal items), or None when unparseable (such an item is kept live, never archived blind)."""
+    hist = it.get("history")
+    if isinstance(hist, list) and hist and isinstance(hist[-1], dict):
+        return hist[-1].get("ts")
+    return None
+
+
+def _load_archive(archive_path):
+    """Read the archive as a validated {"queue":[...]}; a missing file is an empty archive."""
+    if not os.path.exists(archive_path):
+        return {"queue": []}
+    d = _read_json(archive_path)
+    if d is None:
+        _die(f"archive {archive_path} did not parse - recover from git history (state/ is tracked)")
+    err = validate(d)
+    if err:
+        _die(f"archive {archive_path} is invalid: {err}")
+    return d
+
+
+def archived_ids(queue_path, archive_path=None):
+    """The id set held in the sibling archive (empty if none) - so the add id-fence and any caller
+    can treat an archived id as still taken."""
+    return {it.get("id") for it in _load_archive(archive_path or archive_path_for(queue_path))["queue"]}
+
+
+def archive(queue_path, window_days=30, now=None, archive_path=None):
+    """Move terminal items whose terminal-transition ts is older than `window_days` from the live
+    queue to the sibling archive. Atomic under the queue lock, revertible via `unarchive`. Returns
+    the moved ids. In-window and non-terminal items stay live; an item with no parseable terminal ts
+    stays live (never archived blind)."""
+    archive_path = archive_path or archive_path_for(queue_path)
+    cutoff = (_epoch(now) if now else time.time()) - float(window_days) * 86400.0
+    with _Lock(queue_path):
+        data = load(queue_path)
+        arch = _load_archive(archive_path)
+        arch_ids = {it.get("id") for it in arch["queue"]}
+        keep, move = [], []
+        for it in data["queue"]:
+            ts = _terminal_ts(it)
+            if it.get("stage") in TERMINAL_STAGES and ts and _epoch(ts) and _epoch(ts) < cutoff:
+                move.append(it)
+            else:
+                keep.append(it)
+        if not move:
+            return []
+        merged = arch["queue"] + [it for it in move if it.get("id") not in arch_ids]
+        err = validate({"queue": merged})
+        if err:
+            _die(f"refusing to write invalid archive (live untouched): {err}")
+        # archive FIRST (safe ordering: a crash before the queue write duplicates, never loses)
+        merged.sort(key=lambda it: str(it.get("id")))
+        _write_atomic(archive_path, {"_comment": "aios queue ARCHIVE - terminal items paged out of "
+                                     "queue.json (A107); STILL consulted by dedupe. Edit via queue_tx.",
+                                     "queue": merged})
+        _save(queue_path, {"queue": keep})
+        moved_ids = [it.get("id") for it in move]
+    print(f"archived {len(move)} item(s) -> {archive_path}; live queue now {len(keep)} items")
+    return moved_ids
+
+
+def unarchive(queue_path, ids, archive_path=None):
+    """Move items back from the archive to the live queue (the rewind/recover path). Skips an id
+    already live (no duplicate). Returns the restored ids."""
+    archive_path = archive_path or archive_path_for(queue_path)
+    want = set(ids)
+    with _Lock(queue_path):
+        data = load(queue_path)
+        arch = _load_archive(archive_path)
+        live_ids = {it.get("id") for it in data["queue"]}
+        back = [it for it in arch["queue"] if it.get("id") in want and it.get("id") not in live_ids]
+        # Remove EVERY requested id from the archive, incl. one already live — so a re-run after a
+        # crash between the two writes below cleans the duplicate "ghost" rather than leaving a stale
+        # archived copy that a later archive() could resurrect over the live one (crash-idempotent).
+        pull = want & {it.get("id") for it in arch["queue"]}
+        if not back and not pull:
+            return []
+        remaining = [it for it in arch["queue"] if it.get("id") not in pull]
+        if back:
+            _save(queue_path, {"queue": data["queue"] + back})
+        _write_atomic(archive_path, {"_comment": "aios queue ARCHIVE - terminal items paged out of "
+                                     "queue.json (A107); STILL consulted by dedupe. Edit via queue_tx.",
+                                     "queue": sorted(remaining, key=lambda it: str(it.get("id")))})
+        total_live = len(data["queue"]) + len(back)
+    print(f"unarchived {len(back)} item(s) <- {archive_path}; live queue now {total_live} items")
+    return sorted(it.get("id") for it in back)
+
+
 # ─────────────────────────── CLI ───────────────────────────
 
 from _util import utf8_stdio as _utf8_stdio
@@ -433,6 +552,15 @@ if __name__ == "__main__":
         def _opt(name):
             return a[a.index(name) + 1] if name in a else None
         select(a[0], stage=_opt("--stage"), lane=_opt("--lane"), limit=_opt("--limit"))
+    elif op == "archive":
+        # archive <queue.json> [--window-days N] [--now ISO]
+        a = sys.argv[2:]
+        wd = float(a[a.index("--window-days") + 1]) if "--window-days" in a else 30
+        nw = a[a.index("--now") + 1] if "--now" in a else None
+        archive(a[0], window_days=wd, now=nw)
+    elif op == "unarchive":
+        # unarchive <queue.json> <id1,id2,...>
+        unarchive(sys.argv[2], sys.argv[3].split(","))
     elif op == "dump":
         print(json.dumps(load(sys.argv[2]), indent=2, ensure_ascii=False))
     elif op == "ls":

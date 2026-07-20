@@ -1009,13 +1009,17 @@ def proposal_summary(queue_path, group_threshold=5):
 def proposal_dedupe_history(queue_path, dedupe_key):
     """A96 §1(b): every proposal — INCLUDING rejected ones — stays queryable by `dedupe_key`, so a
     producer never re-litigates a remembered decision (a rejection is remembered, not re-proposed
-    daily). Returns every `kind:proposal` queue item at ANY stage whose payload carries this
-    dedupe_key (the producer reads this before enqueuing). Empty on an unreadable queue."""
-    d = _read_json(queue_path)
-    if not isinstance(d, dict) or not isinstance(d.get("queue"), list):
-        return []
-    return [it for it in d["queue"] if isinstance(it, dict) and it.get("kind") == "proposal"
-            and (it.get("payload") or {}).get("dedupe_key") == dedupe_key]
+    daily). Returns every `kind:proposal` item at ANY stage whose payload carries this dedupe_key.
+    A107: scans the live queue AND its sibling `-archive.json` — a rejection paged out to the archive
+    is still remembered, so archival can never reopen a door a rejection closed. Empty on unreadable."""
+    from queue_tx import archive_path_for  # one shared derivation (no divergent copy)
+    out = []
+    for p in (queue_path, archive_path_for(queue_path)):
+        d = _read_json(p)
+        if isinstance(d, dict) and isinstance(d.get("queue"), list):
+            out += [it for it in d["queue"] if isinstance(it, dict) and it.get("kind") == "proposal"
+                    and (it.get("payload") or {}).get("dedupe_key") == dedupe_key]
+    return out
 
 
 # ─────────────────────────── CLI ───────────────────────────

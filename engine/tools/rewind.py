@@ -181,7 +181,12 @@ def reset(queue_path, ids, to_stage, reason="", snap_dir=None):
             touched.append(it.get("id"))
     missing = want - set(touched)
     if missing:
-        _die(f"ids not found (no changes committed): {sorted(missing)}")
+        # A107: a missing id may have been paged out to the archive (a reset FROM shipped targets a
+        # terminal item, which archival can move). Surface the recover path, not a bare "not found".
+        archived = missing & queue_tx.archived_ids(queue_path)
+        hint = (f" — {sorted(archived)} are ARCHIVED; restore with "
+                f"`queue_tx.py unarchive {queue_path} {','.join(sorted(archived))}` first") if archived else ""
+        _die(f"ids not found (no changes committed): {sorted(missing)}{hint}")
     _write_snapshot(snap_dir, {
         "snap_id": sid, "ts": now, "op": "reset", "to_stage": to_stage, "reason": reason,
         "queue_path": os.path.abspath(queue_path), "items": snap_items,
@@ -295,6 +300,12 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
                 "note": f"undo-ship (removed_vault_file={removed})",   # this, not the terminal stage
             })
     if not found:
+        # A107: the id may have been paged out of the live queue to the sibling archive. Fail loud
+        # with the documented recover path rather than a bare "not found" (never silently no-op an
+        # undo of a real ship).
+        if cid in queue_tx.archived_ids(queue_path):
+            _die(f"id {cid} is ARCHIVED (paged out of the live queue by A107). Restore it first: "
+                 f"`queue_tx.py unarchive {queue_path} {cid}`, then re-run undo-ship.")
         _die(f"id not found: {cid}")
     _write_snapshot(snap_dir, {
         "snap_id": sid, "ts": now, "op": "undo-ship", "id": cid, "shipped_path": shipped_path,

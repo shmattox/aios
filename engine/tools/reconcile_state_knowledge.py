@@ -156,15 +156,20 @@ def dedupe_key(page_rel, state_key, target_value):
 
 
 def already_proposed(queue_path, key):
-    """True if any queue item (ANY stage, incl. `rejected`) carries `reconcile.dedupe_key == key` —
-    so a rejected refresh is never re-proposed until the state value changes again."""
-    try:
-        d = json.loads(Path(queue_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    q = d.get("queue") if isinstance(d, dict) else None
-    return any(isinstance(it, dict) and (it.get("reconcile") or {}).get("dedupe_key") == key
-               for it in (q or []))
+    """True if any item (ANY stage, incl. `rejected`) carries `reconcile.dedupe_key == key` — so a
+    rejected refresh is never re-proposed until the state value changes again. A107: scans the live
+    queue AND its `-archive.json` sibling, so archival can't reopen a door a rejection closed."""
+    from queue_tx import archive_path_for  # one shared derivation (no divergent copy)
+    for p in (queue_path, archive_path_for(queue_path)):
+        try:
+            d = json.loads(Path(p).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        q = d.get("queue") if isinstance(d, dict) else None
+        if any(isinstance(it, dict) and (it.get("reconcile") or {}).get("dedupe_key") == key
+               for it in (q or [])):
+            return True
+    return False
 
 
 # ─────────────────────────── proposal emission (Task 5) ───────────────────────────
