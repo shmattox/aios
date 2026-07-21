@@ -477,8 +477,26 @@ def render_factory_standup(data):
             lines.append(f"  {sym} {label} ({len(items)}):")
             for it in items:
                 lines.append("    - " + fmt(it))
-    _emit("✅", "veto window", g.get("veto", []),
-          lambda it: f"{it.get('repo','?')} {it.get('id','?')} — {it.get('title') or '(untitled)'} (shipped {it.get('date','?')}; VETO)")
+    # H90 leg 5: when the veto items carry an intent-triage verdict (veto_triage.py annotated them),
+    # surface only flagged + unverified ships and collapse the intent-matched clean ones to a count —
+    # "draw my attention only to conflicts". Untriaged (no verdict) → the original full veto list.
+    veto_items = g.get("veto", [])
+    vt = data.get("veto_triage")
+    if vt is not None and any(it.get("triage") for it in veto_items):
+        # Surface everything that isn't EXPLICITLY clean — a flagged, unverified, or (defensively) an
+        # un-annotated item is always shown; only an intent-matched clean ship is collapsed. A veto
+        # item can never silently vanish from the human's window (review-gate F4).
+        surfaced = [it for it in veto_items if it.get("triage") != "clean"]
+        _emit("✅", "veto window — needs a look", surfaced,
+              lambda it: "%s %s — %s (%s)" % (
+                  it.get("repo", "?"), it.get("id", "?"), it.get("title") or "(untitled)",
+                  ("⚠ " + (it.get("flag_reason") or "intent mismatch")) if it.get("triage") == "flagged"
+                  else ("unverified: " + (it.get("flag_reason") or "not checked"))))
+        if vt.get("verified_clean"):
+            lines.append("  ✅ %d verified clean (intent-matched, collapsed)" % vt["verified_clean"])
+    else:
+        _emit("✅", "veto window", veto_items,
+              lambda it: f"{it.get('repo','?')} {it.get('id','?')} — {it.get('title') or '(untitled)'} (shipped {it.get('date','?')}; VETO)")
     _emit("⚠", "needs you — decide", g.get("needs_you", []),
           lambda it: f"{it.get('repo','?')} {it.get('id','?')} — {it.get('title') or '(untitled)'} ({it.get('reason','?')})")
     _emit("↪", "handed off", g.get("handed_off", []),

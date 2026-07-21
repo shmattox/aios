@@ -741,3 +741,43 @@ def test_filter_health_lines_ignores_whitespace_only_changes():
     b = {"pipeline": "⚙️ Pipeline: 3 runs"}
     shown, _ = R.filter_health_lines(b, R.health_fingerprints(a))
     assert shown == {}  # only whitespace differs -> steady state
+
+
+def test_standup_veto_triage_surfaces_flagged_collapses_clean():
+    # H90 leg 5: triaged veto window surfaces flagged + unverified, collapses intent-matched clean.
+    data = {"groups": {"veto": [
+        {"repo": "aios", "id": "A1", "title": "econ change", "date": "2026-07-21", "triage": "flagged",
+         "flag_reason": "wrote a $ figure not in intent"},
+        {"repo": "env", "id": "H2", "title": "hygiene", "date": "2026-07-21", "triage": "clean", "flag_reason": ""},
+        {"repo": "env", "id": "H3", "title": "hygiene 2", "date": "2026-07-21", "triage": "clean", "flag_reason": ""},
+        {"repo": "gm", "id": "G4", "title": "thing", "date": "2026-07-21", "triage": "unverified",
+         "flag_reason": "closing commit not found"},
+    ]}, "errors": [], "spend": {}, "acceptance": {},
+        "veto_triage": {"flagged": 1, "verified_clean": 2, "unverified": 1}}
+    out = R.render_factory_standup(data)
+    assert "needs a look" in out
+    assert "A1" in out and "wrote a $ figure not in intent" in out    # flagged shown with reason
+    assert "G4" in out and "unverified" in out                        # unverified shown
+    assert "2 verified clean" in out                                  # clean collapsed to a count
+    assert "H2" not in out and "H3" not in out                        # the clean ones are NOT listed
+
+
+def test_standup_veto_untriaged_still_full_list():
+    # Backward-compat: no triage annotations → the original full veto list renders.
+    data = {"groups": {"veto": [{"repo": "aios", "id": "A1", "title": "x", "date": "2026-07-21"}]},
+            "errors": [], "spend": {}, "acceptance": {}}
+    out = R.render_factory_standup(data)
+    assert "veto window" in out and "A1" in out and "VETO" in out
+    assert "needs a look" not in out
+
+
+def test_standup_veto_triage_never_drops_unannotated_item():
+    # F4: a veto item missing a triage verdict (partial annotation) must be SHOWN, never vanish.
+    data = {"groups": {"veto": [
+        {"repo": "env", "id": "H1", "title": "clean one", "date": "2026-07-21", "triage": "clean"},
+        {"repo": "env", "id": "H2", "title": "not yet annotated", "date": "2026-07-21"},  # no triage key
+    ]}, "errors": [], "spend": {}, "acceptance": {},
+        "veto_triage": {"flagged": 0, "verified_clean": 1, "unverified": 0}}
+    out = R.render_factory_standup(data)
+    assert "H2" in out            # the un-annotated item is surfaced, not silently dropped
+    assert "H1" not in out        # the explicitly-clean one is collapsed

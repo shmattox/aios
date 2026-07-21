@@ -273,7 +273,11 @@ silo brief too, never only at root:
   walk, ensure `<env_root>/state/factory/standup.json` is current — refresh it by running (read-only)
   `python Scripts/factory-gate/factory_standup.py --root <env_root> --today <today>` — no scheduled job
   refreshes it yet (Seth's switch, same as the dormant `Env factory-gate` task), so the brief regenerates
-  it on each Dev-slice render. Then lift
+  it on each Dev-slice render. **Then (H90 leg 5) run the veto intent-triage post-processor** —
+  `python Scripts/factory-gate/veto_triage.py --root <env_root>` — which annotates each veto item in
+  `standup.json` with an intent-match verdict (cached per closing-sha, cheap-tier model call, fail-open),
+  so the render surfaces only the flagged/unverified ships and collapses the intent-matched clean ones to
+  a count. Skip it silently if it errors (advisory — the untriaged full veto list still renders). Then lift
   `render_factory_standup(json.load(...standup.json...))` (`engine/tools/brief_render.py`) VERBATIM
   into the masthead, directly under the factory-health line — same deterministic-render rule as every
   other card (`# Cache contract` → factory-health), never hand-typed. **Dev scope only** — never
