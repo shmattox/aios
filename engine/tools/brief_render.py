@@ -465,10 +465,13 @@ def render_factory_standup(data):
     # standup panel is the natural human-visible home — so the silent drop is actually loud.
     census = data.get("census") or {}
     unparsed = int(census.get("unparsed") or 0)
+    drift = (data.get("runtime_drift") or {}).get("line")  # H74 leg 2
     if not any(g.get(k) for k in ("veto", "needs_you", "handed_off", "stuck")) and not errs \
-            and not has_spend and not has_acc and not unparsed:
+            and not has_spend and not has_acc and not unparsed and not drift:
         return "🏭 Factory Standup — nothing waiting (backlogs drained clean)."
     lines = ["🏭 Factory Standup"]
+    if drift:  # H74 leg 2: a stale INSTALLED engine, caught by the nightly factory-gate emit
+        lines.append("  " + drift)
     def _emit(sym, label, items, fmt):
         if items:
             lines.append(f"  {sym} {label} ({len(items)}):")
@@ -517,6 +520,15 @@ def render_factory_standup(data):
         elif ga.get("n"):
             pct = round(100 * ga.get("accepted", 0) / ga["n"])
             line = f"  📊 gate acceptance ({w}d): {pct}% ({ga.get('accepted', 0)}/{ga['n']})"
+            # H90 leg 2: pair the throughput (accepted) with its counter-metrics (rejects + reverts)
+            # so a throughput number never renders alone — the exact pairing the 07-12 batch lacked.
+            counters = []
+            if ga.get("rejected"):
+                counters.append(f"{ga['rejected']} rejected")
+            if ga.get("reverted"):
+                counters.append(f"{ga['reverted']} reverted")
+            if counters:
+                line += " · " + " · ".join(counters)
             if ga.get("usd_per_accepted") is not None:
                 line += f" · ${ga['usd_per_accepted']:,.2f}/accepted"
             lines.append(line)

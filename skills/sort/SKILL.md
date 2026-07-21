@@ -27,7 +27,9 @@ prints a `needs_judgment` list (raws with no routable declared type):
 python "${CLAUDE_PLUGIN_ROOT}/engine/tools/sort.py" run --queue "<env_root>/state/queue.json" \
   --vault-root "<vault>" --kb-map '<the profile's vault.live_kb_map as JSON>' \
   --auto-ship-kbs '<the profile's gate.auto_ship_kbs as a JSON list — absent means []>' \
-  --review-gates '<the profile's domains.yaml review_gates map as JSON, if set>'
+  --review-gates '<the profile's domains.yaml review_gates map as JSON, if set>' \
+  --paper-governs '<the profile's domains.yaml paper_governs map as JSON, if set — H90/A99 KB-aware econ de-escalation>' \
+  --familyoffice-kb '<the profile's familyoffice kb key, e.g. familyoffice — enables the FamilyOffice-entity second signal for a paper_governs:false KB>'
 ```
 
 **Your judgment covers ONLY the `needs_judgment` residue.** Classify each from its excerpt

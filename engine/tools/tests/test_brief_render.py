@@ -507,7 +507,28 @@ def test_standup_renders_acceptance_lines():
     out = R.render_factory_standup(data)
     assert "📊 factory acceptance (30d): 12 shipped / 1 reverted / 2 unknown-sha → $4.12/accepted" in out
     assert "reverted: A65" in out
-    assert "📊 gate acceptance (30d): 92% (113/123) · $0.61/accepted" in out
+    # H90 leg 2: throughput (accepted) now renders beside its counter-metrics (rejects + reverts).
+    assert "📊 gate acceptance (30d): 92% (113/123) · 8 rejected · 2 reverted · $0.61/accepted" in out
+
+
+def test_standup_gate_counters_omitted_when_zero():
+    # H90 leg 2: a clean gate (no rejects/reverts) renders the throughput alone — no empty counters.
+    data = {"groups": {}, "errors": [], "spend": {},
+            "acceptance": {"window_days": 30,
+                           "gate": {"n": 10, "accepted": 10, "rejected": 0, "reverted": 0}}}
+    out = R.render_factory_standup(data)
+    assert "📊 gate acceptance (30d): 100% (10/10)" in out
+    assert "rejected" not in out and "reverted" not in out
+
+
+def test_standup_renders_runtime_drift_line():
+    # H74 leg 2: a stale INSTALLED engine (folded from the factory-gate emit sidecar) surfaces.
+    data = {"groups": {}, "errors": [], "spend": {}, "acceptance": {},
+            "runtime_drift": {"line": "⚙ runtime drift: installed v0.8.0 ≠ repo v0.9.0"}}
+    out = R.render_factory_standup(data)
+    assert "runtime drift" in out and "0.8.0" in out
+    # drift alone must NOT collapse to the empty "nothing waiting" line
+    assert "nothing waiting" not in out
 
 
 def test_standup_acceptance_gate_note_renders_loud():
