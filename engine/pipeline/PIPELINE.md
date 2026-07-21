@@ -92,6 +92,17 @@ Heavy automation runs overnight; peak/interactive hours are reserved (env timing
 **Re-sync + VERIFY** are Stage Contract invariants (`STAGE-CONTRACT.md` #6, #3): after editing a
 stage's `SKILL.md`, re-sync it to its task; every stage VERIFYs before reporting success.
 
+## Dashboard — the visual operating surface
+
+`aios:dashboard` launches a local, no-build web UI (`engine/dashboard/`) over the **same
+state files** this pipeline writes — the brief cache, gate queue, factory standup, `state/domains`
+mirror (read-only until A64), and the cost/gate-metrics ledgers. It is a render surface, not a
+second source of truth: it reads state fresh from disk and its action layer is a static allowlist
+in `dashboard_server.py` where **every write shells out to an existing gated CLI** (gate ship/reject,
+walk decision, veto revert) — the server holds zero write logic, so a Paper-Governs item still holds
+and every ship still keeps its revert pointer. Any new dashboard action MUST map 1:1 to an existing
+gated CLI. Bound to `127.0.0.1` with exact-Host validation + a per-start token (DNS-rebinding defense).
+
 ## Multi-day away
 
 The pipeline keeps running on schedule, accumulating `awaiting` items. A longer absence = a longer

@@ -1,0 +1,50 @@
+/* A63 design tokens — Linear-style, dark-only v1.  # see A63 spec */
+:root {
+  --bg-0: #0e0f11; --bg-1: #16171a; --bg-2: #1c1d21;
+  --text-0: #e8e9ec; --text-1: #9a9ca3; --text-2: #63656c;
+  --accent: #6e79d6; --accent-dim: #3d437a;
+  --ok: #4cc38a; --warn: #e5a50a; --err: #e5534b;
+  --border: rgba(255, 255, 255, 0.08);
+  --radius: 6px; --font: "Inter", "Segoe UI", system-ui, sans-serif;
+  --fs: 13px; --fs-sm: 11.5px; --pad: 10px; --motion: 120ms ease;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg-0); color: var(--text-0); font: var(--fs)/1.45 var(--font); }
+#nav { display: flex; gap: 14px; align-items: center; padding: 8px 14px;
+  border-bottom: 1px solid var(--border); background: var(--bg-1);
+  position: sticky; top: 0; }
+#nav .brand { font-weight: 600; letter-spacing: 0.04em; color: var(--text-1); }
+#nav a { color: var(--text-1); text-decoration: none; padding: 3px 8px;
+  border-radius: var(--radius); transition: background var(--motion); }
+#nav a.active, #nav a:hover { color: var(--text-0); background: var(--bg-2); }
+#nav .age { margin-left: auto; color: var(--text-2); font-size: var(--fs-sm); }
+main { max-width: 1080px; margin: 0 auto; padding: 18px 14px 60px; }
+h2 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: var(--text-1); }
+.row { display: flex; gap: 10px; align-items: baseline; padding: 7px var(--pad);
+  border: 1px solid transparent; border-bottom: 1px solid var(--border);
+  cursor: default; transition: background var(--motion); }
+.row:hover { background: var(--bg-1); }
+.row.sel { background: var(--bg-2); border-radius: var(--radius);
+  outline: 1px solid var(--accent-dim); }
+.row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.row .meta { color: var(--text-2); font-size: var(--fs-sm); }
+.badge { font-size: var(--fs-sm); padding: 1px 7px; border-radius: 10px;
+  border: 1px solid var(--border); color: var(--text-1); }
+.badge.hi { color: var(--err); border-color: var(--err); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+button { background: var(--bg-2); color: var(--text-0); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 3px 10px; font: inherit; cursor: pointer;
+  transition: border-color var(--motion); }
+button:hover { border-color: var(--accent); }
+button.danger:hover { border-color: var(--err); }
+pre, .body { background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--pad); overflow-x: auto;
+  white-space: pre-wrap; font-size: var(--fs-sm); }
+#toast { position: fixed; bottom: 16px; right: 16px; max-width: 480px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 14px; font-size: var(--fs-sm); }
+.stale { color: var(--warn); }
+input[type="text"] { background: var(--bg-1); border: 1px solid var(--border);
+  color: var(--text-0); border-radius: var(--radius); padding: 4px 8px; font: inherit; }

@@ -1,5 +1,22 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="aios-token" content="{{TOKEN}}">
 <title>AIOS</title>
-<body>aios dashboard shell</body>
+<link rel="stylesheet" href="/tokens.css">
+<body>
+<nav id="nav">
+  <span class="brand">AIOS</span>
+  <a href="#/cockpit" data-key="c">Cockpit</a>
+  <a href="#/gate" data-key="q">Gate</a>
+  <a href="#/standup" data-key="f">Factory</a>
+  <a href="#/mirror" data-key="m">Mirror</a>
+  <a href="#/cost" data-key="$">Cost</a>
+  <span id="age" class="age"></span>
+</nav>
+<main id="main"></main>
+<div id="toast" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
