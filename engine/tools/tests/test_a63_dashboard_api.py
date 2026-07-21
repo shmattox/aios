@@ -136,3 +136,13 @@ def test_domains_traversal_rejected(dserver):
         urllib.request.urlopen(
             f"http://127.0.0.1:{port}/api/domains/personal/..%2F..%2Fsecret", timeout=5)
     assert e.value.code in (400, 404)
+
+
+def test_domains_raw_dotdot_rejected(dserver):
+    # raw (non-%2F) dot-segment — the SAFE_SEG char class contains '.', so this is
+    # only blocked by the explicit '.'/'..' rejection in _domains.
+    port = dserver.server_address[1]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/domains/personal/../secret", timeout=5)
+    assert e.value.code in (400, 404)

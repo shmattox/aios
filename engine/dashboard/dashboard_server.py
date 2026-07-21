@@ -31,7 +31,7 @@ WATCHED = {
     "queue": "state/queue.json",
 }
 
-SAFE_SEG = re.compile(r"^[A-Za-z0-9._\-]{1,128}$")   # domains path segment; traversal impossible by construction
+SAFE_SEG = re.compile(r"^[A-Za-z0-9._\-]{1,128}$")   # domains path segment; '.'/'..' rejected in _domains so traversal is impossible
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:\-]{1,160}$")
 SAFE_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 SAFE_TEXT = re.compile(r"^[^\r\n]{1,500}$")          # single-line free text (reason/choice/action)
@@ -248,7 +248,9 @@ class Handler(SimpleHTTPRequestHandler):
         env = self.server.env_root
         root = env / "state" / "domains"
         segs = [s for s in route[len("/api/domains"):].split("/") if s]
-        if any(not SAFE_SEG.match(s) for s in segs):
+        # reject dot-segments explicitly (SAFE_SEG's char class contains '.'): a
+        # non-normalizing client could otherwise walk out of state/domains/.  # see A63 spec
+        if any(s in (".", "..") or not SAFE_SEG.match(s) for s in segs):
             return self._deny(400, "bad path segment")
         if not segs:
             silos = []
