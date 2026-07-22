@@ -112,6 +112,15 @@ ACTIONS = {
             "--reason", p["reason"], "--by", "dashboard",
         ],
     ),
+    "reply": (
+        {"target_id": SAFE_ID, "reply_kind": re.compile(r"^(respond|append|comment)$"),
+         "text": SAFE_TEXT},
+        lambda env, tools, p: [
+            sys.executable, str(tools / "brief_session.py"), "record_reply",
+            str(env / "state" / "brief-session.json"),
+            p["target_id"], p["reply_kind"], p["text"],
+        ],
+    ),
 }
 
 

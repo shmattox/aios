@@ -50,6 +50,7 @@ CLI (same interface style as queue_tx.py — called from SKILL.md prose):
   python brief_session.py resume_or_new <state_path> <walk_id>
   python brief_session.py record_decision <state_path> <item_id> <station> <choice> <action> [--executed] [--thread T] [--title T] [--notion-write JSON]
   python brief_session.py record_deferral <state_path> <item_id> <station> <reason> <deferred_on> [--title T]
+  python brief_session.py record_reply    <state_path> <target_id> <reply_kind> <text> [--by W]   # respond|append|comment
   python brief_session.py advance     <state_path>
   python brief_session.py start_over  <state_path> <archive_dir>
   python brief_session.py validate_cache <cache_json_path> --domains a,b,c [--standup standup.json]
@@ -250,6 +251,30 @@ def record_decision(state_path, item_id, title, station, choice, action,
     ledger["updated_utc"] = now
     if not _atomic_write(state_path, ledger):
         _die(f"record_decision: failed to write ledger after retries")
+    return ledger
+
+
+REPLY_KINDS = ("respond", "append", "comment")
+
+
+def record_reply(state_path, target_id, reply_kind, text, by="dashboard"):
+    """One reply-op shape (A109): respond|append|comment differ only by kind.
+
+    Consumers (next gather / running drain / review run) read replies where
+    consumed is False and mark them True — this module never consumes.
+    """
+    if reply_kind not in REPLY_KINDS:
+        raise ValueError(f"record_reply: kind {reply_kind!r} not in {REPLY_KINDS}")
+    ledger = load(state_path)
+    if ledger is None:
+        _die(f"record_reply: no ledger at {state_path}")
+    ledger.setdefault("replies", []).append({
+        "target_id": target_id, "reply_kind": reply_kind, "text": text,
+        "by": by, "ts": _utcnow(), "consumed": False,
+    })
+    ledger["updated_utc"] = _utcnow()
+    if not _atomic_write(state_path, ledger):
+        _die("record_reply: failed to write ledger after retries")
     return ledger
 
 
@@ -1260,6 +1285,14 @@ if __name__ == "__main__":
     elif op == "proposal_dedupe_history":
         # proposal_dedupe_history <queue.json> <dedupe_key>   (A96 §1b producer-side dedupe)
         print(json.dumps(proposal_dedupe_history(args[1], args[2]), indent=2, ensure_ascii=False))
+
+    elif op == "record_reply":
+        # record_reply <state_path> <target_id> <reply_kind> <text> [--by W]
+        path, target_id, reply_kind, text = args[1], args[2], args[3], args[4]
+        rest = args[5:]
+        by = rest[rest.index("--by") + 1] if "--by" in rest else "dashboard"
+        ledger = record_reply(path, target_id, reply_kind, text, by=by)
+        print(json.dumps({"ok": True, "replies": len(ledger["replies"])}, indent=2))
 
     else:
         print(f"FAIL: unknown op {op!r}", file=sys.stderr)
