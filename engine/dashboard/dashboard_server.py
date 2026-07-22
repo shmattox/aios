@@ -22,6 +22,7 @@ UI_DIR = HERE / "ui"
 sys.path.insert(0, str(HERE.parent / "tools"))
 
 from state_validate import _extract_frontmatter, _parse_yaml  # engine YAML-subset reader; no PyYAML in repo
+from backlog_parse import parse_backlog, station_for  # engine tools shim already on sys.path
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -197,6 +198,8 @@ class Handler(SimpleHTTPRequestHandler):
             out = {name: _mtime(env / rel) for name, rel in WATCHED.items()}
             spends = sorted((env / "state" / "factory").glob("spend-*.json"))
             out["spend"] = _mtime(spends[-1]) if spends else None
+            out["board"] = max((m for m in (_mtime(p) for _, p in self._board_sources(env))
+                                if m), default=None)
             return self._send_json(out)
         if route == "/api/brief":
             return self._file_with_age(env / WATCHED["brief"])
@@ -213,6 +216,8 @@ class Handler(SimpleHTTPRequestHandler):
                                     "generated_utc": brief.get("generated_utc")})
         if route == "/api/draft":
             return self._draft()
+        if route == "/api/board":
+            return self._board()
         if route == "/api/domains" or route.startswith("/api/domains/"):
             return self._domains(route)
         return self._deny(404, f"unknown GET {route}")
@@ -243,6 +248,57 @@ class Handler(SimpleHTTPRequestHandler):
             return self._deny(404, "draft file missing on disk")
         return self._send_json({"path": str(p),
                                 "markdown": p.read_text(encoding="utf-8")})
+
+    STATIONS = ["incoming", "needs_you", "in_motion", "review", "shipped"]
+    SILOS = [("familyoffice", "FamilyOffice"), ("personal", "Personal"), ("gm", "General Mgmt")]
+
+    def _board_sources(self, env):
+        """Every backlog file: env-ops root + each Projects/* repo with a BACKLOG.md."""
+        out = [("env-ops", env / "BACKLOG.md")]
+        proj = env / "Projects"
+        if proj.is_dir():
+            for d in sorted(p for p in proj.iterdir() if (p / "BACKLOG.md").is_file()):
+                out.append((d.name, d / "BACKLOG.md"))
+        return [(k, p) for k, p in out if p.is_file()]
+
+    def _board(self):
+        env = self.server.env_root
+        standup = _read_json_file(env / WATCHED["standup"]) or {}
+        standup_ids = {}
+        for group, rows in (standup.get("groups") or {}).items():
+            for r in rows:
+                if isinstance(r, dict) and r.get("id"):
+                    standup_ids[r["id"]] = group
+        lanes = []
+        brief = _read_json_file(env / WATCHED["brief"]) or {}
+        held = brief.get("held", [])
+        for key, name in self.SILOS:
+            cells = {s: [] for s in self.STATIONS}
+            for i, row in enumerate(held):
+                if str(row.get("kb", "")).lower().startswith(key[:2] if key == "gm" else key):
+                    cells["needs_you"].append({
+                        "id": row.get("id", f"held-{i}"), "title": row.get("title", ""),
+                        "station": "needs_you", "source": "held",
+                        "gate_human": True, "draft_index": i})
+            lanes.append({"kind": "silo", "key": key, "name": name,
+                          "badge": "active", "cells": cells})
+        for key, path in self._board_sources(env):
+            cells = {s: [] for s in self.STATIONS}
+            try:
+                items = parse_backlog(path.read_text(encoding="utf-8"))
+            except OSError:
+                items = []
+            for it in items:
+                st = station_for(it, standup_ids)
+                if st:
+                    cells[st].append({"id": it["id"], "title": it["headline"],
+                                      "station": st, "source": "backlog",
+                                      "gate_human": it["gate_human"], "draft_index": None})
+            flags = sorted({standup_ids[i["id"]] for i in items if i["id"] in standup_ids})
+            lanes.append({"kind": "repo", "key": key, "name": key,
+                          "badge": "active" + ("·" + ",".join(flags) if flags else ""),
+                          "cells": cells})
+        return self._send_json({"stations": self.STATIONS, "lanes": lanes})
 
     def _domains(self, route):
         env = self.server.env_root
