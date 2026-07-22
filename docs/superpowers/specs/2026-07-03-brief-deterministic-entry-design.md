@@ -1,7 +1,7 @@
 # Brief — deterministic entry (instant-paint hard gate)
 
 **Date:** 2026-07-03
-**Status:** implemented
+**Status:** implemented — partially superseded by A70 (2026-07-14): the precomputed-headline artifact this spec's entry path read was retired; header prose is now synthesized at render time from gathered data. The instant-paint static ack survives.
 **Sibling:** `2026-07-02-brief-deterministic-card-render-design.md` (that one made *render* deterministic; this makes *entry* deterministic).
 
 ## Problem
