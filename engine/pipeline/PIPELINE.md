@@ -103,6 +103,22 @@ walk decision, veto revert) — the server holds zero write logic, so a Paper-Go
 and every ship still keeps its revert pointer. Any new dashboard action MUST map 1:1 to an existing
 gated CLI. Bound to `127.0.0.1` with exact-Host validation + a per-start token (DNS-rebinding defense).
 
+**v2a engine surface (A109 — engine legs shipped; Preact UI legs land in the same release).** Two read
+routes: `GET /api/board` returns auto-discovered lanes (env-ops root backlog + every `Projects/*` repo
+with a `BACKLOG.md`, each mapped to the five stations `incoming|needs_you|in_motion|review|shipped` via
+`backlog_parse.station_for`, plus the brief-held silo cards); `GET /api/events` is a thread-per-stream
+SSE channel emitting `event: change` with a `{"changed":[...]}` fingerprint delta whenever a watched
+state file (or any backlog) changes — Host-gated, content-free (mtime key names only), like the other
+GET reads. Two new allowlisted actions, each 1:1 with a gated CLI: `dismiss` → `queue_tx dismiss`
+(routes a queue item to the terminal `reference` stage under the queue lock, revertible via rewind);
+`reply` → `brief_session record_reply` (one reply-op shape — `respond|append|comment` differ only by
+kind — appending `{target_id, reply_kind, text, by, ts, consumed:false}` to the session ledger's
+`replies[]`). **Reply-op consumer contract:** consumers (the next gather / a running drain / a review
+run) read `replies[]` where `consumed == false` and set it `true` after acting; `record_reply` itself
+never consumes. Consumer wiring is env-side SKILL text, not engine code. Deferred to v2b/v2c: triage-now
+(model-driven sort/ingest spawn), dormant/paused lanes + badge config (needs an instance-config source),
+Review-station population, drag-move, the Flow/Stats redesign, and the mobile transport (tailscale+PWA+ntfy).
+
 ## Multi-day away
 
 The pipeline keeps running on schedule, accumulating `awaiting` items. A longer absence = a longer
