@@ -52,7 +52,7 @@ def _get_json(srv, path):
 
 def test_mtimes_lists_watched(server):
     m = _get_json(server, "/api/mtimes")
-    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue"}
+    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue", "board"}
     assert m["brief"] is not None
 
 

@@ -104,6 +104,14 @@ ACTIONS = {
             "git", "-C", str((env / p["repo"]).resolve()), "revert", "--no-edit", p["sha"],
         ],
     ),
+    "dismiss": (
+        {"id": SAFE_ID, "reason": SAFE_TEXT},
+        lambda env, tools, p: [
+            sys.executable, str(tools / "queue_tx.py"), "dismiss",
+            str(env / "state" / "queue.json"), p["id"],
+            "--reason", p["reason"], "--by", "dashboard",
+        ],
+    ),
 }
 
 

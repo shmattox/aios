@@ -19,6 +19,7 @@ Usage:
   python queue_tx.py select   <queue.json> [--stage S] [--lane L] [--limit N]   # print a subset
   python queue_tx.py commit   <proposed.json> <live.json>    # whole-queue replace (bulk/operator)
   python queue_tx.py claim    <queue.json> <id1,id2,...> <worker>
+  python queue_tx.py dismiss  <queue.json> <id> --reason R --by W   # → terminal reference stage
   python queue_tx.py dump     <queue.json>                   # print the queue (debug)
   python queue_tx.py ls       <queue.json>                   # compact id/stage/lane listing
 """
@@ -561,6 +562,27 @@ if __name__ == "__main__":
     elif op == "unarchive":
         # unarchive <queue.json> <id1,id2,...>
         unarchive(sys.argv[2], sys.argv[3].split(","))
+    elif op == "dismiss":
+        # dismiss <queue.json> <id> --reason R --by W → terminal reference stage (A89 lane)
+        a = sys.argv[2:]
+        if len(a) < 2:
+            _die("dismiss: usage: dismiss <queue.json> <id> --reason R --by W")
+        path, item_id = a[0], a[1]
+        reason = a[a.index("--reason") + 1] if "--reason" in a else ""
+        by = a[a.index("--by") + 1] if "--by" in a else "operator"
+        with _Lock(path):
+            data = load(path)
+            item = next((i for i in data["queue"] if i.get("id") == item_id), None)
+            if item is None:
+                _die(f"dismiss: no item {item_id!r}")
+            if item.get("stage") in ("shipped", "rejected", "reference"):
+                _die(f"dismiss: item {item_id!r} is terminal ({item['stage']})")
+            item["stage"] = "reference"
+            item.setdefault("history", []).append(
+                {"op": "dismiss", "by": by, "reason": reason,
+                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+            _save(path, data)
+        print(json.dumps({"ok": True, "id": item_id, "stage": "reference"}))
     elif op == "dump":
         print(json.dumps(load(sys.argv[2]), indent=2, ensure_ascii=False))
     elif op == "ls":
