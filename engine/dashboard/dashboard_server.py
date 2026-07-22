@@ -32,6 +32,9 @@ WATCHED = {
     "queue": "state/queue.json",
 }
 
+SSE_POLL_S = 1.0
+SSE_PING_EVERY = 15  # polls between keepalive comments
+
 SAFE_SEG = re.compile(r"^[A-Za-z0-9._\-]{1,128}$")   # domains path segment; '.'/'..' rejected in _domains so traversal is impossible
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:\-]{1,160}$")
 SAFE_SHA = re.compile(r"^[0-9a-f]{7,40}$")
@@ -168,6 +171,8 @@ class Handler(SimpleHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):
             return self._index()
+        if route == "/api/events":
+            return self._events()
         if route.startswith("/api/"):
             return self._api_get(route)
         return super().do_GET()
@@ -316,6 +321,41 @@ class Handler(SimpleHTTPRequestHandler):
                           "badge": "active" + ("·" + ",".join(flags) if flags else ""),
                           "cells": cells})
         return self._send_json({"stations": self.STATIONS, "lanes": lanes})
+
+    def _events(self):
+        env = self.server.env_root
+
+        def fingerprint():
+            fp = {name: _mtime(env / rel) for name, rel in WATCHED.items()}
+            spends = sorted((env / "state" / "factory").glob("spend-*.json"))
+            fp["spend"] = _mtime(spends[-1]) if spends else None
+            fp["board"] = max((m for m in (_mtime(p) for _, p in self._board_sources(env))
+                               if m), default=None)
+            return fp
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(b"event: hello\ndata: {}\n\n")
+            self.wfile.flush()
+            last, ticks = fingerprint(), 0
+            while True:
+                time.sleep(SSE_POLL_S)
+                cur = fingerprint()
+                changed = [k for k in cur if cur[k] != last[k]]
+                if changed:
+                    payload = json.dumps({"changed": changed}).encode("utf-8")
+                    self.wfile.write(b"event: change\ndata: " + payload + b"\n\n")
+                    self.wfile.flush()
+                    last = cur
+                ticks += 1
+                if ticks % SSE_PING_EVERY == 0:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            return  # client went away — thread ends with the request
 
     def _domains(self, route):
         env = self.server.env_root
