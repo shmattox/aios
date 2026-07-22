@@ -69,6 +69,14 @@ try:
     check("sha scoped to engine/: docs-only commit stays clean",
           fp["status"] == "clean" and fp["repo"]["sha"] == engine_sha)
 
+    # 4b. install at a HEAD past the engine sha (the bump-then-reinstall flow): a version-bump or
+    # docs commit advances HEAD, the install records that HEAD, and the engine sha is an ANCESTOR
+    # of it — the install contains every engine change, so this must be clean, not stale-sha.
+    head_sha = git(repo, "log", "-1", "--format=%H").stdout.strip()
+    fp = rf.fingerprint(repo_root=repo, installed_plugins_path=installed("0.6.2", head_sha))
+    check("ancestry: install at HEAD past the engine sha stays clean (bump-then-reinstall)",
+          fp["status"] == "clean")
+
     # 5. no-dev-clone — unresolvable repo degrades silent
     fp = rf.fingerprint(repo_root=os.path.join(d, "nope"),
                         installed_plugins_path=installed("0.6.2", engine_sha),

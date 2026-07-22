@@ -102,6 +102,22 @@ def _repo_side(repo_root):
     return {"version": version, "sha": sha}
 
 
+def _is_ancestor(repo_root, ancestor, descendant):
+    """True iff `ancestor` is an ancestor of (or equal to) `descendant` in the dev clone; False on a
+    definitive no; None when git can't answer (unknown sha, no git — caller decides the fail posture)."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_root, "merge-base", "--is-ancestor", ancestor, descendant],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return True
+        if r.returncode == 1:
+            return False
+        return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def fingerprint(repo_root=None, installed_plugins_path=None, env_root=None):
     """Compare the installed engine to its source repo. See module docstring for the status ladder.
     Never raises — returns a dict on every path."""
@@ -119,7 +135,12 @@ def fingerprint(repo_root=None, installed_plugins_path=None, env_root=None):
         return {**result, "status": "stale-version",
                 "message": f"installed engine v{iv} ≠ repo v{rv} — run /plugin update aios"}
     ish, rsh = installed.get("sha"), repo.get("sha")
-    if ish and rsh and ish != rsh:
+    # The install records repo HEAD at install time; the repo side is the last engine-touching
+    # commit. Equality is too strict — a trailing non-engine commit (version bump, backlog note)
+    # makes the install sha a DESCENDANT of the engine sha while containing every engine change.
+    # Clean iff the engine sha is an ancestor of the install sha; an unanswerable git (unknown
+    # sha, detached fixture) keeps the stale-sha signal (signal over silence, the A90 posture).
+    if ish and rsh and ish != rsh and _is_ancestor(resolved_repo, rsh, ish) is not True:
         return {**result, "status": "stale-sha",
                 "message": (f"engine changed at v{rv or iv} without a version bump — "
                             f"bump plugin.json + reinstall")}
