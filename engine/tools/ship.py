@@ -342,6 +342,38 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
                       "revert_pointer": pointer_path}, ensure_ascii=False))
 
 
+def amend(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_approved=False,
+          content_ack=False):
+    """A109 edit-verb: replace the staging draft with the operator's edited body (read from STDIN),
+    record op:amend in history, then proceed through the EXACT ship() path (revert pointer, receipt,
+    Paper-Governs behaviour all inherited). The A85/A86 content-refusal runs on the NEW body FIRST —
+    a marker hit HOLDS (no draft write, no ship) unless --content-ack. A review-lane / Paper-Governs
+    item is still held unless --human-approved (the dashboard click IS the human approval)."""
+    item = _find_item(queue_path, cid)
+    if item.get("stage") != "awaiting":
+        _die(f"id {cid!r} is at stage {item.get('stage')!r} — only 'awaiting' items amend")
+    facts = _resolve_facts(item, vault_root, kb_map)
+    body = sys.stdin.read()
+    # (1) content-integrity refusal on the NEW body — hold (no write, no ship) on a marker hit.
+    refusal = _content_refusal(body, facts["is_journal"])
+    if refusal and not content_ack:
+        _die(f"id {cid!r}: amend content refusal ({refusal}) — held + flagged, draft NOT modified. "
+             f"Pass --content-ack to amend-ship a reviewed-legitimate body.")
+    # (2) atomically replace the staging draft with the edited body (byte-for-byte from stdin).
+    draft_path = facts["draft_path"]
+    os.makedirs(os.path.dirname(_win_long(draft_path)) or ".", exist_ok=True)
+    tmp = draft_path + ".amend.tmp"
+    with open(_win_long(tmp), "w", encoding="utf-8", newline="") as f:
+        f.write(body)
+    os.replace(_win_long(tmp), _win_long(draft_path))
+    # (3) record the amend op in history (stage stays 'awaiting' so ship() accepts it).
+    item.setdefault("history", []).append({"ts": _now(), "op": "amend", "by": approved_by})
+    queue_tx._apply_items(queue_path, [item], "update")
+    # (4) proceed through the EXACT existing ship path.
+    ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir,
+         human_approved=human_approved, content_ack=content_ack)
+
+
 def _archive_husk(cid, draft_path, vault_root, revert_dir):
     """A98: move a rejected item's staging draft (the husk) into the revert dir — it is derived
     (rewind re-opens the item to `sorted` and ingest re-drafts from raw), so archive-not-delete keeps
@@ -452,6 +484,13 @@ def main(argv=None):
                     help="required to ship a review-lane item (manual gate only)")
     ps.add_argument("--content-ack", action="store_true",
                     help="A85/A86: ship past a content-refusal flag (manual gate only, after review)")
+    pa = sub.add_parser("amend"); common(pa)
+    pa.add_argument("--approved-by", required=True)
+    pa.add_argument("--revert-dir", default=None, help="default: <queue dir>/revert")
+    pa.add_argument("--human-approved", action="store_true",
+                    help="required to amend-ship a review-lane item (the dashboard click IS this)")
+    pa.add_argument("--content-ack", action="store_true",
+                    help="A85/A86: amend-ship past a content-refusal flag (manual gate, after review)")
     pj = sub.add_parser("reject"); common(pj, vault=False)
     pj.add_argument("--reason", required=True)
     pj.add_argument("--decided-by", choices=("human", "auto"), default="auto",
@@ -486,6 +525,11 @@ def main(argv=None):
         _die("--kb-map must be a JSON object of kb -> vault folder")
     if args.op == "resolve":
         resolve(args.queue, args.vault_root, kb_map, args.id)
+    elif args.op == "amend":
+        revert_dir = args.revert_dir or os.path.join(
+            os.path.dirname(os.path.abspath(args.queue)), "revert")
+        amend(args.queue, args.vault_root, kb_map, args.id, args.approved_by, revert_dir,
+              human_approved=args.human_approved, content_ack=args.content_ack)
     else:
         revert_dir = args.revert_dir or os.path.join(
             os.path.dirname(os.path.abspath(args.queue)), "revert")

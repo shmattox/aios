@@ -86,8 +86,8 @@ export function InboxView() {
       } else if (a === "dismiss") {
         const reason = window.prompt("Dismiss reason:") || "below the worthiness bar";
         await api.post("dismiss", { id: item.id, reason }); load();
-      } else if (a === "edit") {
-        toast("Edit lands in the gated build — task 9 (review-gate)");
+      } else if (a === "gate_edit") {
+        await api.post("gate_edit", { id: item.id, content: params.content }); load();
       } else if (REPLY[a]) {
         await api.post("reply", { target_id: item.id, reply_kind: a, text: params.text });
       } else toast(`${a} — arrives in a later phase`);

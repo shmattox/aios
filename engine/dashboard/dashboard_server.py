@@ -39,6 +39,22 @@ SAFE_SEG = re.compile(r"^[A-Za-z0-9._\-]{1,128}$")   # domains path segment; '.'
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:\-]{1,160}$")
 SAFE_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 SAFE_TEXT = re.compile(r"^[^\r\n]{1,500}$")          # single-line free text (reason/choice/action)
+MAX_CONTENT_BYTES = 256 * 1024                        # A109 gate_edit: multiline draft body (stdin), not SAFE_TEXT
+
+
+def _content_ok(v):
+    """A109 gate_edit content validator — a bounded multiline string piped to ship.py amend's stdin."""
+    return isinstance(v, str) and len(v.encode("utf-8")) <= MAX_CONTENT_BYTES
+
+
+def _param_ok(rx, val):
+    """A param validator is None (any str), a compiled regex (Pattern objects are not callable), or a
+    callable custom check like _content_ok."""
+    if rx is None:
+        return True
+    if callable(rx):
+        return bool(rx(val))
+    return bool(rx.match(val))
 
 
 def _mtime(path):
@@ -123,6 +139,19 @@ ACTIONS = {
             str(env / "state" / "brief-session.json"),
             p["target_id"], p["reply_kind"], p["text"],
         ],
+    ),
+    # A109 edit-verb: operator-edited draft body → ship.py amend via STDIN (the 3rd tuple element
+    # names the param piped to stdin, so multiline content never rides argv). Human-gated: --human-approved
+    # is the click; a Paper-Governs / review-lane item still holds unless amend passes the content-refusal.
+    "gate_edit": (
+        {"id": SAFE_ID, "content": _content_ok},
+        lambda env, tools, p: (lambda vr, km: [
+            sys.executable, str(tools / "ship.py"), "amend",
+            "--queue", str(env / "state" / "queue.json"), "--id", p["id"],
+            "--vault-root", str(vr), "--kb-map", json.dumps(km),
+            "--approved-by", "dashboard", "--human-approved",
+        ])(*_connectors(env)),
+        "content",
     ),
 }
 
@@ -407,7 +436,9 @@ class Handler(SimpleHTTPRequestHandler):
         action_id = route[len("/api/action/"):]
         if action_id not in ACTIONS:
             return self._deny(403, f"action {action_id!r} not allowlisted")
-        spec, build = ACTIONS[action_id]
+        entry = ACTIONS[action_id]
+        spec, build = entry[0], entry[1]
+        stdin_param = entry[2] if len(entry) > 2 else None  # A109: param piped to the CLI's stdin
         try:
             params = json.loads(self._body or b"{}")  # body already drained in do_POST
         except ValueError:
@@ -416,14 +447,17 @@ class Handler(SimpleHTTPRequestHandler):
             return self._deny(400, "body must be a JSON object")
         for key, rx in spec.items():
             val = params.get(key)
-            if not isinstance(val, str) or (rx is not None and not rx.match(val)):
+            if not isinstance(val, str) or not _param_ok(rx, val):
                 return self._deny(400, f"param {key!r} missing or invalid")
         if action_id == "veto_revert" and not _git_repo_ok(env, params["repo"]):
             return self._deny(400, "repo must be a git dir at or under env_root")
         argv = build(env, tools, params)
+        run_kwargs = dict(capture_output=True, text=True, encoding="utf-8",
+                          timeout=600, cwd=str(env))
+        if stdin_param is not None:
+            run_kwargs["input"] = params[stdin_param]  # multiline content via stdin, never argv
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
-                                  encoding="utf-8", timeout=600, cwd=str(env))
+            proc = subprocess.run(argv, **run_kwargs)
         except (OSError, subprocess.TimeoutExpired) as e:
             return self._send_json({"ok": False, "code": -1, "stdout": "",
                                     "stderr": str(e)}, code=502)

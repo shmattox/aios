@@ -203,6 +203,12 @@ body.narrow #detail {
   padding: 9px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
   max-height: 340px; overflow-y: auto;
 }
+#detail textarea.editarea {
+  width: 100%; min-height: 240px; resize: vertical;
+  font: var(--fs-sm)/1.6 var(--mono); background: var(--bg-0); color: var(--text-0);
+  border: 1px solid var(--accent-dim); border-radius: var(--radius); padding: 9px 12px;
+}
+#detail textarea.editarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* source-tagged drill-down links */
 .doclink {

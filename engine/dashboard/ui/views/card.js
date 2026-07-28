@@ -125,11 +125,14 @@ export function Card({ item, station, onAction }) {
   const [draft, setDraft] = useState(null);
   const [respondKind, setRespondKind] = useState(null);
   const [text, setText] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
   const taRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
     setDraft(null);
+    setEditing(false);   // never carry edit mode across a card switch
     if (item.draft_index != null) {
       api.get(`/api/draft?i=${item.draft_index}`)
         .then((d) => { if (alive) setDraft(d.markdown); })
@@ -141,9 +144,11 @@ export function Card({ item, station, onAction }) {
   useEffect(() => { if (respondKind && taRef.current) taRef.current.focus(); }, [respondKind]);
 
   const clickVerb = (act) => {
+    if (act === "edit") { setEditText(draft != null ? draft : ""); setEditing(true); return; }
     if (REPLY_KIND[act]) { setRespondKind(respondKind === act ? null : act); return; }
     onAction(act, {});
   };
+  const saveAndShip = () => { onAction("gate_edit", { content: editText }); setEditing(false); };
   const submitReply = () => {
     const t = text.trim();
     if (!t) return;
@@ -179,8 +184,10 @@ export function Card({ item, station, onAction }) {
 
     ${item.draft_index != null ? html`
       <div class="sect">
-        <div class="label">Staged draft${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
-        <pre class="body">${draft == null ? "loading draft…" : draft}</pre>
+        <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
+        ${editing
+          ? html`<textarea class="editarea" value=${editText} onInput=${(e) => setEditText(e.target.value)}></textarea>`
+          : html`<pre class="body">${draft == null ? "loading draft…" : draft}</pre>`}
       </div>` : null}
 
     ${links.length ? html`
@@ -190,11 +197,17 @@ export function Card({ item, station, onAction }) {
       </div>` : null}
 
     <div class="verbs">
-      ${verbs.map((v) => html`
-        <button class="verb ${v.cls}" onClick=${() => clickVerb(v.act)}>
-          ${v.label}${v.kbd ? html` <kbd>${v.kbd}</kbd>` : null}
-        </button>`)}
-      <span class="note">${NOTE[station] || NOTE.needs_you}</span>
+      ${editing
+        ? html`
+          <button class="verb approve" onClick=${saveAndShip}>Save & ship</button>
+          <button class="verb" onClick=${() => setEditing(false)}>Cancel</button>
+          <span class="note">Save & ship writes your edited draft, then runs the SAME gated ship path (content-refusal + revert pointer). A Paper-Governs edit still holds unless the body passes the check.</span>`
+        : html`
+          ${verbs.map((v) => html`
+            <button class="verb ${v.cls}" onClick=${() => clickVerb(v.act)}>
+              ${v.label}${v.kbd ? html` <kbd>${v.kbd}</kbd>` : null}
+            </button>`)}
+          <span class="note">${NOTE[station] || NOTE.needs_you}</span>`}
     </div>
     <div class="respond-box ${respondKind ? "open" : ""}">
       <textarea ref=${taRef} value=${text}
