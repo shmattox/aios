@@ -192,6 +192,13 @@ body.narrow #detail {
   margin: 9px 0 3px; text-wrap: balance;
 }
 #detail .why { color: var(--text-1); font-size: var(--fs); max-width: 62ch; overflow-wrap: anywhere; }
+.countstrip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 2px 2px 14px; }
+#detail .voice { color: var(--text-1); font-size: var(--fs); margin-bottom: 9px; max-width: 68ch; overflow-wrap: anywhere; }
+#detail .voice .vlabel { font-weight: 600; color: var(--text-0); margin-right: 5px; }
+#detail .voice.sys .vlabel { color: var(--accent); }
+#detail .voice.claude .vlabel { color: var(--warn); }
+#detail .voice .vcite { color: var(--text-2); font-size: var(--fs-sm); }
+#detail .voice.silent { color: var(--text-2); font-style: italic; }
 #detail .sect { padding: 13px 16px 0; }
 #detail .label {
   font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.09em;

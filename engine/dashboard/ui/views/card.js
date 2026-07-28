@@ -120,8 +120,17 @@ function weaveWhy(text, links) {
   return segs.filter((s) => s !== "");
 }
 
+// act (needs-you task) verbs — distinct from the gate verbs; wired to walk_decision / reply
+const ACT_VERBS = [
+  { act: "done", label: "Mark done", cls: "approve" },
+  { act: "respond", label: "Respond", cls: "respond" },
+];
+const voiceText = (v) => (v == null ? "" : (typeof v === "string" ? v : (v.text || "")));
+const voiceCite = (v) => (v && typeof v === "object" ? (v.cite || "") : "");
+
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
+  const isAct = item._kind === "act";
   const [draft, setDraft] = useState(null);
   const [respondKind, setRespondKind] = useState(null);
   const [text, setText] = useState("");
@@ -159,8 +168,10 @@ export function Card({ item, station, onAction }) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitReply(); }
   };
 
-  const verbs = VERB_SETS[station] || VERB_SETS.needs_you;
+  const verbs = isAct ? ACT_VERBS : (VERB_SETS[station] || VERB_SETS.needs_you);
   const links = docLinks(item);
+  const sysText = voiceText(item.system_voice), sysCite = voiceCite(item.system_voice);
+  const claudeText = voiceText(item.claude_voice);
   const isPG = item.paper_governs || item.gate_human || siloClass(item.kb) === "fo"
     || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
   // backlog cards have no rec_reason — fall back to the station's meaning so the popup is never empty
@@ -172,6 +183,8 @@ export function Card({ item, station, onAction }) {
       <div class="chips">
         <span class="chip id">${item.id}</span>
         ${item.kb ? html`<span class="chip ${siloClass(item.kb) === "fo" ? "fo-c" : ""}">${item.kb}</span>` : null}
+        ${item.domain && !item.kb ? html`<span class="chip ${siloClass(item.domain) === "fo" ? "fo-c" : ""}">${item.domain}</span>` : null}
+        ${item.urgency && item.urgency !== "normal" ? html`<span class="chip ${item.urgency === "high" ? "pg" : ""}">${item.urgency}</span>` : null}
         ${item.repo ? html`<span class="chip">${item.repo}</span>` : null}
         ${item.lane ? html`<span class="chip">${item.lane} hold</span>` : null}
         ${isPG ? html`<span class="chip pg">⚖ Paper-Governs</span>` : null}
@@ -179,8 +192,16 @@ export function Card({ item, station, onAction }) {
         ${item.recommended ? html`<span class="chip">rec: ${item.recommended}</span>` : null}
       </div>
       <h1>${item.title || item.id}</h1>
-      ${why ? html`<p class="why">${weaveWhy(why, links)}</p>` : null}
+      ${!isAct && why ? html`<p class="why">${weaveWhy(why, links)}</p>` : null}
     </div>
+
+    ${isAct ? html`
+      <div class="sect">
+        ${sysText
+          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says</span> ${sysText}${sysCite ? html` <span class="vcite">· ${sysCite}</span>` : null}</div>`
+          : html`<div class="voice silent">— your system is silent —</div>`}
+        ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${claudeText}</div>` : null}
+      </div>` : null}
 
     ${item.draft_index != null ? html`
       <div class="sect">
