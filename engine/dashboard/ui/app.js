@@ -3,6 +3,7 @@
 // panel so nothing regresses. Flow/Stats = v2b.
 import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
 import { InboxView } from "/views/inbox.js";
+import { BoardView } from "/views/board.js";
 
 // v1-panel compat: the existing panels/*.js take (mountEl, aios) and may read window.aios.
 const aiosCompat = {
@@ -22,13 +23,7 @@ const Logo = () => html`
   </svg>`;
 
 // ── views ─────────────────────────────────────────────────
-// Inbox is real (Task 7); Board arrives in Task 8. Flow/Stats = v2b; Mirror mounts v1.
-const BoardStub = () => html`
-  <section class="view">
-    <div class="viewhead"><h1>Board</h1><span class="sub">auto-discovered lanes</span></div>
-    <p class="stub">The swimlane Board (auto-discovered per-repo lanes, modal/accordion) lands in Task 8.</p>
-  </section>`;
-
+// Inbox (T7) and Board (T8) are real. Flow/Stats = v2b; Mirror mounts the v1 panel.
 const Soon = ({ name, note }) => html`
   <section class="view">
     <div class="viewhead"><h1>${name}</h1><span class="sub">v2b</span></div>
@@ -50,7 +45,7 @@ function MirrorView() {
 
 const NAV = [
   { key: "inbox", label: "Inbox", view: InboxView },
-  { key: "board", label: "Board", view: BoardStub },
+  { key: "board", label: "Board", view: BoardView },
   { key: "flow", label: "Flow", soon: "v2b", view: () => html`<${Soon} name="Flow" note="Live pipeline DAG — v2b." />` },
   { key: "mirror", label: "Mirror", view: MirrorView },
   { key: "stats", label: "Stats", soon: "v2b", view: () => html`<${Soon} name="Stats" note="Spend, gate metrics, throughput — v2b." />` },
@@ -165,11 +160,6 @@ function Shell() {
       <span class="k deskonly"><kbd>[</kbd> collapse menu</span>
     </div>
 
-    <div id="modal" hidden><div class="mscrim"></div>
-      <article id="modal-card" role="dialog" aria-modal="true">
-        <div id="modal-head"><div id="modal-context"></div><button id="modal-close" aria-label="Close">✕</button></div>
-      </article>
-    </div>
     <div id="toast" hidden></div>`;
 }
 
