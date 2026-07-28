@@ -22,6 +22,15 @@ const Logo = () => html`
     </g>
   </svg>`;
 
+// rail glyphs, ported from the mockup
+const ICONS = {
+  inbox: html`<svg class="ic" viewBox="0 0 16 16"><path d="M2 9.5h3l1.2 2h3.6l1.2-2h3"/><path d="M3.2 3.5h9.6l1.2 6v3.5H2V9.5z"/></svg>`,
+  board: html`<svg class="ic" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1"/><rect x="10.8" y="2.5" width="3.4" height="9.5" rx="1"/></svg>`,
+  flow: html`<svg class="ic" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="3.8" r="1.8"/><circle cx="12.5" cy="12.2" r="1.8"/><path d="M5.3 7.2l5.4-2.6M5.3 8.8l5.4 2.6"/></svg>`,
+  mirror: html`<svg class="ic" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>`,
+  stats: html`<svg class="ic" viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13V6.5"/></svg>`,
+};
+
 // ── views ─────────────────────────────────────────────────
 // Inbox (T7) and Board (T8) are real. Flow/Stats = v2b; Mirror mounts the v1 panel.
 const Soon = ({ name, note }) => html`
@@ -64,6 +73,7 @@ function Shell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [narrow, setNarrow] = useState(window.matchMedia("(max-width: 860px)").matches);
   const [ageTxt, setAgeTxt] = useState("");
+  const [inboxCount, setInboxCount] = useState(0);
   const chord = useRef(null);
 
   // hash routing
@@ -97,6 +107,8 @@ function Shell() {
         const vals = Object.values(m).filter(Boolean);
         const newest = vals.length ? Math.max(...vals) : 0;
         setAgeTxt(newest ? `${Math.max(0, Math.round(Date.now() / 1000 - newest))}s` : "");
+        const h = await api.get("/api/held");
+        setInboxCount((h.held || []).length);
       } catch (e) { /* server gone */ }
       timer = setTimeout(tick, 5000);
     };
@@ -142,7 +154,9 @@ function Shell() {
                 aria-selected=${String(!n.soon && route === n.key)}
                 title=${n.label}
                 onClick=${() => { if (!n.soon) go(n.key); }}>
+          ${ICONS[n.key]}
           <span class="lbl">${n.label}</span>
+          ${n.key === "inbox" && inboxCount ? html`<span class="count">${inboxCount}</span>` : null}
           ${n.soon ? html`<span class="phase">${n.soon}</span>` : null}
         </button>`)}
       <span class="spacer"></span>
@@ -156,8 +170,10 @@ function Shell() {
     <div id="content"><main><${View} /></main></div>
 
     <div id="keys">
+      <span class="k"><kbd>j</kbd><kbd>k</kbd> select</span>
+      <span class="k"><kbd>e</kbd> approve · <kbd>x</kbd> reject · <kbd>i</kbd> edit · <kbd>r</kbd> respond</span>
       <span class="k deskonly"><kbd>g</kbd><kbd>b</kbd> board · <kbd>g</kbd><kbd>i</kbd> inbox</span>
-      <span class="k deskonly"><kbd>[</kbd> collapse menu</span>
+      <span class="k deskonly"><kbd>[</kbd> collapse menu · <kbd>T</kbd> collapse lane</span>
     </div>
 
     <div id="toast" hidden></div>`;

@@ -7,6 +7,14 @@ import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
 const KB_SILO = { familyoffice: "fo", personal: "per", gm: "gm", dev: "dev" };
 export const siloClass = (kb) => KB_SILO[String(kb || "").toLowerCase()] || "dev";
 
+const STATION_BLURB = {
+  incoming: "Captured, not yet triaged — the pipeline sorts nightly.",
+  needs_you: "Blocked on your decision — nothing moves until you act.",
+  in_motion: "An agent is executing this right now.",
+  review: "A fresh-context review-gate is checking the work before ship.",
+  shipped: "Landed — revertible via its receipt pointer.",
+};
+
 // Station -> verb strip. Only these acts POST: approve, reject, dismiss, respond,
 // append, comment. edit toasts until Task 9; receipt/draft/revert are link/reuse.
 const VERB_SETS = {
@@ -41,22 +49,41 @@ const RESPOND_PH = {
   comment: "Comment to the reviewer — attached to the review run, shown in the gate report.",
 };
 
+const shortPath = (p) => {
+  p = String(p || "").replace(/\\/g, "/");
+  const parts = p.split("/").filter(Boolean);
+  return parts.length > 4 ? "…/" + parts.slice(-3).join("/") : p;
+};
+
+// Build the drill-down links from a record's real fields. Never treat the board
+// card's `source` (a TYPE: "backlog"/"held") as a document path — that was the
+// "KB backlog" bug. Only explicit doc fields become links.
 export function docLinks(fields) {
   const out = [];
-  if (fields.state_path) out.push({ tag: "state", label: fields.state_path, route: `#/mirror/${fields.state_path}` });
-  const src = fields.papered_source || fields.source || "";
-  if (/^https?:\/\//.test(src)) out.push({ tag: "drive", label: src, href: src });
-  else if (src) out.push({ tag: "kb", label: src, href: `obsidian://open?path=${encodeURIComponent(src)}` });
-  if (fields.draft_path) out.push({ tag: "kb", label: fields.draft_path, href: `obsidian://open?path=${encodeURIComponent(fields.draft_path)}` });
+  if (fields.state_path)
+    out.push({ tag: "state", label: shortPath(fields.state_path), route: "#/mirror" });
+  const paper = fields.papered_source || "";
+  if (/^https?:\/\//.test(paper)) out.push({ tag: "drive", label: paper, open: paper });
+  else if (paper) out.push({ tag: "drive", label: shortPath(paper), mock: `opens “${paper}” in Google Drive (dataroom)` });
+  if (fields.draft_path)
+    out.push({ tag: "kb", label: shortPath(fields.draft_path), mock: `opens ${shortPath(fields.draft_path)} in Obsidian` });
+  if (fields.backlog_path)
+    out.push({ tag: "kb", label: shortPath(fields.backlog_path), mock: `opens ${fields.backlog_path} — the repo backlog` });
   return out;
 }
 
+// Deep-linking to Obsidian/Drive needs per-vault / per-file config not present in
+// v2a, so kb/drive links surface an informative toast (as the approved mockup did);
+// the in-app state link routes to the Mirror browser, which is real.
+function refOpen(link) {
+  if (link.route) { location.hash = link.route; return; }
+  if (link.open) { window.open(link.open, "_blank", "noopener"); return; }
+  if (link.mock) toast(`→ ${link.mock}`);
+}
+
 function Ref({ link }) {
-  const open = (e) => {
-    if (link.route) { location.hash = link.route; return; }
-    if (link.href) window.open(link.href, link.href.startsWith("http") ? "_blank" : "_self");
-  };
-  return html`<a class="ref" onClick=${open} tabindex="0">
+  return html`<a class="ref" tabindex="0" onClick=${() => refOpen(link)}
+      onKeyDown=${(e) => { if (e.key === "Enter") refOpen(link); }}>
     <span class="badge ${link.tag}">${link.tag}</span>
     <span class="path">${link.label}</span><span class="go">→</span></a>`;
 }
@@ -68,7 +95,6 @@ export function Card({ item, station, onAction }) {
   const [text, setText] = useState("");
   const taRef = useRef(null);
 
-  // gate cards carry a draft_index into brief.held — fetch the staged body to read before approving
   useEffect(() => {
     let alive = true;
     setDraft(null);
@@ -98,25 +124,30 @@ export function Card({ item, station, onAction }) {
 
   const verbs = VERB_SETS[station] || VERB_SETS.needs_you;
   const links = docLinks(item);
-  const isPG = item.paper_governs || siloClass(item.kb) === "fo"
+  const isPG = item.paper_governs || item.gate_human || siloClass(item.kb) === "fo"
     || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
+  // backlog cards have no rec_reason — fall back to the station's meaning so the popup is never empty
+  const why = item.rec_reason
+    || (item.repo ? `In the ${item.repo} backlog. ${STATION_BLURB[station] || ""}` : STATION_BLURB[station] || "");
 
   return html`<article id="detail">
     <div class="head">
       <div class="chips">
         <span class="chip id">${item.id}</span>
         ${item.kb ? html`<span class="chip ${siloClass(item.kb) === "fo" ? "fo-c" : ""}">${item.kb}</span>` : null}
+        ${item.repo ? html`<span class="chip">${item.repo}</span>` : null}
         ${item.lane ? html`<span class="chip">${item.lane} hold</span>` : null}
         ${isPG ? html`<span class="chip pg">⚖ Paper-Governs</span>` : null}
+        ${item.gate_human ? html`<span class="chip pg">⛔ [GATE: human]</span>` : null}
         ${item.recommended ? html`<span class="chip">rec: ${item.recommended}</span>` : null}
       </div>
       <h1>${item.title || item.id}</h1>
-      ${item.rec_reason ? html`<p class="why">${item.rec_reason}</p>` : null}
+      ${why ? html`<p class="why">${why}</p>` : null}
     </div>
 
     ${item.draft_index != null ? html`
       <div class="sect">
-        <div class="label">Staged draft${item.draft_path ? html` · ${item.draft_path}` : ""}</div>
+        <div class="label">Staged draft${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
         <pre class="body">${draft == null ? "loading draft…" : draft}</pre>
       </div>` : null}
 

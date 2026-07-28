@@ -36,12 +36,19 @@ function laneClass(lane) {
 
 export function BoardView() {
   const [board, setBoard] = useState(null);
-  const [collapsed, setCollapsed] = useState({});   // lane key -> true
+  const [openLane, setOpenLane] = useState(null);    // exactly ONE lane open at a time
   const [modal, setModal] = useState(null);          // {item, lane} for desktop
   const [acc, setAcc] = useState(null);              // {laneKey, cardId} for narrow
   const narrow = useNarrow();
 
-  const load = () => api.get("/api/board").then(setBoard).catch(() => setBoard({ stations: [], lanes: [] }));
+  const load = () => api.get("/api/board")
+    .then((bd) => { setBoard(bd); setOpenLane((o) => o || (bd.lanes[0] && bd.lanes[0].key)); })
+    .catch(() => setBoard({ stations: [], lanes: [] }));
+
+  // repo-lane cards gain repo + backlog drill-down; silo (held) cards keep their draft/state fields
+  const augment = (item, lane) => lane.kind === "repo"
+    ? { ...item, repo: lane.name, backlog_path: lane.key === "env-ops" ? "BACKLOG.md" : `Projects/${lane.key}/BACKLOG.md` }
+    : item;
   useEffect(() => { load(); }, []);
   useEffect(() => {
     let es, timer, last = {};
@@ -66,8 +73,7 @@ export function BoardView() {
       if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
       if (e.key === "Escape") setModal(null);
       else if ((e.key === "T" || e.key === "t") && board && board.lanes[0]) {
-        const k = board.lanes[0].key;
-        setCollapsed((c) => ({ ...c, [k]: !c[k] }));
+        setOpenLane((o) => (o ? null : board.lanes[0].key));
       }
     };
     document.addEventListener("keydown", onKey);
@@ -108,17 +114,17 @@ export function BoardView() {
         <span class="bid">${item.id}${item.gate_human ? html` <span class="warn">⚖</span>` : ""}</span>
         ${item.title}
       </div>
-      ${open ? html`<${Card} item=${item} station=${item.station} onAction=${(a, p) => act(item, a, p)} />` : null}`;
+      ${open ? html`<${Card} item=${augment(item, lane)} station=${item.station} onAction=${(a, p) => act(item, a, p)} />` : null}`;
   };
 
   const Lane = ({ lane, sub }) => {
     const b = laneClass(lane);
-    const isCol = collapsed[lane.key];
+    const isCol = openLane !== lane.key;   // exclusive: only the open lane expands
     const total = stations.reduce((n, s) => n + (lane.cells[s] || []).length, 0);
     const needs = (lane.cells.needs_you || []).length;
     return html`<div class="lane ${sub ? "sub" : ""} ${isCol ? "collapsed" : ""}" data-lane=${lane.key}>
       <button class="lane-head" aria-expanded=${String(!isCol)}
-              onClick=${() => setCollapsed((c) => ({ ...c, [lane.key]: !c[lane.key] }))}>
+              onClick=${() => setOpenLane(openLane === lane.key ? null : lane.key)}>
         <span class="caret">▾</span><span class="silo ${sub ? "dev" : siloClass(lane.key)}"></span>
         <span class="name">${lane.name}</span>
         <span class="st-badge ${b.warn ? "warn-b" : ""}">${b.text}</span>
@@ -166,7 +172,7 @@ export function BoardView() {
             </div>
             <button id="modal-close" aria-label="Close" onClick=${() => setModal(null)}>✕</button>
           </div>
-          <${Card} item=${modal.item} station=${modal.item.station} onAction=${(a, p) => act(modal.item, a, p)} />
+          <${Card} item=${augment(modal.item, modal.lane)} station=${modal.item.station} onAction=${(a, p) => act(modal.item, a, p)} />
         </article>
       </div>` : null}
   </section>`;
