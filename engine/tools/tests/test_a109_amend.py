@@ -6,6 +6,7 @@ EXACT ship() path (revert pointer, receipt, Paper-Governs). Requires --human-app
 IS the human approval); a Paper-Governs / review-lane item is still held unless it's present.
 """
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -19,8 +20,12 @@ TOOLS = Path(__file__).resolve().parents[1]
 
 
 def _run(argv, stdin):
+    # Exercise the PRODUCTION condition — the dashboard subprocess does not set PYTHONUTF8, so
+    # amend must UTF-8-decode stdin explicitly (regression guard: without the fix, non-ASCII edits
+    # mojibake via cp1252 on Windows and the byte-identical test below fails).
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
     return subprocess.run([sys.executable, str(TOOLS / "ship.py"), *argv],
-                          input=stdin, capture_output=True, text=True, encoding="utf-8")
+                          input=stdin, capture_output=True, text=True, encoding="utf-8", env=env)
 
 
 @pytest.fixture()

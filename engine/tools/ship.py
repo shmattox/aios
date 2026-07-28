@@ -353,7 +353,11 @@ def amend(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_ap
     if item.get("stage") != "awaiting":
         _die(f"id {cid!r} is at stage {item.get('stage')!r} — only 'awaiting' items amend")
     facts = _resolve_facts(item, vault_root, kb_map)
-    body = sys.stdin.read()
+    # Read the body as raw bytes and decode UTF-8 explicitly — sys.stdin.read() would use the
+    # process default codec (cp1252 on native Windows; utf8_stdio only fixes stdout/stderr), which
+    # silently mojibakes any non-ASCII edit into the canonical vault. .buffer also preserves the
+    # exact bytes (no universal-newline folding).
+    body = sys.stdin.buffer.read().decode("utf-8")
     # (1) content-integrity refusal on the NEW body — hold (no write, no ship) on a marker hit.
     refusal = _content_refusal(body, facts["is_journal"])
     if refusal and not content_ack:
