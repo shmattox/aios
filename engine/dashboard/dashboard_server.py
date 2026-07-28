@@ -193,6 +193,13 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self):
+        # Local dev dashboard: never let the browser cache assets across a version bump. A cached
+        # old app.js against a new index.html renders blank (the v0.10.1 stale-cache confusion);
+        # no-store makes every reload fetch fresh. Applied to static + API + SSE alike.
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        super().end_headers()
+
     # --- routing ------------------------------------------------------
     def do_GET(self):
         if not self._host_ok():

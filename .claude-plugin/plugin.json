@@ -1,7 +1,7 @@
 {
   "name": "aios",
-  "version": "0.10.1",
-  "description": "AIOS — a fact-free, review-gated knowledge pipeline (capture → sort → ingest → gate → garden) plus a chat-native daily brief, running over your own markdown vault. The engine ships here; your facts stay in your env root.",
+  "version": "0.10.2",
+  "description": "AIOS \u2014 a fact-free, review-gated knowledge pipeline (capture \u2192 sort \u2192 ingest \u2192 gate \u2192 garden) plus a chat-native daily brief, running over your own markdown vault. The engine ships here; your facts stay in your env root.",
   "author": {
     "name": "Seth Mattox",
     "url": "https://github.com/shmattox"
