@@ -1,7 +1,8 @@
 // A109 v2a shell: rail + mobile drawer, hash router, keyboard map, live age badge.
-// Views: Inbox (Task 7) and Board (Task 8) arrive as ./views/*; until then they are
-// stubs here. Mirror mounts the working v1 panel so nothing regresses. Flow/Stats = v2b.
+// Inbox is real (Task 7); Board arrives in Task 8. Mirror mounts the working v1
+// panel so nothing regresses. Flow/Stats = v2b.
 import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
+import { InboxView } from "/views/inbox.js";
 
 // v1-panel compat: the existing panels/*.js take (mountEl, aios) and may read window.aios.
 const aiosCompat = {
@@ -21,15 +22,7 @@ const Logo = () => html`
   </svg>`;
 
 // ── views ─────────────────────────────────────────────────
-// Stubs for Task 6 — Task 7 (Inbox) and Task 8 (Board) replace these with real
-// components imported from ./views/. Kept minimal so the shell is testable now.
-const InboxStub = () => html`
-  <section class="view">
-    <div class="viewhead"><h1>Needs you</h1><span class="sub">Inbox</span></div>
-    <p class="stub">The Inbox (one card component, cockpit strip, station verbs, reply box) lands in Task 7.
-      The shell, router, live hook, and vendored Preact are wired and rendering.</p>
-  </section>`;
-
+// Inbox is real (Task 7); Board arrives in Task 8. Flow/Stats = v2b; Mirror mounts v1.
 const BoardStub = () => html`
   <section class="view">
     <div class="viewhead"><h1>Board</h1><span class="sub">auto-discovered lanes</span></div>
@@ -56,7 +49,7 @@ function MirrorView() {
 }
 
 const NAV = [
-  { key: "inbox", label: "Inbox", view: InboxStub },
+  { key: "inbox", label: "Inbox", view: InboxView },
   { key: "board", label: "Board", view: BoardStub },
   { key: "flow", label: "Flow", soon: "v2b", view: () => html`<${Soon} name="Flow" note="Live pipeline DAG — v2b." />` },
   { key: "mirror", label: "Mirror", view: MirrorView },
@@ -134,7 +127,7 @@ function Shell() {
   }, []);
 
   const go = (n) => { location.hash = `#/${n}`; };
-  const View = VIEW[route] || InboxStub;
+  const View = VIEW[route] || InboxView;
 
   return html`
     <header id="topbar">
