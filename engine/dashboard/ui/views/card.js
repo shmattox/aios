@@ -94,6 +94,32 @@ function InlineLink({ link }) {
       onKeyDown=${(e) => { if (e.key === "Enter") refOpen(link); }}>${link.label}<sup class="srctag ${link.tag}">${link.tag}</sup></a>`;
 }
 
+// Weave the doc links INTO the why prose (the mockup's approach) — wrap the first phrase
+// that references each source, so the subtext itself is hyperlinked, not a separate list.
+const WHY_KEYWORDS = {
+  drive: /\b(?:the )?(loan modification|signed (?:loan )?\w+|executed \w+|the document|the pdf|the agreement|the statement|papered source|source document)\b/i,
+  kb: /\b(current entity page|entity page|wiki page|knowledge base|the wiki|the page)\b/i,
+  state: /\b(state record|the mirror|the record|state mirror)\b/i,
+};
+
+function weaveWhy(text, links) {
+  let segs = [text];
+  for (const link of links) {
+    const rx = WHY_KEYWORDS[link.tag];
+    if (!rx) continue;
+    for (let i = 0; i < segs.length; i++) {
+      if (typeof segs[i] !== "string") continue;
+      const m = segs[i].match(rx);
+      if (!m) continue;
+      const before = segs[i].slice(0, m.index);
+      const after = segs[i].slice(m.index + m[0].length);
+      segs.splice(i, 1, before, html`<${InlineLink} link=${{ ...link, label: m[0] }} key=${link.tag} />`, after);
+      break;
+    }
+  }
+  return segs.filter((s) => s !== "");
+}
+
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
   const [draft, setDraft] = useState(null);
@@ -148,9 +174,7 @@ export function Card({ item, station, onAction }) {
         ${item.recommended ? html`<span class="chip">rec: ${item.recommended}</span>` : null}
       </div>
       <h1>${item.title || item.id}</h1>
-      ${why ? html`<p class="why">${why}</p>` : null}
-      ${links.length ? html`<p class="why srcline">Sources: ${links.map((l, i) =>
-        html`${i ? " · " : ""}<${InlineLink} link=${l} key=${l.tag + l.label} />`)}</p>` : null}
+      ${why ? html`<p class="why">${weaveWhy(why, links)}</p>` : null}
     </div>
 
     ${item.draft_index != null ? html`
