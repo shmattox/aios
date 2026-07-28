@@ -88,6 +88,12 @@ function Ref({ link }) {
     <span class="path">${link.label}</span><span class="go">→</span></a>`;
 }
 
+// inline, source-tagged doclink woven into the prose (mockup's "…signed.pdf ᴰᴿᴵⱽᴱ" style)
+function InlineLink({ link }) {
+  return html`<a class="doclink" tabindex="0" onClick=${() => refOpen(link)}
+      onKeyDown=${(e) => { if (e.key === "Enter") refOpen(link); }}>${link.label}<sup class="srctag ${link.tag}">${link.tag}</sup></a>`;
+}
+
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
   const [draft, setDraft] = useState(null);
@@ -143,6 +149,8 @@ export function Card({ item, station, onAction }) {
       </div>
       <h1>${item.title || item.id}</h1>
       ${why ? html`<p class="why">${why}</p>` : null}
+      ${links.length ? html`<p class="why srcline">Sources: ${links.map((l, i) =>
+        html`${i ? " · " : ""}<${InlineLink} link=${l} key=${l.tag + l.label} />`)}</p>` : null}
     </div>
 
     ${item.draft_index != null ? html`

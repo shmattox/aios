@@ -298,10 +298,18 @@ class Handler(SimpleHTTPRequestHandler):
             cells = {s: [] for s in self.STATIONS}
             for i, row in enumerate(held):
                 if str(row.get("kb", "")).lower().startswith(key[:2] if key == "gm" else key):
-                    cells["needs_you"].append({
+                    # carry the full row's doc fields so a held card's board modal is as rich
+                    # as the inbox (drill-down + inline source links), not a stripped stub
+                    card = {
                         "id": row.get("id", f"held-{i}"), "title": row.get("title", ""),
                         "station": "needs_you", "source": "held",
-                        "gate_human": True, "draft_index": i})
+                        "gate_human": True, "draft_index": i,
+                        "kb": row.get("kb"), "lane": row.get("lane"),
+                        "recommended": row.get("recommended"), "rec_reason": row.get("rec_reason"),
+                        "papered_source": row.get("papered_source"), "state_path": row.get("state_path"),
+                        "draft_path": row.get("draft_path"), "conflict_key": row.get("conflict_key"),
+                    }
+                    cells["needs_you"].append({k: v for k, v in card.items() if v is not None})
             lanes.append({"kind": "silo", "key": key, "name": name,
                           "badge": "active", "cells": cells})
         for key, path in self._board_sources(env):
