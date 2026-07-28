@@ -346,6 +346,20 @@ class Handler(SimpleHTTPRequestHandler):
                         "draft_path": row.get("draft_path"), "conflict_key": row.get("conflict_key"),
                     }
                     cells["needs_you"].append({k: v for k, v in card.items() if v is not None})
+            # the real needs-you tasks (brief.act) belong on the board too, in their silo's
+            # needs_you cell — carry the two-layer voice so a click opens the same rich card the
+            # Inbox shows (not just gate holds). Mapped by domain, same rule as held's kb match.
+            for a in (brief.get("act") or []):
+                dom = str(a.get("domain") or a.get("kb") or "").lower()
+                if dom.startswith(key[:2] if key == "gm" else key):
+                    acard = {
+                        "id": a.get("id") or a.get("item_id") or (a.get("title") or "")[:24],
+                        "title": a.get("title", ""), "station": "needs_you",
+                        "source": "act", "_kind": "act", "domain": a.get("domain"),
+                        "urgency": a.get("urgency"), "item_id": a.get("item_id"),
+                        "system_voice": a.get("system_voice"), "claude_voice": a.get("claude_voice"),
+                    }
+                    cells["needs_you"].append({k: v for k, v in acard.items() if v is not None})
             lanes.append({"kind": "silo", "key": key, "name": name,
                           "badge": "active", "cells": cells})
         for key, path in self._board_sources(env):

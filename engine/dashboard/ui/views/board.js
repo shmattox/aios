@@ -85,8 +85,9 @@ export function BoardView() {
       if (a === "approve") { await api.post("gate_ship", { id: item.id }); load(); setModal(null); }
       else if (a === "reject") { const r = window.prompt("Reject reason:"); if (!r) return; await api.post("gate_reject", { id: item.id, reason: r }); load(); setModal(null); }
       else if (a === "dismiss") { const r = window.prompt("Dismiss reason:") || "below the worthiness bar"; await api.post("dismiss", { id: item.id, reason: r }); load(); setModal(null); }
+      else if (a === "done") { await api.post("walk_decision", { item_id: item.item_id || item.id, station: "act", choice: "done", action: "closed from dashboard" }); load(); setModal(null); }
       else if (a === "gate_edit") { await api.post("gate_edit", { id: item.id, content: params.content }); load(); setModal(null); }
-      else if (REPLY[a]) await api.post("reply", { target_id: item.id, reply_kind: a, text: params.text });
+      else if (REPLY[a]) await api.post("reply", { target_id: item.item_id || item.id, reply_kind: a, text: params.text });
       else toast(`${a} — arrives in a later phase`);
     } catch (e) { /* api.post toasted */ }
   }
