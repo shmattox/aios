@@ -149,6 +149,19 @@ function linkifyCite(cite) {
   return out;
 }
 
+// The mockup's "Drill down" box — the same boxed STATE/DRIVE/KB refs the gate card gets from
+// docLinks, built here from an act item's real citations (thread, state/ paths, Notion, urls).
+function citeRefs(item) {
+  const out = [], seen = new Set();
+  const add = (l) => { const k = l.tag + l.label; if (l.label && !seen.has(k)) { seen.add(k); out.push(l); } };
+  if (item.thread_id) add({ tag: "state", label: `thread · ${item.thread_id}`, route: "#/mirror", mock: `opens the ${item.thread_id} action thread` });
+  const cite = voiceCite(item.system_voice) || "";
+  for (const m of cite.matchAll(/state\/[^\s;,)]+/g)) add({ tag: "state", label: m[0], route: "#/mirror", mock: `opens ${m[0]} in the Mirror` });
+  for (const m of cite.matchAll(/collection:\/\/[A-Za-z0-9-]{8,}/g)) add({ tag: "notion", label: m[0], mock: `opens ${m[0]} in Notion` });
+  for (const m of cite.matchAll(/https?:\/\/[^\s;,)]+/g)) add({ tag: "drive", label: m[0], open: m[0] });
+  return out;
+}
+
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
   const isAct = item._kind === "act";
@@ -197,6 +210,7 @@ export function Card({ item, station, onAction }) {
   const grade = item.system_voice && typeof item.system_voice === "object" ? item.system_voice.grade : "";
   const nextAction = item.in_motion && item.in_motion.next_action;
   const court = item.in_motion && item.in_motion.court;
+  const actRefs = isAct ? citeRefs(item) : [];
   const isPG = item.paper_governs || item.gate_human || siloClass(item.kb) === "fo"
     || flags.length || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
   // backlog cards have no rec_reason — fall back to the station's meaning so the popup is never empty
@@ -238,6 +252,11 @@ export function Card({ item, station, onAction }) {
         <div class="sect">
           <div class="label">In motion${court ? ` · ${court === "you" ? "your court" : "others’ court"}` : ""}</div>
           <p class="why">${nextAction}</p>
+        </div>` : null}
+      ${actRefs.length ? html`
+        <div class="sect">
+          <div class="label">Drill down</div>
+          <div class="refs">${actRefs.map((l) => html`<${Ref} link=${l} key=${l.tag + l.label} />`)}</div>
         </div>` : null}
     ` : null}
 
