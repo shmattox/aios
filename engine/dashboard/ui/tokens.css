@@ -271,8 +271,8 @@ body.narrow #detail {
 }
 @media (min-width: 861px) { .diff { overflow-x: auto; } }
 @media (max-width: 860px) { .diff { white-space: pre-wrap; overflow-wrap: anywhere; } }
-.diff .del { color: var(--err); }
-.diff .add { color: var(--ok); }
+.diff .del { color: var(--err); background: rgba(229, 83, 75, 0.10); }
+.diff .add { color: var(--ok); background: rgba(76, 195, 138, 0.10); }
 .diff .ctx { color: var(--text-2); }
 .diff a.doclink { font-family: var(--mono); }
 .paper {

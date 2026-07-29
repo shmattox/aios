@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 
 from state_validate import _extract_frontmatter, _parse_yaml  # engine YAML-subset reader; no PyYAML in repo
 from backlog_parse import parse_backlog, station_for  # engine tools shim already on sys.path
+import draft_diff  # "Proposed change" diff (A109)
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -304,8 +305,37 @@ class Handler(SimpleHTTPRequestHandler):
         p = Path(held[idx].get("draft_path", ""))
         if not p.is_file():
             return self._deny(404, "draft file missing on disk")
-        return self._send_json({"path": str(p),
-                                "markdown": p.read_text(encoding="utf-8")})
+        draft_text = p.read_text(encoding="utf-8")
+        out = {"path": str(p), "markdown": draft_text}
+        # "Proposed change": diff the draft against the current canonical page it would replace
+        target = self._target_path(held[idx])
+        if target is not None:
+            cur = target.read_text(encoding="utf-8") if target.is_file() else ""
+            out["target"] = str(target)
+            out["target_exists"] = target.is_file()
+            out["diff"] = draft_diff.compute_diff(cur, draft_text)
+        return self._send_json(out)
+
+    def _target_path(self, item):
+        """The canonical page an item's draft would replace (from its conflict_key + kb-map)."""
+        env = self.server.env_root
+        ck = item.get("conflict_key") or ""
+        kb, _, rel = ck.partition("/")
+        if not rel:
+            return None
+        try:
+            vault, kb_map = _connectors(env)
+        except OSError:
+            return None
+        if kb not in kb_map:
+            return None
+        rel_md = rel if rel.endswith(".md") else rel + ".md"
+        target = (vault / kb_map[kb] / rel_md.replace("/", os.sep)).resolve()
+        vault_r = vault.resolve()
+        # defense-in-depth: never read outside the vault even if a conflict_key held `..`
+        if target != vault_r and vault_r not in target.parents:
+            return None
+        return target
 
     STATIONS = ["incoming", "needs_you", "in_motion", "review", "shipped"]
     SILOS = [("familyoffice", "FamilyOffice"), ("personal", "Personal"), ("gm", "General Mgmt")]

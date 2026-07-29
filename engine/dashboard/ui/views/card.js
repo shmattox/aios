@@ -178,8 +178,8 @@ export function Card({ item, station, onAction }) {
     setEditing(false);   // never carry edit mode across a card switch
     if (item.draft_index != null) {
       api.get(`/api/draft?i=${item.draft_index}`)
-        .then((d) => { if (alive) setDraft(d.markdown); })
-        .catch(() => { if (alive) setDraft("(draft file missing on disk — cannot approve blind)"); });
+        .then((d) => { if (alive) setDraft(d); })
+        .catch(() => { if (alive) setDraft({ markdown: "(draft file missing on disk — cannot approve blind)" }); });
     }
     return () => { alive = false; };
   }, [item.id, item.draft_index]);
@@ -187,7 +187,7 @@ export function Card({ item, station, onAction }) {
   useEffect(() => { if (respondKind && taRef.current) taRef.current.focus(); }, [respondKind]);
 
   const clickVerb = (act) => {
-    if (act === "edit") { setEditText(draft != null ? draft : ""); setEditing(true); return; }
+    if (act === "edit") { setEditText(draft && draft.markdown != null ? draft.markdown : ""); setEditing(true); return; }
     if (REPLY_KIND[act]) { setRespondKind(respondKind === act ? null : act); return; }
     onAction(act, {});
   };
@@ -260,10 +260,15 @@ export function Card({ item, station, onAction }) {
 
     ${item.draft_index != null ? html`
       <div class="sect">
-        <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
-        ${editing
-          ? html`<textarea class="editarea" value=${editText} onInput=${(e) => setEditText(e.target.value)}></textarea>`
-          : html`<pre class="body">${draft == null ? "loading draft…" : draft}</pre>`}
+        ${(draft && draft.diff && draft.diff.length && !editing) ? html`
+          <div class="label">Proposed change${draft.target ? html` · ${shortPath(draft.target)}` : ""}</div>
+          <div class="diff">${draft.diff.map((r, i) => html`<div class="${r.op}" key=${i}>${r.text}</div>`)}</div>
+        ` : html`
+          <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
+          ${editing
+            ? html`<textarea class="editarea" value=${editText} onInput=${(e) => setEditText(e.target.value)}></textarea>`
+            : html`<pre class="body">${draft == null ? "loading draft…" : (draft.markdown != null ? draft.markdown : "")}</pre>`}
+        `}
       </div>` : null}
 
     ${drillRefs.length ? html`
