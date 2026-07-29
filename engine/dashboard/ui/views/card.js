@@ -94,30 +94,36 @@ function InlineLink({ link }) {
       onKeyDown=${(e) => { if (e.key === "Enter") refOpen(link); }}>${link.label}<sup class="srctag ${link.tag}">${link.tag}</sup></a>`;
 }
 
-// Weave the doc links INTO the why prose (the mockup's approach) — wrap the first phrase
-// that references each source, so the subtext itself is hyperlinked, not a separate list.
-const WHY_KEYWORDS = {
-  drive: /\b(?:the )?(loan modification|signed (?:loan )?\w+|executed \w+|the document|the pdf|the agreement|the statement|papered source|source document)\b/i,
-  kb: /\b(current entity page|entity page|wiki page|knowledge base|the wiki|the page)\b/i,
-  state: /\b(state record|the mirror|the record|state mirror)\b/i,
-};
-
-function weaveWhy(text, links) {
-  let segs = [text];
-  for (const link of links) {
-    const rx = WHY_KEYWORDS[link.tag];
-    if (!rx) continue;
-    for (let i = 0; i < segs.length; i++) {
-      if (typeof segs[i] !== "string") continue;
-      const m = segs[i].match(rx);
-      if (!m) continue;
-      const before = segs[i].slice(0, m.index);
-      const after = segs[i].slice(m.index + m[0].length);
-      segs.splice(i, 1, before, html`<${InlineLink} link=${{ ...link, label: m[0] }} key=${link.tag} />`, after);
-      break;
-    }
+// THE one prose renderer. The model that authors the voice prose (held `why` + act
+// system/claude/urgency/in-motion) emits inline links in the form  [phrase](tag:target)  —
+// tag ∈ state|drive|kb|notion, the canonical-roles homes. The PHRASE is the visible link text
+// (source-tagged sup); the target/id lives in the link and is NEVER shown — exactly the mockup's
+// `<a class="doclink" data-path=…>current entity page<sup class="srctag kb">kb</sup></a>`.
+// Non-link text passes through untouched. No keyword-guessing, no token-matching: the author marks
+// the links because only it knows the referents (env principle — model populates, engine renders).
+// target allows one level of balanced parens so real filenames survive — e.g.
+// drive:Family Office/raw/Bayview Loan Modification (executed).pdf — the classic
+// markdown-link-with-parens case. (Mutually-exclusive branches → no ReDoS.)
+const PROSE_LINK = /\[([^\]]+)\]\((state|drive|kb|notion):((?:[^()]|\([^()]*\))+)\)/g;
+function linkForTarget(tag, target) {
+  target = String(target).trim();
+  if (tag === "state") return { tag, route: "#/mirror", mock: `opens ${target} in the Mirror` };
+  if (tag === "kb") return { tag, mock: `opens ${target} in Obsidian` };
+  if (tag === "notion") return { tag, mock: `opens ${target} in Notion` };
+  return /^https?:\/\//i.test(target) ? { tag, open: target } : { tag, mock: `opens “${target}” in Google Drive` };
+}
+function weaveLinks(text) {
+  if (text == null || text === "") return null;
+  text = String(text);
+  const out = []; let last = 0, m;
+  PROSE_LINK.lastIndex = 0;
+  while ((m = PROSE_LINK.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(html`<${InlineLink} link=${{ ...linkForTarget(m[2], m[3]), label: m[1] }} key=${m.index} />`);
+    last = m.index + m[0].length;
   }
-  return segs.filter((s) => s !== "");
+  if (last < text.length) out.push(text.slice(last));
+  return out.length === 1 && typeof out[0] === "string" ? out[0] : out;
 }
 
 // act (needs-you task) verbs — distinct from the gate verbs; wired to walk_decision / reply
@@ -127,28 +133,6 @@ const ACT_VERBS = [
 ];
 const voiceText = (v) => (v == null ? "" : (typeof v === "string" ? v : (v.text || "")));
 const voiceCite = (v) => (v && typeof v === "object" ? (v.cite || "") : "");
-
-// Weave source refs INTO a prose string in place — the mockup's `.why` approach. The state/ paths,
-// Notion collection/task ids, and urls the system voice ALREADY names in its sentence BECOME the
-// hyperlinks (source-tagged, inline), instead of a separate list dumped below the text. This is the
-// same inline+drill-down anatomy the held card uses (weaveWhy) — not a second convention.
-function linkifyProse(text) {
-  if (!text) return null;
-  const rx = /(state\/[^\s;,)]+|collection:\/\/[A-Za-z0-9-]{8,}|https?:\/\/[^\s;,)]+|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}(?:-[0-9a-f]{4}-[0-9a-f]{12})?\b)/gi;
-  const out = []; let last = 0, m;
-  while ((m = rx.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const tok = m[0];
-    const link = tok.startsWith("state/") ? { tag: "state", route: "#/mirror", mock: `opens ${tok} in the Mirror` }
-      : tok.startsWith("collection://") ? { tag: "notion", mock: `opens ${tok} in Notion` }
-        : /^https?:/i.test(tok) ? { tag: "drive", open: tok }
-          : { tag: "notion", mock: `opens Notion record ${tok}` };  // bare id
-    out.push(html`<${InlineLink} link=${{ ...link, label: tok }} key=${m.index} />`);
-    last = m.index + tok.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
 
 // The mockup's "Drill down" box — the same boxed STATE/DRIVE/KB refs the gate card gets from
 // docLinks, built here from an act item's real citations (thread, state/ paths, Notion, urls).
@@ -235,17 +219,17 @@ export function Card({ item, station, onAction }) {
         ${item.recommended ? html`<span class="chip">rec: ${item.recommended}</span>` : null}
       </div>
       <h1>${item.title || item.id}</h1>
-      ${!isAct && why ? html`<p class="why">${weaveWhy(why, links)}</p>` : null}
+      ${!isAct && why ? html`<p class="why">${weaveLinks(why)}</p>` : null}
     </div>
 
     ${isAct ? html`
-      ${item.urgency ? html`<div class="sect"><div class="label">Why now</div><p class="why">${linkifyProse(item.urgency)}</p></div>` : null}
+      ${item.urgency ? html`<div class="sect"><div class="label">Why now</div><p class="why">${weaveLinks(item.urgency)}</p></div>` : null}
       <div class="sect">
         <div class="label">Recommendation</div>
         ${sysText
-          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${linkifyProse(sysText)}</div>`
+          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${weaveLinks(sysText)}</div>`
           : html`<div class="voice silent">— your system is silent —</div>`}
-        ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${linkifyProse(claudeText)}</div>` : null}
+        ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${weaveLinks(claudeText)}</div>` : null}
       </div>
       ${flags.length ? html`
         <div class="sect">
@@ -255,7 +239,7 @@ export function Card({ item, station, onAction }) {
       ${nextAction ? html`
         <div class="sect">
           <div class="label">In motion${court ? ` · ${court === "you" ? "your court" : "others’ court"}` : ""}</div>
-          <p class="why">${linkifyProse(nextAction)}</p>
+          <p class="why">${weaveLinks(nextAction)}</p>
         </div>` : null}
     ` : null}
 

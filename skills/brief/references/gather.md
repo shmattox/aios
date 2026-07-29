@@ -153,6 +153,22 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    `claude_voice.text`, and a valid `system_voice` (`{grade, text, cite}`; cite required for grades
    1/2a) or `system_voice: null` for Grade 0. The JSON also carries an optional `domain_display`
    map (kb → display-name, from the profile's domain groups), which `brief_render.py` consumes.
+   **Inline source links in the prose (A109 — "every reference is a link").** When you author the
+   voice prose (`system_voice.text`, `claude_voice.text`, and the `urgency` line), write EVERY
+   reference to a source document or a prior decision as an inline link, in the form
+   `[descriptive phrase](tag:target)` — `tag ∈ state|drive|kb|notion` (the canonical-roles homes),
+   `target` the record's path/id (a `state/…` path, a Drive path, a `<kb-folder>/…` vault path, or a
+   `collection://…`/task id). **The bracketed PHRASE is the reader-facing words** (e.g.
+   `[the current entity page](kb:02_FamilyOffice/wiki/entities/bayview-holdings.md)`,
+   `[the signed 2021 note](drive:Family Office/raw/…pdf)`,
+   `[the action thread](state:state/threads/jenkins-house-decision.md)`) — **never surface a raw id
+   or path as the visible text; it lives in the target.** The card renders each as a source-tagged
+   `doclink` inline (engine `weaveLinks`), so the prose reads naturally with its references hot,
+   exactly the mockup. Only link a reference whose target you actually know from the sources you read
+   — do NOT invent a path. This is the same fact you already put in `system_voice.cite`/`refs`, now
+   also woven into the sentence where the phrase appears (the Drill-down box still lists them). The
+   engine renders links deterministically; plain text passes through untouched, so an un-linked prose
+   string is valid (it just has no hot references).
    **`act` MUST be present** — it is the Act list, the first thing the brief shows. Write the key on
    every gather: an ABSENT `act` fails `validate_cache` (it can only mean a stale writer still
    emitting the old `needs_you` name), while `act: []` is a valid quiet day.
