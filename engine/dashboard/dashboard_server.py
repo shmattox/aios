@@ -314,6 +314,12 @@ class Handler(SimpleHTTPRequestHandler):
             out["target"] = str(target)
             out["target_exists"] = target.is_file()
             out["diff"] = draft_diff.compute_diff(cur, draft_text)
+        # A75 Paper-Governs evidence (advisory) — surface the packet the pipeline already attaches
+        # to the queue item (paper_evidence.py attach); render-only, never recomputed here.
+        queue_data = _read_json_file(self.server.env_root / WATCHED["queue"]) or {}
+        qitem = next((it for it in (queue_data.get("queue") or []) if it.get("id") == held[idx].get("id")), None)
+        if qitem and isinstance(qitem.get("paper_evidence"), dict):
+            out["paper_evidence"] = qitem["paper_evidence"]
         return self._send_json(out)
 
     def _target_path(self, item):

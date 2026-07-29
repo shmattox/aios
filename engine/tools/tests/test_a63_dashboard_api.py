@@ -80,6 +80,25 @@ def test_held_and_draft(server):
     assert d["markdown"] == "# Draft body"
 
 
+def test_draft_surfaces_paper_evidence(server, env_root):
+    # A75 Paper-Governs — the pipeline attaches a paper_evidence packet to the
+    # queue item; /api/draft surfaces it (render-only) so the card can show it.
+    (env_root / "state" / "queue.json").write_text(json.dumps({"queue": [
+        {"id": "q1", "stage": "awaiting", "paper_evidence": {
+            "verdict": "matches", "quote": "rate of 6.875%",
+            "doc": "Loan Mod.pdf", "section": "2.1",
+            "checked_utc": "2026-07-29T04:10:00Z"}}]}), encoding="utf-8")
+    d = _get_json(server, "/api/draft?i=0")
+    assert d["paper_evidence"]["verdict"] == "matches"
+    assert d["paper_evidence"]["doc"] == "Loan Mod.pdf"
+
+
+def test_draft_no_paper_evidence_key_when_absent(server):
+    # queue item has no packet (fixture queue is empty) → key simply omitted.
+    d = _get_json(server, "/api/draft?i=0")
+    assert "paper_evidence" not in d
+
+
 def test_draft_bad_index_404(server):
     port = server.server_address[1]
     with pytest.raises(urllib.error.HTTPError) as e:

@@ -271,6 +271,16 @@ export function Card({ item, station, onAction }) {
         `}
       </div>` : null}
 
+    ${(draft && draft.paper_evidence) ? html`
+      <div class="sect">
+        <div class="label">Paper evidence · advisory</div>
+        <div class="paper ${draft.paper_evidence.verdict}">
+          <span class="verdict ${draft.paper_evidence.verdict}">${draft.paper_evidence.verdict === "matches" ? "✓ MATCHES" : draft.paper_evidence.verdict === "conflicts" ? "✗ CONFLICTS" : "— no paper found —"}</span>
+          ${draft.paper_evidence.quote ? html`<blockquote>“${draft.paper_evidence.quote}”</blockquote>` : null}
+          ${draft.paper_evidence.doc ? html`<span class="src">${draft.paper_evidence.doc}${draft.paper_evidence.section ? ` · §${draft.paper_evidence.section}` : ""}${draft.paper_evidence.checked_utc ? ` · checked ${String(draft.paper_evidence.checked_utc).slice(0, 10)}` : ""}</span>` : null}
+        </div>
+      </div>` : null}
+
     ${drillRefs.length ? html`
       <div class="sect">
         <div class="label">Drill down</div>

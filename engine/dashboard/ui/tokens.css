@@ -283,6 +283,10 @@ body.narrow #detail {
 .paper .verdict { color: var(--ok); font-weight: 600; font-size: var(--fs-sm); white-space: nowrap; }
 .paper blockquote { color: var(--text-1); font-size: var(--fs-sm); font-style: italic; }
 .paper .src { grid-column: 2; color: var(--text-2); font-size: var(--fs-xs); }
+.paper.conflicts { background: rgba(229, 83, 75, 0.06); border-color: rgba(229, 83, 75, 0.25); }
+.paper.conflicts .verdict { color: var(--err); }
+.paper.no-paper-found { background: var(--bg-0); border-color: var(--border); }
+.paper.no-paper-found .verdict { color: var(--text-2); }
 @media (max-width: 480px) {
   .paper { grid-template-columns: 1fr; }
   .paper .src { grid-column: 1; }
