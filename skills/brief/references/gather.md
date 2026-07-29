@@ -203,6 +203,16 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    `OI-N`) and you recognize it corresponds to an open action thread, set that item's `thread_id` to the
    thread's id so `annotate` can honor it — the deterministic OI-id/conflict_key join cannot see a link
    the ids don't share.
+   **`refs` (structured drill-down — A109 refs-at-source):** after `in_motion` is populated and BEFORE
+   `validate_cache`, run
+   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_refs.py" annotate "<env_root>/state/brief-cache.json"`.
+   It folds each item's references into ONE structured `refs: [{tag, label, route?|open?|mock?}]` list —
+   held items from their canonical-roles fields (`state_path`/`papered_source`/`draft_path`), act items
+   from `thread_id`/`in_motion.thread_id` + the `system_voice.cite` string (state/ paths → the Mirror,
+   `collection://` → Notion, urls → drive) — so the dashboard card renders ONE uniform "Drill down" box
+   (the same STATE/DRIVE/KB/NOTION link component for every card, gate + act alike). Model authors the
+   prose + cite; the engine emits the structured links; the UI never parses citation strings. Zero-LLM,
+   idempotent (rebuilt from source each run).
 2. `<env_root>/state/brief-cache.md` — the full segmented brief, **GENERATED from the JSON** via
    `brief_render.py station <json> <station>` per station, concatenated under the masthead + walk
    tracker. Never compose the cards by hand.

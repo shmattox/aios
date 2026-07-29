@@ -210,7 +210,10 @@ export function Card({ item, station, onAction }) {
   const grade = item.system_voice && typeof item.system_voice === "object" ? item.system_voice.grade : "";
   const nextAction = item.in_motion && item.in_motion.next_action;
   const court = item.in_motion && item.in_motion.court;
-  const actRefs = isAct ? citeRefs(item) : [];
+  // drill-down: prefer the engine-emitted structured refs (brief_refs, one uniform source);
+  // fall back to client parsing only for a cache written before the annotator ran.
+  const drillRefs = (Array.isArray(item.refs) && item.refs.length)
+    ? item.refs : (isAct ? citeRefs(item) : links);
   const isPG = item.paper_governs || item.gate_human || siloClass(item.kb) === "fo"
     || flags.length || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
   // backlog cards have no rec_reason — fall back to the station's meaning so the popup is never empty
@@ -253,11 +256,6 @@ export function Card({ item, station, onAction }) {
           <div class="label">In motion${court ? ` · ${court === "you" ? "your court" : "others’ court"}` : ""}</div>
           <p class="why">${nextAction}</p>
         </div>` : null}
-      ${actRefs.length ? html`
-        <div class="sect">
-          <div class="label">Drill down</div>
-          <div class="refs">${actRefs.map((l) => html`<${Ref} link=${l} key=${l.tag + l.label} />`)}</div>
-        </div>` : null}
     ` : null}
 
     ${item.draft_index != null ? html`
@@ -268,10 +266,10 @@ export function Card({ item, station, onAction }) {
           : html`<pre class="body">${draft == null ? "loading draft…" : draft}</pre>`}
       </div>` : null}
 
-    ${links.length ? html`
+    ${drillRefs.length ? html`
       <div class="sect">
         <div class="label">Drill down</div>
-        <div class="refs">${links.map((l) => html`<${Ref} link=${l} key=${l.tag + l.label} />`)}</div>
+        <div class="refs">${drillRefs.map((l) => html`<${Ref} link=${l} key=${l.tag + l.label} />`)}</div>
       </div>` : null}
 
     <div class="verbs">
