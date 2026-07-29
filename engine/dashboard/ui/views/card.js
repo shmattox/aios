@@ -150,6 +150,7 @@ function citeRefs(item) {
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
   const isAct = item._kind === "act";
+  const isDev = item._kind === "dev";  // a backlog pointer — read-only, no write verbs
   const [draft, setDraft] = useState(null);
   const [respondKind, setRespondKind] = useState(null);
   const [text, setText] = useState("");
@@ -187,7 +188,7 @@ export function Card({ item, station, onAction }) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitReply(); }
   };
 
-  const verbs = isAct ? ACT_VERBS : (VERB_SETS[station] || VERB_SETS.needs_you);
+  const verbs = isDev ? [] : isAct ? ACT_VERBS : (VERB_SETS[station] || VERB_SETS.needs_you);
   const links = docLinks(item);
   const sysText = voiceText(item.system_voice);
   const claudeText = voiceText(item.claude_voice);
@@ -213,6 +214,7 @@ export function Card({ item, station, onAction }) {
         ${item.domain && !item.kb ? html`<span class="chip ${siloClass(item.domain) === "fo" ? "fo-c" : ""}">${item.domain}</span>` : null}
         ${item.thread_id ? html`<span class="chip">↻ ${item.thread_id}</span>` : null}
         ${item.repo ? html`<span class="chip">${item.repo}</span>` : null}
+        ${item.state_badge ? html`<span class="chip badge-${item.state_badge}">${item.state_badge}</span>` : null}
         ${item.lane ? html`<span class="chip">${item.lane} hold</span>` : null}
         ${isPG ? html`<span class="chip pg">⚖ Paper-Governs</span>` : null}
         ${item.gate_human ? html`<span class="chip pg">⛔ [GATE: human]</span>` : null}
@@ -283,7 +285,9 @@ export function Card({ item, station, onAction }) {
             <button class="verb ${v.cls}" onClick=${() => clickVerb(v.act)}>
               ${v.label}${v.kbd ? html` <kbd>${v.kbd}</kbd>` : null}
             </button>`)}
-          <span class="note">${NOTE[station] || NOTE.needs_you}</span>`}
+          <span class="note">${isDev
+            ? "Backlog pointer — the dashboard doesn't act on backlog items. Open the backlog above to see the full item, then work it in a native session (or let the factory drain it)."
+            : (NOTE[station] || NOTE.needs_you)}</span>`}
     </div>
     <div class="respond-box ${respondKind ? "open" : ""}">
       <textarea ref=${taRef} value=${text}

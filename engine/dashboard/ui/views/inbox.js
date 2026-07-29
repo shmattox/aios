@@ -38,7 +38,13 @@ function buildItems(brief) {
     ...a, _kind: "act", _silo: siloClass(a.domain || a.kb),
     _sub: `${a.domain || ""}${a.urgency && a.urgency !== "normal" ? ` · ${a.urgency}` : ""}`,
   }));
-  return [...held, ...act];
+  // dev/GM/env backlog items the factory flagged as needing Seth (server `dev` list) —
+  // read-only pointers so the inbox is a true cross-silo needs-you front door.
+  const dev = (brief.dev || []).map((d) => ({
+    ...d, _kind: "dev", _silo: siloClass(d.repo),
+    _sub: `${d.repo || ""}${d.state_badge ? ` · ${d.state_badge}` : ""}${d.gate_human ? " · ⛔ GATE" : ""}`,
+  }));
+  return [...held, ...act, ...dev];
 }
 
 // compact count chips (no health-line wall — the mockup's header was clean)

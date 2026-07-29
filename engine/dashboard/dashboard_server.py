@@ -79,6 +79,57 @@ def _record(path):
     return fields, body
 
 
+_GLYPH_BADGE = {"⚠": "parked", "▶": "decided", "⛔": "blocked", "✅": "done"}
+_TAG_BADGE = {"park": "parked", "parked": "parked", "block": "blocked", "blocked": "blocked",
+              "decided": "decided", "decide": "decided", "gate": "gated", "veto": "veto"}
+
+
+def _match_bracket(s):
+    """s[0] == '['. Return index just past the matching ']' (depth-aware for nested []), else -1."""
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def clean_dev_title(headline, group=None):
+    """(clean_title, state_badge) for a dev backlog card. Strips the leading status glyph +
+    `[tag: date src — CONTENT]` annotation the factory writes into a backlog headline, promoting
+    the status to `state_badge`. Nested-bracket-safe; falls back to the (glyph-stripped) raw text
+    when the annotation IS the whole headline with no readable remainder."""
+    raw = (headline or "").strip()
+    h, badge = raw, None
+    if h and h[0] in _GLYPH_BADGE:
+        badge = _GLYPH_BADGE[h[0]]
+        h = h[1:].lstrip()
+    if h.startswith("["):
+        end = _match_bracket(h)
+        if end > 0:                                   # bracket closes — nested-safe
+            inner = h[1:end - 1].strip()
+            after = h[end:].lstrip(" —-:·").strip()
+            tag = re.match(r"[A-Za-z]+", inner)
+            if tag:
+                badge = _TAG_BADGE.get(tag.group(0).lower(), badge)
+            h = after if len(after) >= 12 else re.sub(r"^[A-Za-z]+:\s*", "", inner)
+        else:                                         # unclosed bracket (annotation spans sub-bullets)
+            m = re.match(r"^\[([A-Za-z]+)\b[^:\]]*:\s*(.+)$", h)
+            if m:
+                badge = _TAG_BADGE.get(m.group(1).lower(), badge)
+                h = m.group(2).strip()
+    # drop a leading "YYYY-MM-DD [relay/Seth] —" meta lead-in (keep real subjects like "factory drain")
+    h = re.sub(r"^\d{4}-\d{2}-\d{2}\s+(?:relay|seth|claude)\s*(?:—|–|--|\s-\s)\s*", "", h, flags=re.I)
+    h = re.sub(r"^\d{4}-\d{2}-\d{2}\s*[—–:-]*\s*", "", h)  # else drop just a bare leading date
+    if not badge and group == "veto":
+        badge = "veto"
+    h = h.strip().lstrip(":)—–-( ").strip()
+    return (h if len(h) >= 6 else raw.lstrip("".join(_GLYPH_BADGE)).strip()), badge
+
+
 def _connectors(env):
     data = _parse_yaml((env / "profile" / "connectors.yaml").read_text(encoding="utf-8")) or {}
     vault = data.get("vault", {})
@@ -261,7 +312,7 @@ class Handler(SimpleHTTPRequestHandler):
                                 if m), default=None)
             return self._send_json(out)
         if route == "/api/brief":
-            return self._file_with_age(env / WATCHED["brief"])
+            return self._brief()
         if route == "/api/standup":
             return self._file_with_age(env / WATCHED["standup"])
         if route == "/api/spend":
@@ -289,6 +340,54 @@ class Handler(SimpleHTTPRequestHandler):
         data["_mtime"] = mt
         data["_age_s"] = (time.time() - mt) if mt else None
         return self._send_json(data)
+
+    def _brief(self):
+        """The inbox feed: the cache (FO/personal act + gate held) PLUS the dev/GM/env
+        backlog items the factory flagged as needing Seth (`dev`) — so the inbox is a true
+        cross-silo needs-you front door, as the mockup shows (a dev card among the tasks)."""
+        path = self.server.env_root / WATCHED["brief"]
+        data = _read_json_file(path)
+        if data is None:
+            return self._deny(404, f"{path.name} missing or unreadable")
+        mt = _mtime(path)
+        data["_mtime"] = mt
+        data["_age_s"] = (time.time() - mt) if mt else None
+        data["dev"] = self._dev_needs_you(self.server.env_root)
+        return self._send_json(data)
+
+    def _dev_needs_you(self, env):
+        """The factory standup's needs-you (+ veto) backlog items, shaped as READ-ONLY inbox
+        cards. Matched by id against every repo BACKLOG.md (the same sources the board reads).
+        No gate verbs (not drafts) and no mark-done (worked in a native session) — a dev card is
+        a pointer that drills into its repo's backlog."""
+        standup = _read_json_file(env / WATCHED["standup"]) or {}
+        want = {}  # backlog id -> factory group
+        for group in ("needs_you", "veto"):
+            for r in (standup.get("groups") or {}).get(group, []):
+                if isinstance(r, dict) and r.get("id"):
+                    want.setdefault(r["id"], group)
+        if not want:
+            return []
+        out, seen = [], set()
+        for key, path in self._board_sources(env):
+            try:
+                items = parse_backlog(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # ValueError catches UnicodeDecodeError — never 500 /api/brief
+                continue
+            rel = str(path.relative_to(env)).replace("\\", "/")
+            for it in items:
+                grp = want.get(it["id"])
+                if not grp or it["id"] in seen:
+                    continue
+                seen.add(it["id"])
+                title, badge = clean_dev_title(it["headline"], grp)
+                out.append({
+                    "id": it["id"], "title": title, "_kind": "dev",
+                    "repo": key, "gate_human": it["gate_human"],
+                    "factory_group": grp, "state_badge": badge, "backlog_path": rel,
+                    "refs": [{"tag": "kb", "label": rel, "mock": f"opens {rel} — the {key} backlog"}],
+                })
+        return out
 
     def _draft(self):
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
