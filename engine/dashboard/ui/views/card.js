@@ -128,24 +128,25 @@ const ACT_VERBS = [
 const voiceText = (v) => (v == null ? "" : (typeof v === "string" ? v : (v.text || "")));
 const voiceCite = (v) => (v && typeof v === "object" ? (v.cite || "") : "");
 
-// Linkify a citation string IN PLACE — the state/ paths, Notion collection ids, and urls become
-// clickable source-tagged links, keeping the readable "task…/decision…" provenance text around
-// them (the "content -> its own context" hyperlinking, without a redundant separate box). State
-// routes to the in-app Mirror; Notion/drive open informatively (real deep-link needs config).
-function linkifyCite(cite) {
-  if (!cite) return null;
-  const rx = /(state\/[^\s;,)]+|collection:\/\/[A-Za-z0-9-]{8,}|https?:\/\/[^\s;,)]+)/g;
+// Weave source refs INTO a prose string in place — the mockup's `.why` approach. The state/ paths,
+// Notion collection/task ids, and urls the system voice ALREADY names in its sentence BECOME the
+// hyperlinks (source-tagged, inline), instead of a separate list dumped below the text. This is the
+// same inline+drill-down anatomy the held card uses (weaveWhy) — not a second convention.
+function linkifyProse(text) {
+  if (!text) return null;
+  const rx = /(state\/[^\s;,)]+|collection:\/\/[A-Za-z0-9-]{8,}|https?:\/\/[^\s;,)]+|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}(?:-[0-9a-f]{4}-[0-9a-f]{12})?\b)/gi;
   const out = []; let last = 0, m;
-  while ((m = rx.exec(cite)) !== null) {
-    if (m.index > last) out.push(cite.slice(last, m.index));
+  while ((m = rx.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
     const link = tok.startsWith("state/") ? { tag: "state", route: "#/mirror", mock: `opens ${tok} in the Mirror` }
       : tok.startsWith("collection://") ? { tag: "notion", mock: `opens ${tok} in Notion` }
-        : { tag: "drive", open: tok };
+        : /^https?:/i.test(tok) ? { tag: "drive", open: tok }
+          : { tag: "notion", mock: `opens Notion record ${tok}` };  // bare id
     out.push(html`<${InlineLink} link=${{ ...link, label: tok }} key=${m.index} />`);
     last = m.index + tok.length;
   }
-  if (last < cite.length) out.push(cite.slice(last));
+  if (last < text.length) out.push(text.slice(last));
   return out;
 }
 
@@ -204,7 +205,7 @@ export function Card({ item, station, onAction }) {
 
   const verbs = isAct ? ACT_VERBS : (VERB_SETS[station] || VERB_SETS.needs_you);
   const links = docLinks(item);
-  const sysText = voiceText(item.system_voice), sysCite = voiceCite(item.system_voice);
+  const sysText = voiceText(item.system_voice);
   const claudeText = voiceText(item.claude_voice);
   const flags = Array.isArray(item.flags) ? item.flags : (item.flags ? [item.flags] : []);
   const grade = item.system_voice && typeof item.system_voice === "object" ? item.system_voice.grade : "";
@@ -238,13 +239,13 @@ export function Card({ item, station, onAction }) {
     </div>
 
     ${isAct ? html`
-      ${item.urgency ? html`<div class="sect"><div class="label">Why now</div><p class="why">${item.urgency}</p></div>` : null}
+      ${item.urgency ? html`<div class="sect"><div class="label">Why now</div><p class="why">${linkifyProse(item.urgency)}</p></div>` : null}
       <div class="sect">
         <div class="label">Recommendation</div>
         ${sysText
-          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${sysText}${sysCite ? html`<div class="vcite">${linkifyCite(sysCite)}</div>` : null}</div>`
+          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${linkifyProse(sysText)}</div>`
           : html`<div class="voice silent">— your system is silent —</div>`}
-        ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${claudeText}</div>` : null}
+        ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${linkifyProse(claudeText)}</div>` : null}
       </div>
       ${flags.length ? html`
         <div class="sect">
@@ -254,7 +255,7 @@ export function Card({ item, station, onAction }) {
       ${nextAction ? html`
         <div class="sect">
           <div class="label">In motion${court ? ` · ${court === "you" ? "your court" : "others’ court"}` : ""}</div>
-          <p class="why">${nextAction}</p>
+          <p class="why">${linkifyProse(nextAction)}</p>
         </div>` : null}
     ` : null}
 
