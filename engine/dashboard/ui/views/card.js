@@ -128,6 +128,27 @@ const ACT_VERBS = [
 const voiceText = (v) => (v == null ? "" : (typeof v === "string" ? v : (v.text || "")));
 const voiceCite = (v) => (v && typeof v === "object" ? (v.cite || "") : "");
 
+// Linkify a citation string IN PLACE — the state/ paths, Notion collection ids, and urls become
+// clickable source-tagged links, keeping the readable "task…/decision…" provenance text around
+// them (the "content -> its own context" hyperlinking, without a redundant separate box). State
+// routes to the in-app Mirror; Notion/drive open informatively (real deep-link needs config).
+function linkifyCite(cite) {
+  if (!cite) return null;
+  const rx = /(state\/[^\s;,)]+|collection:\/\/[A-Za-z0-9-]{8,}|https?:\/\/[^\s;,)]+)/g;
+  const out = []; let last = 0, m;
+  while ((m = rx.exec(cite)) !== null) {
+    if (m.index > last) out.push(cite.slice(last, m.index));
+    const tok = m[0];
+    const link = tok.startsWith("state/") ? { tag: "state", route: "#/mirror", mock: `opens ${tok} in the Mirror` }
+      : tok.startsWith("collection://") ? { tag: "notion", mock: `opens ${tok} in Notion` }
+        : { tag: "drive", open: tok };
+    out.push(html`<${InlineLink} link=${{ ...link, label: tok }} key=${m.index} />`);
+    last = m.index + tok.length;
+  }
+  if (last < cite.length) out.push(cite.slice(last));
+  return out;
+}
+
 export function Card({ item, station, onAction }) {
   station = station || item.station || "needs_you";
   const isAct = item._kind === "act";
@@ -204,7 +225,7 @@ export function Card({ item, station, onAction }) {
       <div class="sect">
         <div class="label">Recommendation</div>
         ${sysText
-          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${sysText}${sysCite ? html`<div class="vcite">${sysCite}</div>` : null}</div>`
+          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${sysText}${sysCite ? html`<div class="vcite">${linkifyCite(sysCite)}</div>` : null}</div>`
           : html`<div class="voice silent">— your system is silent —</div>`}
         ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${claudeText}</div>` : null}
       </div>

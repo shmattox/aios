@@ -242,6 +242,8 @@ body.narrow #detail {
 .srctag.state { color: var(--accent); }
 .srctag.drive { color: var(--ok); }
 .srctag.kb    { color: #c58af9; }
+.srctag.notion { color: #58a6ff; }
+.ref .badge.notion { color: #58a6ff; background: rgba(88, 166, 255, 0.08); border: 1px solid rgba(88, 166, 255, 0.3); }
 .refs { display: flex; flex-direction: column; gap: 5px; }
 .ref {
   display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 100%;
