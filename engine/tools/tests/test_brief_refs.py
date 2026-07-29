@@ -10,7 +10,7 @@ sys.path.insert(0, str(TOOLS))
 import brief_refs  # noqa: E402
 
 
-def test_act_refs_from_thread_and_citation():
+def test_act_refs_dedupe_thread_file_and_readable_notion():
     item = {"id": "OI-901", "thread_id": "acme-bridge-hedge",
             "system_voice": {"grade": "2a", "text": "…",
                              "cite": "collection://11111111-1111-1111-1111 task X; "
@@ -18,11 +18,25 @@ def test_act_refs_from_thread_and_citation():
                                      "state/threads/acme-bridge-hedge.md"}}
     refs = brief_refs.build_refs(item)
     labels = [r["label"] for r in refs]
+    # the cite's state/threads/<tid>.md is the SAME resource as "thread · <tid>" — one row, not two
     assert "thread · acme-bridge-hedge" in labels
-    assert "state/threads/acme-bridge-hedge.md" in labels
-    assert sum(1 for r in refs if r["tag"] == "notion") == 2
-    for r in refs:                       # every ref is actionable
+    assert "state/threads/acme-bridge-hedge.md" not in labels
+    assert sum(1 for r in refs if r["tag"] == "state") == 1
+    # notion refs carry a readable role label, never a raw collection:// uuid
+    assert [r["label"] for r in refs if r["tag"] == "notion"] == ["Notion · task", "Notion · decision"]
+    assert not any("collection://" in lbl for lbl in labels)
+    for r in refs:                       # every ref is still actionable
         assert r.get("route") or r.get("open") or r.get("mock")
+
+
+def test_act_refs_keep_non_thread_state_path():
+    # dedup only drops the thread's OWN file — a different state record in the cite still shows.
+    item = {"id": "OI-902", "thread_id": "acme",
+            "system_voice": {"cite": "state/domains/fo/tables/liabilities/note.md; state/threads/acme.md"}}
+    labels = [r["label"] for r in brief_refs.build_refs(item)]
+    assert "thread · acme" in labels
+    assert "state/domains/fo/tables/liabilities/note.md" in labels   # non-thread path kept
+    assert "state/threads/acme.md" not in labels                     # thread file deduped
 
 
 def test_held_refs_from_canonical_fields():
@@ -33,6 +47,21 @@ def test_held_refs_from_canonical_fields():
     refs = brief_refs.build_refs(item)
     assert [r["tag"] for r in refs] == ["state", "drive", "kb"]   # canonical-roles order
     assert next(r for r in refs if r["tag"] == "state")["route"] == "#/mirror"
+
+
+def test_kb_ref_obsidian_deeplink_when_vault_known():
+    refs = brief_refs.build_refs({"draft_path": "02_FamilyOffice/wiki/staging/note here.md"},
+                                 vault_name="SecondBrain")
+    kb = next(r for r in refs if r["tag"] == "kb")
+    assert kb["open"] == ("obsidian://open?vault=SecondBrain"
+                          "&file=02_FamilyOffice/wiki/staging/note%20here.md")
+    assert "mock" not in kb                      # a real deep-link, not a toast
+
+
+def test_kb_ref_falls_back_to_mock_without_vault():
+    kb = next(r for r in brief_refs.build_refs({"draft_path": "x/wiki/staging/z.md"})
+              if r["tag"] == "kb")
+    assert kb.get("mock") and "open" not in kb
 
 
 def test_http_papered_source_opens():

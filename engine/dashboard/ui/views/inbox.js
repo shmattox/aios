@@ -71,7 +71,7 @@ export function InboxView() {
 
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    let es, timer, last = {};
+    let es, timer, errs = 0, last = {};
     const poll = async () => {
       try { const m = await api.get("/api/mtimes"); if (m.brief !== last.brief || m.queue !== last.queue) { last = m; load(); } } catch (e) {}
       timer = setTimeout(poll, 5000);
@@ -79,7 +79,7 @@ export function InboxView() {
     try {
       es = new EventSource("/api/events");
       es.addEventListener("change", (ev) => { const c = JSON.parse(ev.data).changed || []; if (c.includes("brief") || c.includes("queue")) load(); });
-      es.onerror = () => { es.close(); poll(); };
+      es.onerror = () => { if (++errs >= 2) { es.close(); poll(); } };  // tolerate a single blip (matches useLive)
     } catch (e) { poll(); }
     return () => { es && es.close(); clearTimeout(timer); };
   }, []);

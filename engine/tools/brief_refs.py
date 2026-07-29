@@ -20,9 +20,12 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 
 _STATE_RE = re.compile(r"state/[^\s;,)]+")
-_COLLECTION_RE = re.compile(r"collection://[A-Za-z0-9-]{8,}")
+# capture the collection id + the role word the cite names right after it (task/decision/page/…),
+# so the drill-down shows a readable "Notion · task" label instead of a raw collection:// uuid.
+_COLLECTION_RE = re.compile(r"collection://([A-Za-z0-9-]{8,})(?:\s+(task|decision|page|row|record|note))?", re.I)
 _URL_RE = re.compile(r"https?://[^\s;,)]+")
 
 
@@ -32,9 +35,20 @@ def _short(p):
     return "…/" + "/".join(parts[-3:]) if len(parts) > 4 else p
 
 
-def build_refs(item):
+def _obsidian_url(path, vault_name):
+    """A real `obsidian://open` deep-link for a vault-relative KB path, or None without a vault name.
+    Deterministic — the vault name is config passed in by the gather, not read from SSOT here."""
+    if not vault_name or not path:
+        return None
+    rel = str(path).replace("\\", "/").lstrip("/")
+    return (f"obsidian://open?vault={urllib.parse.quote(vault_name)}"
+            f"&file={urllib.parse.quote(rel)}")
+
+
+def build_refs(item, vault_name=None):
     """Deterministic structured drill-down refs for one brief item (act or held). Canonical-roles
-    fields first (held), then the action thread + parsed citations (act); deduped by (tag,label)."""
+    fields first (held), then the action thread + parsed citations (act); deduped by (tag,label).
+    `vault_name` (config, passed in) turns KB refs into real `obsidian://` deep-links."""
     out, seen = [], set()
 
     def add(ref):
@@ -53,21 +67,33 @@ def build_refs(item):
     elif paper:
         add({"tag": "drive", "label": _short(paper), "mock": f"opens “{paper}” in Google Drive"})
     if item.get("draft_path"):
-        add({"tag": "kb", "label": _short(item["draft_path"]),
-             "mock": f"opens {_short(item['draft_path'])} in Obsidian"})
+        dp = item["draft_path"]
+        kb = {"tag": "kb", "label": _short(dp)}
+        obs = _obsidian_url(dp, vault_name)
+        if obs:
+            kb["open"] = obs                      # real obsidian:// deep-link when the vault is known
+        else:
+            kb["mock"] = f"opens {_short(dp)} in Obsidian"
+        add(kb)
 
     # act items — the action thread, then any references inside the system-voice citation
     tid = item.get("thread_id") or (item.get("in_motion") or {}).get("thread_id")
+    thread_file = f"state/threads/{tid}.md" if tid else None
     if tid:
         add({"tag": "state", "label": f"thread · {tid}", "route": "#/mirror",
              "mock": f"opens the {tid} action thread"})
     sv = item.get("system_voice")
     cite = (sv.get("cite") if isinstance(sv, dict) else "") or ""
     for m in _STATE_RE.finditer(cite):
+        if m.group(0) == thread_file:
+            continue  # same file as the "thread · {tid}" row above — one row per resource
         add({"tag": "state", "label": m.group(0), "route": "#/mirror",
              "mock": f"opens {m.group(0)} in the Mirror"})
     for m in _COLLECTION_RE.finditer(cite):
-        add({"tag": "notion", "label": m.group(0), "mock": f"opens {m.group(0)} in Notion"})
+        target = f"collection://{m.group(1)}"
+        role = (m.group(2) or "").lower()
+        add({"tag": "notion", "label": f"Notion · {role}" if role else "Notion record",
+             "mock": f"opens {target} in Notion"})
     for m in _URL_RE.finditer(cite):
         add({"tag": "drive", "label": m.group(0), "open": m.group(0)})
     return out
@@ -85,11 +111,11 @@ def _iter_items(cache):
             yield it
 
 
-def annotate_cache(cache):
+def annotate_cache(cache, vault_name=None):
     """Write `refs` onto every act/held/station item that has any. Mutates in place; returns count."""
     n = 0
     for it in _iter_items(cache):
-        refs = build_refs(it)
+        refs = build_refs(it, vault_name=vault_name)
         if refs:
             it["refs"] = refs
             n += 1
@@ -108,12 +134,16 @@ def _atomic_write(path, cache):
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     if len(argv) < 3 or argv[1] != "annotate":
-        print("usage: brief_refs.py annotate <cache.json>", file=sys.stderr)
+        print("usage: brief_refs.py annotate <cache.json> [--vault-name <name>]", file=sys.stderr)
         return 2
     cache_path = argv[2]
+    vault_name = None
+    if "--vault-name" in argv:
+        i = argv.index("--vault-name")
+        vault_name = argv[i + 1] if i + 1 < len(argv) else None
     with open(cache_path, encoding="utf-8") as f:
         cache = json.load(f)
-    n = annotate_cache(cache)
+    n = annotate_cache(cache, vault_name=vault_name)
     _atomic_write(cache_path, cache)
     print(json.dumps({"annotated": n}, ensure_ascii=False))
     return 0

@@ -498,14 +498,18 @@ class Handler(SimpleHTTPRequestHandler):
             cells = {s: [] for s in self.STATIONS}
             try:
                 items = parse_backlog(path.read_text(encoding="utf-8"))
-            except OSError:
+            except (OSError, ValueError):  # ValueError catches UnicodeDecodeError — never 500 the board
                 items = []
             for it in items:
                 st = station_for(it, standup_ids)
                 if st:
-                    cells[st].append({"id": it["id"], "title": it["headline"],
-                                      "station": st, "source": "backlog",
-                                      "gate_human": it["gate_human"], "draft_index": None})
+                    # a backlog line is a read-only pointer (`_kind:"dev"`), NOT a queue draft — so the
+                    # modal renders it without gate verbs; reject/dismiss on a non-queue id was the bug.
+                    title, badge = clean_dev_title(it["headline"], standup_ids.get(it["id"]))
+                    cells[st].append({"id": it["id"], "title": title, "_kind": "dev",
+                                      "station": st, "source": "backlog", "repo": key,
+                                      "state_badge": badge, "gate_human": it["gate_human"],
+                                      "draft_index": None})
             flags = sorted({standup_ids[i["id"]] for i in items if i["id"] in standup_ids})
             lanes.append({"kind": "repo", "key": key, "name": key,
                           "badge": "active" + ("·" + ",".join(flags) if flags else ""),

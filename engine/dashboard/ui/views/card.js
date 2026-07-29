@@ -77,7 +77,15 @@ export function docLinks(fields) {
 // the in-app state link routes to the Mirror browser, which is real.
 function refOpen(link) {
   if (link.route) { location.hash = link.route; return; }
-  if (link.open) { window.open(link.open, "_blank", "noopener"); return; }
+  if (link.open) {
+    if (/^https?:\/\//i.test(link.open)) {
+      window.open(link.open, "_blank", "noopener");
+    } else {                                   // custom scheme (obsidian://) — anchor-launch the
+      const a = document.createElement("a");   // OS handler without navigating the dashboard away
+      a.href = link.open; a.rel = "noopener"; a.click();
+    }
+    return;
+  }
   if (link.mock) toast(`→ ${link.mock}`);
 }
 

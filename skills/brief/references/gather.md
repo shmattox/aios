@@ -221,13 +221,18 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
    the ids don't share.
    **`refs` (structured drill-down — A109 refs-at-source):** after `in_motion` is populated and BEFORE
    `validate_cache`, run
-   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_refs.py" annotate "<env_root>/state/brief-cache.json"`.
-   It folds each item's references into ONE structured `refs: [{tag, label, route?|open?|mock?}]` list —
-   held items from their canonical-roles fields (`state_path`/`papered_source`/`draft_path`), act items
-   from `thread_id`/`in_motion.thread_id` + the `system_voice.cite` string (state/ paths → the Mirror,
-   `collection://` → Notion, urls → drive) — so the dashboard card renders ONE uniform "Drill down" box
-   (the same STATE/DRIVE/KB/NOTION link component for every card, gate + act alike). Model authors the
-   prose + cite; the engine emits the structured links; the UI never parses citation strings. Zero-LLM,
+   `python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_refs.py" annotate "<env_root>/state/brief-cache.json" --vault-name "<vault basename>"`
+   (`<vault basename>` = the last path segment of the profile's `vault.live_root`, e.g. `SecondBrain` —
+   it turns KB refs into real `obsidian://open` deep-links; omit it and KB refs fall back to an
+   informative toast). It folds each item's references into ONE structured
+   `refs: [{tag, label, route?|open?|mock?}]` list — held items from their canonical-roles fields
+   (`state_path`/`papered_source`/`draft_path`), act items from `thread_id`/`in_motion.thread_id` + the
+   `system_voice.cite` string (state/ paths → the Mirror, `collection://` → Notion with a readable
+   `Notion · <role>` label, urls → drive) — deduping the thread's own `state/threads/<tid>.md` against
+   its `thread · <tid>` row so the box shows ONE row per resource. So the dashboard card renders ONE
+   uniform "Drill down" box (the same STATE/DRIVE/KB/NOTION link component for every card, gate + act
+   alike). Model authors the prose + cite; the engine emits the structured links; the UI never parses
+   citation strings. Zero-LLM,
    idempotent (rebuilt from source each run).
 2. `<env_root>/state/brief-cache.md` — the full segmented brief, **GENERATED from the JSON** via
    `brief_render.py station <json> <station>` per station, concatenated under the masthead + walk

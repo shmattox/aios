@@ -66,3 +66,13 @@ def test_board_station_placement(server):
     assert [c["id"] for c in lanes["env-ops"]["cells"]["needs_you"]] == ["H1"]
     fo = lanes["familyoffice"]["cells"]["needs_you"]
     assert fo and fo[0]["title"] == "Bayview refi terms" and fo[0]["draft_index"] == 0
+
+
+def test_board_backlog_cards_are_readonly_dev(server):
+    # a backlog line is a read-only pointer, not a queue draft — the modal must not offer gate
+    # verbs on a non-queue id. Held cards stay gate drafts (source=held, not dev).
+    lanes = {l["key"]: l for l in _get(server, "/api/board")["lanes"]}
+    d1 = lanes["demo"]["cells"]["in_motion"][0]
+    assert d1["_kind"] == "dev" and d1["source"] == "backlog" and d1["repo"] == "demo"
+    fo = lanes["familyoffice"]["cells"]["needs_you"][0]
+    assert fo["source"] == "held" and fo.get("_kind") != "dev"   # held stays a gate draft
