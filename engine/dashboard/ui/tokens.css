@@ -197,8 +197,17 @@ body.narrow #detail {
 #detail .voice .vlabel { font-weight: 600; color: var(--text-0); margin-right: 5px; }
 #detail .voice.sys .vlabel { color: var(--accent); }
 #detail .voice.claude .vlabel { color: var(--warn); }
-#detail .voice .vcite { color: var(--text-2); font-size: var(--fs-sm); }
+#detail .voice .vcite { color: var(--text-2); font-size: var(--fs-sm); margin-top: 4px; overflow-wrap: anywhere; }
 #detail .voice.silent { color: var(--text-2); font-style: italic; }
+#detail blockquote.flag {
+  color: var(--warn); font-size: var(--fs-sm); font-style: italic;
+  background: rgba(229, 165, 10, 0.06); border-left: 2px solid var(--warn);
+  border-radius: var(--radius); padding: 8px 12px; margin: 0 0 6px; overflow-wrap: anywhere;
+}
+.bcard .bsub {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--text-2); font-size: var(--fs-xs); margin-top: 3px; line-height: 1.4;
+}
 #detail .sect { padding: 13px 16px 0; }
 #detail .label {
   font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.09em;

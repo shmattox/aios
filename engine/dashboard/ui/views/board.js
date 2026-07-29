@@ -112,8 +112,9 @@ export function BoardView() {
       <div class="bcard ${cls} ${open ? "open" : ""}" tabindex="0"
            onClick=${() => openCard(item, lane)}
            onKeyDown=${(e) => { if (e.key === "Enter") openCard(item, lane); }}>
-        <span class="bid">${item.id}${item.gate_human ? html` <span class="warn">⚖</span>` : ""}</span>
+        <span class="bid">${item.id}${item.gate_human ? html` <span class="warn">⚖</span>` : ""}${item.flags && item.flags.length ? html` <span class="warn">⚖</span>` : ""}</span>
         ${item.title}
+        ${item._kind === "act" && item.urgency ? html`<span class="bsub">${item.urgency}</span>` : null}
       </div>
       ${open ? html`<${Card} item=${augment(item, lane)} station=${item.station} onAction=${(a, p) => act(item, a, p)} />` : null}`;
   };

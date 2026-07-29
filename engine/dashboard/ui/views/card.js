@@ -172,8 +172,12 @@ export function Card({ item, station, onAction }) {
   const links = docLinks(item);
   const sysText = voiceText(item.system_voice), sysCite = voiceCite(item.system_voice);
   const claudeText = voiceText(item.claude_voice);
+  const flags = Array.isArray(item.flags) ? item.flags : (item.flags ? [item.flags] : []);
+  const grade = item.system_voice && typeof item.system_voice === "object" ? item.system_voice.grade : "";
+  const nextAction = item.in_motion && item.in_motion.next_action;
+  const court = item.in_motion && item.in_motion.court;
   const isPG = item.paper_governs || item.gate_human || siloClass(item.kb) === "fo"
-    || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
+    || flags.length || /paper-governs|economic|ownership/i.test(item.rec_reason || "");
   // backlog cards have no rec_reason — fall back to the station's meaning so the popup is never empty
   const why = item.rec_reason
     || (item.repo ? `In the ${item.repo} backlog. ${STATION_BLURB[station] || ""}` : STATION_BLURB[station] || "");
@@ -184,7 +188,7 @@ export function Card({ item, station, onAction }) {
         <span class="chip id">${item.id}</span>
         ${item.kb ? html`<span class="chip ${siloClass(item.kb) === "fo" ? "fo-c" : ""}">${item.kb}</span>` : null}
         ${item.domain && !item.kb ? html`<span class="chip ${siloClass(item.domain) === "fo" ? "fo-c" : ""}">${item.domain}</span>` : null}
-        ${item.urgency && item.urgency !== "normal" ? html`<span class="chip ${item.urgency === "high" ? "pg" : ""}">${item.urgency}</span>` : null}
+        ${item.thread_id ? html`<span class="chip">↻ ${item.thread_id}</span>` : null}
         ${item.repo ? html`<span class="chip">${item.repo}</span>` : null}
         ${item.lane ? html`<span class="chip">${item.lane} hold</span>` : null}
         ${isPG ? html`<span class="chip pg">⚖ Paper-Governs</span>` : null}
@@ -196,12 +200,25 @@ export function Card({ item, station, onAction }) {
     </div>
 
     ${isAct ? html`
+      ${item.urgency ? html`<div class="sect"><div class="label">Why now</div><p class="why">${item.urgency}</p></div>` : null}
       <div class="sect">
+        <div class="label">Recommendation</div>
         ${sysText
-          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says</span> ${sysText}${sysCite ? html` <span class="vcite">· ${sysCite}</span>` : null}</div>`
+          ? html`<div class="voice sys"><span class="vlabel">🔵 Your system says${grade ? ` · ${grade}` : ""}</span> ${sysText}${sysCite ? html`<div class="vcite">${sysCite}</div>` : null}</div>`
           : html`<div class="voice silent">— your system is silent —</div>`}
         ${claudeText ? html`<div class="voice claude"><span class="vlabel">🟠 Claude adds</span> ${claudeText}</div>` : null}
-      </div>` : null}
+      </div>
+      ${flags.length ? html`
+        <div class="sect">
+          <div class="label">⚖ Paper-Governs</div>
+          ${flags.map((f, i) => html`<blockquote class="flag" key=${i}>${f}</blockquote>`)}
+        </div>` : null}
+      ${nextAction ? html`
+        <div class="sect">
+          <div class="label">In motion${court ? ` · ${court === "you" ? "your court" : "others’ court"}` : ""}</div>
+          <p class="why">${nextAction}</p>
+        </div>` : null}
+    ` : null}
 
     ${item.draft_index != null ? html`
       <div class="sect">

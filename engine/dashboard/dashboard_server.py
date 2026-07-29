@@ -352,13 +352,10 @@ class Handler(SimpleHTTPRequestHandler):
             for a in (brief.get("act") or []):
                 dom = str(a.get("domain") or a.get("kb") or "").lower()
                 if dom.startswith(key[:2] if key == "gm" else key):
-                    acard = {
-                        "id": a.get("id") or a.get("item_id") or (a.get("title") or "")[:24],
-                        "title": a.get("title", ""), "station": "needs_you",
-                        "source": "act", "_kind": "act", "domain": a.get("domain"),
-                        "urgency": a.get("urgency"), "item_id": a.get("item_id"),
-                        "system_voice": a.get("system_voice"), "claude_voice": a.get("claude_voice"),
-                    }
+                    # carry the WHOLE act item (urgency/flags/in_motion/thread_id/voices) so the
+                    # board modal is as rich as the Inbox — cherry-picking dropped fields.
+                    acard = {**a, "station": "needs_you", "source": "act", "_kind": "act",
+                             "id": a.get("id") or a.get("item_id") or (a.get("title") or "")[:24]}
                     cells["needs_you"].append({k: v for k, v in acard.items() if v is not None})
             lanes.append({"kind": "silo", "key": key, "name": name,
                           "badge": "active", "cells": cells})
