@@ -6,3 +6,7 @@ __pycache__/
 # A65 — derived, machine-local, regenerable embedding cache (rebuilds from content hashes)
 state/garden/embeddings/
 .worktrees/
+
+# Machine-local Claude Code plugin enablement (dogfooding aios@aios in this working copy).
+# Left untracked, it read as a dirty tree and stalled the factory's merge-back every tick.
+.claude/settings.json
