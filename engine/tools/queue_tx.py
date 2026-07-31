@@ -58,6 +58,20 @@ def _die(msg):
     sys.exit(1)
 
 
+def _req_path(args, idx, usage):
+    """The required <queue.json> positional at args[idx] - fail loud (never silently fall
+    through to load()'s missing-file default of an empty queue). A111: `select` built its path
+    from `sys.argv[2:]` then indexed [0] AFTER `--stage`/`--lane`/`--limit` parsing, so a caller
+    that omitted the path got a flag token (e.g. "--stage") as the path; that string doesn't
+    exist on disk, `load()` treats a nonexistent path as a legitimately-empty fresh store, and
+    the CLI printed `{"count":0,"queue":[]}` and exited 0 - indistinguishable from a real empty
+    queue. `ls`/`dump`/`claim` share the same bare-positional CLI shape (no path -> IndexError,
+    a raw traceback rather than a clear message), so they route through this guard too."""
+    if idx >= len(args) or str(args[idx]).startswith("--"):
+        _die(f"missing required <queue.json> path. usage: {usage}")
+    return args[idx]
+
+
 # ─────────────────────────── validation (unchanged contract) ───────────────────────────
 
 def validate(data):
@@ -538,13 +552,17 @@ if __name__ == "__main__":
     elif op == "commit":
         commit(sys.argv[2], sys.argv[3])
     elif op == "claim":
-        claim(sys.argv[2], sys.argv[3].split(","), sys.argv[4])
+        p = _req_path(sys.argv, 2, "queue_tx.py claim <queue.json> <id1,id2,...> <worker>")
+        if len(sys.argv) < 5:
+            _die("claim: usage: claim <queue.json> <id1,id2,...> <worker>")
+        claim(p, sys.argv[3].split(","), sys.argv[4])
     elif op == "add":
         _apply_items(sys.argv[2], _read_items(sys.argv[3]), "add")
     elif op == "update":
         _apply_items(sys.argv[2], _read_items(sys.argv[3]), "update")
     elif op == "select":
         a = sys.argv[2:]
+        p = _req_path(a, 0, "queue_tx.py select <queue.json> [--stage S] [--lane L] [--limit N]")
         known = {"--stage", "--lane", "--limit"}
         unknown = [t for t in a[1:] if t.startswith("--") and t not in known]
         if unknown:
@@ -552,13 +570,14 @@ if __name__ == "__main__":
                  f"typo'd filter can't silently over-select")
         def _opt(name):
             return a[a.index(name) + 1] if name in a else None
-        select(a[0], stage=_opt("--stage"), lane=_opt("--lane"), limit=_opt("--limit"))
+        select(p, stage=_opt("--stage"), lane=_opt("--lane"), limit=_opt("--limit"))
     elif op == "archive":
         # archive <queue.json> [--window-days N] [--now ISO]
         a = sys.argv[2:]
+        p = _req_path(a, 0, "queue_tx.py archive <queue.json> [--window-days N] [--now ISO]")
         wd = float(a[a.index("--window-days") + 1]) if "--window-days" in a else 30
         nw = a[a.index("--now") + 1] if "--now" in a else None
-        archive(a[0], window_days=wd, now=nw)
+        archive(p, window_days=wd, now=nw)
     elif op == "unarchive":
         # unarchive <queue.json> <id1,id2,...>
         unarchive(sys.argv[2], sys.argv[3].split(","))
@@ -584,9 +603,11 @@ if __name__ == "__main__":
             _save(path, data)
         print(json.dumps({"ok": True, "id": item_id, "stage": "reference"}))
     elif op == "dump":
-        print(json.dumps(load(sys.argv[2]), indent=2, ensure_ascii=False))
+        p = _req_path(sys.argv, 2, "queue_tx.py dump <queue.json>")
+        print(json.dumps(load(p), indent=2, ensure_ascii=False))
     elif op == "ls":
-        for it in load(sys.argv[2])["queue"]:
+        p = _req_path(sys.argv, 2, "queue_tx.py ls <queue.json>")
+        for it in load(p)["queue"]:
             print(f'{it.get("stage",""):<9} {it.get("lane") or "-":<10} {it.get("id")}')
     else:
         print(__doc__)

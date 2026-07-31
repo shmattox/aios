@@ -89,6 +89,44 @@ try:
     check("select --stage captured returns only captured",
           all(i["stage"] == "captured" for i in sel["queue"]))
 
+    # 6b. A111: a missing <queue.json> positional must fail loud, never silently treat a flag
+    # token as the path and report an empty-looking success (the found bug: with no path given,
+    # a[0] became "--stage", load() saw a nonexistent file and returned a fresh empty store, so
+    # the CLI printed {"count":0,"queue":[]} and exited 0 - indistinguishable from a real empty
+    # queue). ls/dump/claim share the same bare-positional CLI shape, so pin them too.
+    rnopath = subprocess.run([sys.executable, os.path.join(HARNESS, "queue_tx.py"), "select",
+                              "--stage", "awaiting"], capture_output=True, text=True)
+    outnopath = rnopath.stdout + rnopath.stderr
+    check("select with no queue path fails loud (exit!=0)", rnopath.returncode != 0)
+    check("select with no queue path reports a missing-path message",
+          "missing" in outnopath.lower() and "queue" in outnopath.lower())
+
+    rlsnopath = subprocess.run([sys.executable, os.path.join(HARNESS, "queue_tx.py"), "ls"],
+                               capture_output=True, text=True)
+    check("ls with no queue path fails loud with a message (not a raw traceback)",
+          rlsnopath.returncode != 0 and "missing" in (rlsnopath.stdout + rlsnopath.stderr).lower())
+
+    rdumpnopath = subprocess.run([sys.executable, os.path.join(HARNESS, "queue_tx.py"), "dump"],
+                                 capture_output=True, text=True)
+    check("dump with no queue path fails loud with a message (not a raw traceback)",
+          rdumpnopath.returncode != 0
+          and "missing" in (rdumpnopath.stdout + rdumpnopath.stderr).lower())
+
+    rclaimnopath = subprocess.run([sys.executable, os.path.join(HARNESS, "queue_tx.py"), "claim"],
+                                  capture_output=True, text=True)
+    check("claim with no queue path fails loud with a message (not a raw traceback)",
+          rclaimnopath.returncode != 0
+          and "missing" in (rclaimnopath.stdout + rclaimnopath.stderr).lower())
+
+    # archive shares select's exact bug shape (a[0] taken AFTER --window-days/--now flag
+    # parsing); a missing path silently no-ops (archive() returns [] before any print - zero
+    # output, exit 0) instead of failing loud.
+    rarchnopath = subprocess.run([sys.executable, os.path.join(HARNESS, "queue_tx.py"), "archive",
+                                  "--window-days", "5"], capture_output=True, text=True)
+    check("archive with no queue path fails loud (exit!=0)", rarchnopath.returncode != 0)
+    check("archive with no queue path reports a missing-path message",
+          "missing" in (rarchnopath.stdout + rarchnopath.stderr).lower())
+
     # 7. claim sets the lease and serializes on conflict_key
     queue_tx.claim(live, ["delta-2026"], "worker-1")
     claimed = next(i for i in queue_tx.load(live)["queue"] if i["id"] == "delta-2026")
