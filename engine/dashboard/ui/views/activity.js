@@ -161,7 +161,13 @@ export function ActivityView() {
   const sorted = [...runs].sort((a, b) => (a.live !== b.live ? (a.live ? -1 : 1) : (b.started || 0) - (a.started || 0)));
   const visible = sorted.filter((r) => !dismissed.has(r.id));
   const selRun = visible.find((r) => r.id === selId) || null;
-  const dismiss = (id) => setDismissed((d) => new Set(d).add(id));
+  const dismiss = (id) => {
+    setDismissed((d) => new Set(d).add(id));
+    if (id === selId) {
+      const next = visible.find((r) => r.id !== id);
+      setSelId(next ? next.id : null);
+    }
+  };
   const rowClick = (id) => {
     if (narrow && id === selId) { setOpen((o) => !o); return; }
     setSelId(id); setOpen(true);
