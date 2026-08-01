@@ -1,4 +1,4 @@
-import os, time
+import json, os, time
 from pathlib import Path
 import pytest, sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # engine/tools on path
@@ -134,3 +134,56 @@ def test_cli_invalid_surface_is_noop_never_breaks_runner(tmp_path):
 
 def test_cli_no_subcommand_is_usage_error(tmp_path):
     assert activity.main([]) == 2
+
+
+def test_cli_swallows_handler_exception_never_breaks_runner(tmp_path, monkeypatch):
+    # THE contract: a runtime failure inside a handler must exit 0, never propagate a
+    # traceback/nonzero into the scheduled runner. Force start_run to raise and assert exit 0.
+    def boom(*a, **k):
+        raise RuntimeError("disk on fire")
+    monkeypatch.setattr(activity, "start_run", boom)
+    rc = activity.main(["start", "--env-root", str(tmp_path), "--id", "pipeline-x-1",
+                        "--surface", "pipeline", "--title", "t"])
+    assert rc == 0
+
+
+def test_cli_finish_defaults_to_ended_when_no_status(tmp_path):
+    activity.start_run(tmp_path, id="pipeline-d-1", surface="pipeline", title="t", pid=os.getpid())
+    activity.main(["finish", "--env-root", str(tmp_path), "--id", "pipeline-d-1"])
+    r = activity.read_all(tmp_path)[0]
+    assert r["status"] == "ended" and r["ended"] is not None
+
+
+def test_cli_heartbeat_cost_maps_to_cost_usd(tmp_path):
+    activity.start_run(tmp_path, id="pipeline-c-1", surface="pipeline", title="t")
+    activity.main(["heartbeat", "--env-root", str(tmp_path), "--id", "pipeline-c-1", "--cost", "0.42"])
+    assert activity.read_all(tmp_path)[0]["cost_usd"] == 0.42
+
+
+def test_start_run_accepts_detail_in_one_write(tmp_path):
+    activity.start_run(tmp_path, id="pipeline-det-1", surface="pipeline", title="t", detail="ingest")
+    assert activity.read_all(tmp_path)[0]["detail"] == "ingest"
+
+
+def test_finish_and_heartbeat_reject_traversal_id(tmp_path, monkeypatch):
+    # an unsafe --id must never resolve _rec_path outside state/activity/: guard short-circuits
+    # BEFORE any file read/write. If it didn't, _read_json/_atomic_write would touch ../evil.json.
+    calls = []
+    monkeypatch.setattr(activity, "_read_json", lambda p: calls.append(p) or None)
+    activity.finish_run(tmp_path, "../../evil", "ended")
+    activity.heartbeat(tmp_path, "../../evil", detail="x")
+    assert calls == []  # neither reached the filesystem
+
+
+def test_prune_skips_log_path_for_unsafe_record_id(tmp_path, monkeypatch):
+    # a crafted record with a traversal id must not drive os.remove outside LOGS_DIR
+    import os as _os
+    activity.ACTIVITY_DIR(tmp_path).mkdir(parents=True)
+    (activity.ACTIVITY_DIR(tmp_path) / "rec.json").write_text(
+        json.dumps({"id": "../../../etc/passwd", "status": "ended", "ended": 0.0}))
+    removed_paths = []
+    real_remove = _os.remove
+    monkeypatch.setattr(activity.os, "remove", lambda p: removed_paths.append(str(p)) or real_remove(p))
+    activity.prune(tmp_path, retain_s=1, now=1000.0)
+    # only the in-dir json is removed; no path built from the unsafe id
+    assert all("etc" not in p and "passwd" not in p for p in removed_paths)

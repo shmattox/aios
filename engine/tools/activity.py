@@ -58,19 +58,21 @@ def session_run_id(slug, pid):
 
 
 def start_run(env_root, *, id, surface, title, item_ids=(), repo=None, pid=None,
-              log_path=None, worktree=None, now=None):
+              log_path=None, worktree=None, detail="", now=None):
     if not _safe_id(id) or surface not in SURFACES:
         return None
     ts = _now(now)
     rec = {"id": id, "surface": surface, "title": title, "item_ids": list(item_ids),
            "repo": repo, "pid": pid, "started": ts, "heartbeat": ts, "ended": None,
            "status": "running", "tokens": 0, "cost_usd": 0.0,
-           "log_path": log_path, "detail": "", "worktree": worktree}
+           "log_path": log_path, "detail": detail or "", "worktree": worktree}
     _atomic_write(_rec_path(env_root, id), rec)
     return rec
 
 
 def heartbeat(env_root, id, *, now=None, **updates):
+    if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
+        return
     rec = _read_json(_rec_path(env_root, id))
     if not rec:
         return
@@ -82,6 +84,8 @@ def heartbeat(env_root, id, *, now=None, **updates):
 
 
 def finish_run(env_root, id, status, *, now=None, **updates):
+    if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
+        return
     rec = _read_json(_rec_path(env_root, id))
     if not rec:
         return
@@ -186,7 +190,14 @@ def prune(env_root, *, retain_s=86400, now=None):
             continue
         ended = rec.get("ended")
         if rec.get("status") in TERMINAL and ended is not None and (now - ended) > retain_s:
-            for p in (d / n, LOGS_DIR(env_root) / f"{rec['id']}.log"):
+            # d/n came from listdir so it is in-dir; the log path is built from the record's own
+            # id field (JSON content, never validated) — guard it so a crafted "../" id can't
+            # os.remove an arbitrary .log outside LOGS_DIR.
+            paths = [d / n]
+            rid = rec.get("id")
+            if _safe_id(rid):
+                paths.append(LOGS_DIR(env_root) / f"{rid}.log")
+            for p in paths:
                 try:
                     os.remove(p)
                 except OSError:
@@ -257,11 +268,10 @@ def main(argv=None):
     try:
         if args.cmd == "start":
             item_ids = [s for s in args.item_ids.split(",") if s.strip()]
-            rec = start_run(args.env_root, id=args.id, surface=args.surface, title=args.title,
-                            item_ids=item_ids, repo=args.repo, pid=args.pid,
-                            log_path=args.log_path, worktree=args.worktree)
-            if rec and args.detail is not None:
-                heartbeat(args.env_root, args.id, detail=args.detail)
+            start_run(args.env_root, id=args.id, surface=args.surface, title=args.title,
+                      item_ids=item_ids, repo=args.repo, pid=args.pid,
+                      log_path=args.log_path, worktree=args.worktree,
+                      detail=(args.detail or ""))
         elif args.cmd == "heartbeat":
             up = {}
             if args.detail is not None:
