@@ -6,6 +6,7 @@ write shells out to an existing gated CLI.  # see A63 spec
 Security (mandatory): 127.0.0.1 bind, exact Host validation, per-start token
 on every POST (DNS-rebinding defense).
 """
+import collections
 import json
 import os
 import re
@@ -531,7 +532,7 @@ class Handler(SimpleHTTPRequestHandler):
             fp["spend"] = _mtime(spends[-1]) if spends else None
             fp["board"] = max((m for m in (_mtime(p) for _, p in self._board_sources(env))
                                if m), default=None)
-            act_dir = env / "state" / "activity"
+            act_dir = activity.ACTIVITY_DIR(env)
             act_files = sorted(act_dir.glob("*.json")) if act_dir.exists() else []
             fp["activity"] = (len(act_files),
                               max((_mtime(p) for p in act_files), default=None))
@@ -615,7 +616,9 @@ class Handler(SimpleHTTPRequestHandler):
             tail = 200
         try:
             with open(lp, encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+                # bounded memory: never materialize a huge log just to keep its last `tail` lines
+                lines = list(collections.deque(
+                    (ln.rstrip("\n") for ln in fh), maxlen=tail))
         except OSError:
             return self._send_json({"id": rid, "lines": [], "eof": True, "available": False})
         return self._send_json({"id": rid, "lines": lines[-tail:], "eof": True,
