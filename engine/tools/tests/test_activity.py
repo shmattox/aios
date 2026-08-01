@@ -49,3 +49,29 @@ def test_prune_removes_terminal_past_retention_only(tmp_path):
     removed = activity.prune(tmp_path, retain_s=100, now=1000.0)  # old ended long ago
     ids = {r["id"] for r in activity.read_all(tmp_path)}
     assert removed == 1 and ids == {"live"}
+
+
+def test_run_with_activity_records_stages(tmp_path):
+    seen = []
+
+    def stage(name):
+        seen.append(name)
+
+    ok = activity.run_with_activity(
+        tmp_path, id="pipeline-2026-08-01", title="Nightly pipeline",
+        stages=[("capture", lambda: stage("capture")),
+                ("sort", lambda: stage("sort"))], now=0.0)
+    r = activity.read_all(tmp_path)[0]
+    assert ok and seen == ["capture", "sort"]
+    assert r["status"] == "ended" and r["surface"] == "pipeline"
+
+
+def test_run_with_activity_finishes_failed_and_reraises(tmp_path):
+    def boom():
+        raise ValueError("stage blew up")
+
+    with pytest.raises(ValueError):
+        activity.run_with_activity(tmp_path, id="pipeline-fail", title="Nightly pipeline",
+                                   stages=[("capture", boom)], now=0.0)
+    r = activity.read_all(tmp_path)[0]
+    assert r["status"] == "failed" and r["ended"] is not None

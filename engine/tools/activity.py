@@ -148,6 +148,22 @@ def is_live(rec, now):
     return (now - rec.get("heartbeat", 0)) <= LIVE_WINDOW_S
 
 
+def run_with_activity(env_root, *, id, title, stages, now=None):
+    """Run an ordered [(name, callable)] sequence as a 'pipeline' run, heartbeating the
+    current stage. Best-effort recording; a stage callable's own exception propagates
+    (the caller owns its error handling), but a finish_run(failed) is written first."""
+    start_run(env_root, id=id, surface="pipeline", title=title, pid=os.getpid(), now=now)
+    try:
+        for name, fn in stages:
+            heartbeat(env_root, id, detail=name, now=now)
+            fn()
+    except BaseException:
+        finish_run(env_root, id, "failed", now=now)
+        raise
+    finish_run(env_root, id, "ended", now=now)
+    return True
+
+
 def prune(env_root, *, retain_s=86400, now=None):
     now = _now(now)
     d = ACTIVITY_DIR(env_root)

@@ -5,6 +5,10 @@ __pycache__/
 
 # A65 — derived, machine-local, regenerable embedding cache (rebuilds from content hashes)
 state/garden/embeddings/
+
+# A119/A122 — live-run activity records: machine-local PIDs/worktree paths, meaningless
+# on another machine, and churns every run.
+state/activity/
 .worktrees/
 
 # Machine-local Claude Code plugin enablement (dogfooding aios@aios in this working copy).

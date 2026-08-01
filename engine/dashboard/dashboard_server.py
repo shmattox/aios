@@ -668,6 +668,10 @@ def make_server(env_root, port=0):
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.env_root = Path(env_root)
     srv.token = secrets.token_urlsafe(32)
+    try:
+        activity.prune(srv.env_root)
+    except Exception:
+        pass  # best-effort — never block server start
     return srv
 
 

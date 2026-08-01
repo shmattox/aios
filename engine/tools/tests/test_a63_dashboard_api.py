@@ -206,6 +206,16 @@ def test_api_activity_log_rejects_traversal(server):
     assert e.value.code in (400, 403, 404)
 
 
+def test_make_server_prunes_terminal_activity_past_retention(env_root):
+    # A122: server start prunes terminal-past-retention activity records so
+    # state/activity/ doesn't grow unbounded across restarts.
+    activity.start_run(env_root, id="old", surface="factory", title="d", now=0.0)
+    activity.finish_run(env_root, "old", "shipped", now=0.0)
+    make_server(env_root, port=0)
+    ids = {r["id"] for r in activity.read_all(env_root)}
+    assert "old" not in ids
+
+
 def test_events_fingerprint_reacts_to_activity(server, env_root):
     port = server.server_address[1]
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/events",
