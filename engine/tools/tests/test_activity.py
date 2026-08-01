@@ -42,6 +42,11 @@ def test_finish_run_sets_terminal_and_not_live(tmp_path):
     assert activity.is_live(r, now=6.0) is False  # terminal is never live
 
 
+def test_session_run_id_is_safe(tmp_path):
+    rid = activity.session_run_id("open place/dev", 12648)
+    assert activity._safe_id(rid) and rid.endswith("-12648")
+
+
 def test_prune_removes_terminal_past_retention_only(tmp_path):
     activity.start_run(tmp_path, id="old", surface="factory", title="d", now=0.0)
     activity.finish_run(tmp_path, "old", "shipped", now=0.0)

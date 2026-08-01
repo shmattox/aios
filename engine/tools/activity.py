@@ -51,6 +51,12 @@ def _rec_path(env_root, rid):
     return str(ACTIVITY_DIR(env_root) / f"{rid}.json")
 
 
+def session_run_id(slug, pid):
+    """A filesystem/SAFE_ID-safe run id for a session record."""
+    safe = "".join(c if c in SAFE_ID_CHARS else "-" for c in (slug or "session"))
+    return f"session-{safe}-{pid}"
+
+
 def start_run(env_root, *, id, surface, title, item_ids=(), repo=None, pid=None,
               log_path=None, worktree=None, now=None):
     if not _safe_id(id) or surface not in SURFACES:
