@@ -323,6 +323,18 @@ body.narrow #detail {
 .respond-box textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .respond-box .hint { color: var(--text-2); font-size: var(--fs-xs); margin-top: 5px; }
 
+/* -- activity: live-run status colors + health dot -- */
+.rs-running { color: var(--ok); }
+.rs-stale, .rs-parked { color: var(--warn); }
+.rs-shipped, .rs-ended, .rs-no-op { color: var(--text-2); }
+.rs-failed { color: var(--err); }
+.chip.rs-running { border-color: rgba(76, 195, 138, 0.4); background: rgba(76, 195, 138, 0.07); }
+.chip.rs-stale, .chip.rs-parked { border-color: rgba(229, 165, 10, 0.4); background: rgba(229, 165, 10, 0.07); }
+.chip.rs-failed { border-color: rgba(229, 83, 75, 0.4); background: rgba(229, 83, 75, 0.07); }
+.healthdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.healthdot.live { background: var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+.healthdot.dead { background: var(--text-2); }
+
 /* -- board: swimlane grid wide - vertical silo accordions narrow -- */
 .cols { display: grid; grid-template-columns: 150px repeat(5, 1fr); gap: 8px; padding: 0 0 6px; }
 .cols .colhead {

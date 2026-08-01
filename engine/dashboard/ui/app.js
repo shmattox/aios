@@ -4,6 +4,7 @@
 import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
 import { InboxView } from "/views/inbox.js";
 import { BoardView } from "/views/board.js";
+import { ActivityView } from "/views/activity.js";
 
 // v1-panel compat: the existing panels/*.js take (mountEl, aios) and may read window.aios.
 const aiosCompat = {
@@ -26,6 +27,7 @@ const Logo = () => html`
 const ICONS = {
   inbox: html`<svg class="ic" viewBox="0 0 16 16"><path d="M2 9.5h3l1.2 2h3.6l1.2-2h3"/><path d="M3.2 3.5h9.6l1.2 6v3.5H2V9.5z"/></svg>`,
   board: html`<svg class="ic" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1"/><rect x="10.8" y="2.5" width="3.4" height="9.5" rx="1"/></svg>`,
+  activity: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8.5h3l1.5-5 3 9 1.5-4h3.5"/></svg>`,
   flow: html`<svg class="ic" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="3.8" r="1.8"/><circle cx="12.5" cy="12.2" r="1.8"/><path d="M5.3 7.2l5.4-2.6M5.3 8.8l5.4 2.6"/></svg>`,
   mirror: html`<svg class="ic" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>`,
   stats: html`<svg class="ic" viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13V6.5"/></svg>`,
@@ -55,6 +57,7 @@ function MirrorView() {
 const NAV = [
   { key: "inbox", label: "Inbox", view: InboxView },
   { key: "board", label: "Board", view: BoardView },
+  { key: "activity", label: "Activity", view: ActivityView },
   { key: "flow", label: "Flow", soon: "v2b", view: () => html`<${Soon} name="Flow" note="Live pipeline DAG — v2b." />` },
   { key: "mirror", label: "Mirror", view: MirrorView },
   { key: "stats", label: "Stats", soon: "v2b", view: () => html`<${Soon} name="Stats" note="Spend, gate metrics, throughput — v2b." />` },
@@ -74,6 +77,7 @@ function Shell() {
   const [narrow, setNarrow] = useState(window.matchMedia("(max-width: 860px)").matches);
   const [ageTxt, setAgeTxt] = useState("");
   const [inboxCount, setInboxCount] = useState(0);
+  const [liveCount, setLiveCount] = useState(0);
   const chord = useRef(null);
 
   // hash routing
@@ -109,6 +113,8 @@ function Shell() {
         setAgeTxt(newest ? `${Math.max(0, Math.round(Date.now() / 1000 - newest))}s` : "");
         const h = await api.get("/api/held");
         setInboxCount((h.held || []).length);
+        const a = await api.get("/api/activity");
+        setLiveCount((a.runs || []).filter((r) => r.live).length);
       } catch (e) { /* server gone */ }
       timer = setTimeout(tick, 5000);
     };
@@ -124,6 +130,7 @@ function Shell() {
         chord.current = null;
         if (e.key === "b") { location.hash = "#/board"; return; }
         if (e.key === "i") { location.hash = "#/inbox"; return; }
+        if (e.key === "a") { location.hash = "#/activity"; return; }
       }
       if (e.key === "g") { chord.current = "g"; setTimeout(() => { chord.current = null; }, 900); return; }
       if (e.key === "[") setCollapsed((c) => !c);
@@ -157,6 +164,7 @@ function Shell() {
           ${ICONS[n.key]}
           <span class="lbl">${n.label}</span>
           ${n.key === "inbox" && inboxCount ? html`<span class="count">${inboxCount}</span>` : null}
+          ${n.key === "activity" && liveCount ? html`<span class="count">${liveCount}</span>` : null}
           ${n.soon ? html`<span class="phase">${n.soon}</span>` : null}
         </button>`)}
       <span class="spacer"></span>

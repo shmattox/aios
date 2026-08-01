@@ -73,6 +73,15 @@ def test_post_requires_token(server):
     assert e.value.code == 401
 
 
+def test_activity_view_registered_and_api_served(server):
+    # A121: the Activity view is wired into app.js (import + nav entry), and the
+    # /api/activity route it consumes is live behind the same server.
+    app_js = _get(server, "/app.js").read().decode("utf-8")
+    assert "views/activity.js" in app_js
+    body = json.loads(_get(server, "/api/activity").read())
+    assert body["runs"] == [] and isinstance(body["_now"], (int, float))
+
+
 def test_head_bad_host_rejected(server):
     # HEAD inherits static serving from the base class — it must run the same Host gate (folded
     # from the task-1 review, before the action layer builds on this class).
