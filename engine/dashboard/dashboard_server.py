@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 from state_validate import _extract_frontmatter, _parse_yaml  # engine YAML-subset reader; no PyYAML in repo
 from backlog_parse import parse_backlog, station_for  # engine tools shim already on sys.path
 import draft_diff  # "Proposed change" diff (A109)
+import activity  # run-record contract (A119) — live-run observability
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -330,6 +331,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self._board()
         if route == "/api/domains" or route.startswith("/api/domains/"):
             return self._domains(route)
+        if route == "/api/activity":
+            return self._send_json({"runs": activity.read_all(env), "_now": time.time()})
+        if route.startswith("/api/activity/") and route.endswith("/log"):
+            rid = route[len("/api/activity/"):-len("/log")]
+            return self._activity_log(rid)
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
@@ -525,6 +531,10 @@ class Handler(SimpleHTTPRequestHandler):
             fp["spend"] = _mtime(spends[-1]) if spends else None
             fp["board"] = max((m for m in (_mtime(p) for _, p in self._board_sources(env))
                                if m), default=None)
+            act_dir = env / "state" / "activity"
+            act_files = sorted(act_dir.glob("*.json")) if act_dir.exists() else []
+            fp["activity"] = (len(act_files),
+                              max((_mtime(p) for p in act_files), default=None))
             return fp
 
         self.send_response(200)
@@ -584,6 +594,32 @@ class Handler(SimpleHTTPRequestHandler):
             fields, body = _record(f)
             return self._send_json({"slug": segs[2], "fields": fields, "body": body})
         return self._deny(404, "unknown domains route")
+
+    def _activity_log(self, rid):
+        # id must be a known record; never read an arbitrary path.  # see A63 spec
+        if not SAFE_ID.match(rid or ""):
+            return self._deny(400, "bad run id")
+        env = self.server.env_root
+        rec = next((r for r in activity.read_all(env) if r["id"] == rid), None)
+        if not rec or not rec.get("log_path"):
+            return self._send_json({"id": rid, "lines": [], "eof": True, "available": False})
+        lp = Path(rec["log_path"]).resolve()
+        logs = activity.LOGS_DIR(env).resolve()
+        under_logs = str(lp).startswith(str(logs) + os.sep)
+        if not (under_logs or lp.is_file()):
+            return self._send_json({"id": rid, "lines": [], "eof": True, "available": False})
+        try:
+            tail = min(1000, max(1, int(urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query).get("tail", ["200"])[0])))
+        except ValueError:
+            tail = 200
+        try:
+            with open(lp, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            return self._send_json({"id": rid, "lines": [], "eof": True, "available": False})
+        return self._send_json({"id": rid, "lines": lines[-tail:], "eof": True,
+                                "available": True})
 
     def _api_post(self, route):
         env = self.server.env_root

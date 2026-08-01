@@ -1,9 +1,11 @@
-import json, threading, urllib.request, urllib.error, urllib.parse
+import json, os, threading, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 import pytest, sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dashboard"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # engine/tools on path
 from dashboard_server import make_server
+import activity
 
 
 @pytest.fixture()
@@ -165,3 +167,59 @@ def test_domains_raw_dotdot_rejected(dserver):
         urllib.request.urlopen(
             f"http://127.0.0.1:{port}/api/domains/personal/../secret", timeout=5)
     assert e.value.code in (400, 404)
+
+
+# --- A120: /api/activity + log tail + SSE signal --------------------------
+
+def test_api_activity_lists_runs_with_liveness(server, env_root):
+    activity.start_run(env_root, id="factory-A1-1", surface="factory",
+                       title="Draining A1", item_ids=["A1"], pid=os.getpid())
+    body = _get_json(server, "/api/activity")
+    ids = {r["id"] for r in body["runs"]}
+    assert "factory-A1-1" in ids
+    run = next(r for r in body["runs"] if r["id"] == "factory-A1-1")
+    assert run["live"] is True and run["surface"] == "factory"
+    assert "_now" in body
+
+
+def test_api_activity_log_tail_returns_last_lines(server, env_root):
+    logs = activity.LOGS_DIR(env_root)
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "factory-A1-1.log").write_text("l1\nl2\nl3\n", encoding="utf-8")
+    activity.start_run(env_root, id="factory-A1-1", surface="factory", title="d",
+                       log_path=str(logs / "factory-A1-1.log"))
+    body = _get_json(server, "/api/activity/factory-A1-1/log?tail=2")
+    assert body["available"] is True
+    assert body["lines"] == ["l2", "l3"]
+
+
+def test_api_activity_log_unknown_id_not_available(server):
+    body = _get_json(server, "/api/activity/does-not-exist/log")
+    assert body["available"] is False and body["lines"] == []
+
+
+def test_api_activity_log_rejects_traversal(server):
+    port = server.server_address[1]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/activity/..%2f..%2fsecret/log", timeout=5)
+    assert e.value.code in (400, 403, 404)
+
+
+def test_events_fingerprint_reacts_to_activity(server, env_root):
+    port = server.server_address[1]
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/events",
+                                 headers={"Host": f"127.0.0.1:{port}"})
+    stream = urllib.request.urlopen(req, timeout=5)
+    stream.readline()  # 'event: hello'
+    stream.readline()  # 'data: {}'
+    stream.readline()  # blank
+    activity.start_run(env_root, id="factory-A9-9", surface="factory", title="d", pid=os.getpid())
+    seen = ""
+    for _ in range(40):
+        line = stream.readline().decode()
+        seen += line
+        if "activity" in seen:
+            break
+    stream.close()
+    assert "activity" in seen
