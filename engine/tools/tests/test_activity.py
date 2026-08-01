@@ -75,3 +75,57 @@ def test_run_with_activity_finishes_failed_and_reraises(tmp_path):
                                    stages=[("capture", boom)], now=0.0)
     r = activity.read_all(tmp_path)[0]
     assert r["status"] == "failed" and r["ended"] is not None
+
+
+# ─── CLI (the seam the deploy runners call to bracket each stage's `claude -p`) ───
+
+def test_cli_start_records_running_pipeline_with_detail_and_pid(tmp_path):
+    rc = activity.main(["start", "--env-root", str(tmp_path), "--id", "pipeline-ingest-100",
+                        "--surface", "pipeline", "--title", "aios-ingest",
+                        "--detail", "ingest", "--pid", str(os.getpid()),
+                        "--repo", "aios", "--item-ids", "A1,A2"])
+    r = activity.read_all(tmp_path)[0]
+    assert rc == 0
+    assert r["status"] == "running" and r["surface"] == "pipeline"
+    assert r["detail"] == "ingest" and r["pid"] == os.getpid()
+    assert r["repo"] == "aios" and r["item_ids"] == ["A1", "A2"]
+    assert r["live"] is True  # own live pid => live without a periodic heartbeat
+
+
+def test_cli_finish_sets_terminal_status(tmp_path):
+    activity.main(["start", "--env-root", str(tmp_path), "--id", "pipeline-gate-100",
+                   "--surface", "pipeline", "--title", "aios-gate-auto", "--pid", str(os.getpid())])
+    rc = activity.main(["finish", "--env-root", str(tmp_path), "--id", "pipeline-gate-100",
+                        "--status", "failed"])
+    r = activity.read_all(tmp_path)[0]
+    assert rc == 0 and r["status"] == "failed" and r["ended"] is not None
+    assert r["live"] is False  # terminal is never live even with a live pid
+
+
+def test_cli_heartbeat_updates_tokens_and_detail(tmp_path):
+    activity.main(["start", "--env-root", str(tmp_path), "--id", "pipeline-x-100",
+                   "--surface", "pipeline", "--title", "t"])
+    activity.main(["heartbeat", "--env-root", str(tmp_path), "--id", "pipeline-x-100",
+                   "--detail", "sort", "--tokens", "1234"])
+    r = activity.read_all(tmp_path)[0]
+    assert r["detail"] == "sort" and r["tokens"] == 1234
+
+
+def test_cli_prune_removes_terminal_past_retention(tmp_path):
+    activity.start_run(tmp_path, id="old", surface="pipeline", title="t", now=0.0)
+    activity.finish_run(tmp_path, "old", "ended", now=0.0)
+    activity.start_run(tmp_path, id="fresh", surface="pipeline", title="t")
+    rc = activity.main(["prune", "--env-root", str(tmp_path), "--retain-s", "100"])
+    ids = {r["id"] for r in activity.read_all(tmp_path)}
+    assert rc == 0 and ids == {"fresh"}
+
+
+def test_cli_invalid_surface_is_noop_never_breaks_runner(tmp_path):
+    # a bad surface must not crash the runner: no record, clean exit
+    rc = activity.main(["start", "--env-root", str(tmp_path), "--id", "bad-1",
+                        "--surface", "nonsense", "--title", "t"])
+    assert rc == 0 and activity.read_all(tmp_path) == []
+
+
+def test_cli_no_subcommand_is_usage_error(tmp_path):
+    assert activity.main([]) == 2

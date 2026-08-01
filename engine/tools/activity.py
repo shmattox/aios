@@ -187,3 +187,101 @@ def prune(env_root, *, retain_s=86400, now=None):
                     pass
             removed += 1
     return removed
+
+
+# ── CLI (so a scheduled-task RUNNER can bracket each stage's `claude -p` from shell/PS) ──
+# The deploy runners (deploy/{windows,mac,linux}) call:
+#   activity.py start  --env-root <r> --id <id> --surface pipeline --title <task> --detail <stage> --pid <RUNNER_PID>
+#   activity.py finish --env-root <r> --id <id> --status ended|failed
+# Passing the RUNNER's own pid makes the record live for exactly the stage's lifetime with no
+# periodic heartbeat (the runner process is alive iff the stage is running). Every subcommand is
+# best-effort: a runtime failure NEVER breaks the producer's run (exit 0); only malformed CLI
+# *usage* (unknown/absent subcommand, missing required flag) exits non-zero, for tests + humans.
+
+def main(argv=None):
+    import argparse
+    try:
+        from _util import utf8_stdio
+        utf8_stdio()
+    except Exception:
+        pass
+    p = argparse.ArgumentParser(
+        prog="activity.py",
+        description="Live-run activity record CLI (best-effort; never breaks a producer).")
+    sub = p.add_subparsers(dest="cmd")
+
+    def _common(sp):
+        sp.add_argument("--env-root", required=True)
+        sp.add_argument("--id", required=True)
+
+    st = sub.add_parser("start", help="write a running record")
+    _common(st)
+    st.add_argument("--surface", required=True)
+    st.add_argument("--title", default="")
+    st.add_argument("--detail", default=None)
+    st.add_argument("--pid", type=int, default=None)
+    st.add_argument("--repo", default=None)
+    st.add_argument("--item-ids", default="", help="comma-separated backlog ids")
+    st.add_argument("--log-path", default=None)
+    st.add_argument("--worktree", default=None)
+
+    hb = sub.add_parser("heartbeat", help="refresh a running record")
+    _common(hb)
+    hb.add_argument("--detail", default=None)
+    hb.add_argument("--tokens", type=int, default=None)
+    hb.add_argument("--cost", type=float, default=None)
+    hb.add_argument("--log-path", default=None)
+
+    fi = sub.add_parser("finish", help="close a record to a terminal status")
+    _common(fi)
+    fi.add_argument("--status", default="ended")
+    fi.add_argument("--tokens", type=int, default=None)
+    fi.add_argument("--cost", type=float, default=None)
+    fi.add_argument("--detail", default=None)
+
+    pr = sub.add_parser("prune", help="remove terminal records past retention")
+    pr.add_argument("--env-root", required=True)
+    pr.add_argument("--retain-s", type=int, default=86400)
+
+    args = p.parse_args(argv)
+    if not args.cmd:
+        p.print_help(sys.stderr)
+        return 2
+
+    try:
+        if args.cmd == "start":
+            item_ids = [s for s in args.item_ids.split(",") if s.strip()]
+            rec = start_run(args.env_root, id=args.id, surface=args.surface, title=args.title,
+                            item_ids=item_ids, repo=args.repo, pid=args.pid,
+                            log_path=args.log_path, worktree=args.worktree)
+            if rec and args.detail is not None:
+                heartbeat(args.env_root, args.id, detail=args.detail)
+        elif args.cmd == "heartbeat":
+            up = {}
+            if args.detail is not None:
+                up["detail"] = args.detail
+            if args.tokens is not None:
+                up["tokens"] = args.tokens
+            if args.cost is not None:
+                up["cost_usd"] = args.cost
+            if args.log_path is not None:
+                up["log_path"] = args.log_path
+            heartbeat(args.env_root, args.id, **up)
+        elif args.cmd == "finish":
+            up = {}
+            if args.tokens is not None:
+                up["tokens"] = args.tokens
+            if args.cost is not None:
+                up["cost_usd"] = args.cost
+            if args.detail is not None:
+                up["detail"] = args.detail
+            finish_run(args.env_root, args.id, args.status, **up)
+        elif args.cmd == "prune":
+            prune(args.env_root, retain_s=args.retain_s)
+    except Exception:
+        return 0  # best-effort: a runtime hiccup must never break the runner
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

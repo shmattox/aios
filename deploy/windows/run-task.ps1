@@ -17,6 +17,25 @@ if (-not $py) { $py = (Get-Command python3 -ErrorAction SilentlyContinue).Source
 # A21: run window floor for the post-run context-log check (120s slack for clock rounding).
 $sinceUtc = (Get-Date).ToUniversalTime().AddSeconds(-120).ToString('yyyy-MM-ddTHH:mm:ssZ')
 
+# A122: live-run observability. Bracket the stage invocation with a 'pipeline' activity record so
+# the dashboard Activity view shows what is running right now. The record carries THIS runner's PID
+# ($PID) - the runner process is alive iff the stage is running, so liveness needs no heartbeat.
+# Every call is best-effort: a failure here MUST NEVER break the scheduled stage (mirrors A119's
+# never-raise-into-a-producer contract). ASCII-only per the cp1252 parse note below.
+$actTool  = Join-Path $PluginRoot 'engine\tools\activity.py'
+$actId    = "pipeline-$TaskId-$startEpoch"
+$actStage = if ($manifest.context_stages) { @($manifest.context_stages)[0] } else { $TaskId }
+function Start-Activity {
+  if (-not $py) { return }
+  try { & $py $actTool start --env-root $EnvRoot --id $actId --surface pipeline `
+          --title $TaskId --detail $actStage --pid $PID --repo aios | Out-Null } catch {}
+}
+function Stop-Activity([int]$code) {
+  if (-not $py) { return }
+  $status = if ($code -eq 0) { 'ended' } else { 'failed' }
+  try { & $py $actTool finish --env-root $EnvRoot --id $actId --status $status | Out-Null } catch {}
+}
+
 function Complete-Run([string]$resultText) {
   Set-Content -Path $out -Value $resultText -Encoding utf8
   # A21: dated result rotation - last-result.txt alone is overwritten each run, which left a
@@ -54,8 +73,10 @@ if ($manifest.type -eq 'script') {
   $script = Join-Path $PluginRoot ($manifest.script -replace '/','\')
   if (-not (Test-Path $script)) { Add-Content $log "$stamp  ERROR: script not found at $script"; exit 1 }
   Set-Location $EnvRoot
+  Start-Activity
   $result = & $py $script --env-root $EnvRoot
   $code = $LASTEXITCODE
+  Stop-Activity $code
   Complete-Run ($result | Out-String)
   # script output is often multi-line JSON - log a compacted single line so the trailer stays readable
   $last = ((($result | Out-String).Trim() -replace '\s+', ' '))
@@ -103,12 +124,14 @@ if ($manifest.max_turns) { $claudeArgs += @('--max-turns', "$($manifest.max_turn
 # terminal must not leave the var behind, or later human sessions in that terminal would be
 # stamped machine and silently pruned without a record.
 $env:AIOS_MACHINE_RUN = $TaskId
+Start-Activity
 try {
   $result = & $claude @claudeArgs
   $code = $LASTEXITCODE
 } finally {
   Remove-Item Env:\AIOS_MACHINE_RUN -ErrorAction SilentlyContinue
 }
+Stop-Activity $code
 Complete-Run ($result | Out-String)
 $last = (($result | Out-String).TrimEnd() -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)
 Add-Content $log "$stamp  exit=$code  $last"

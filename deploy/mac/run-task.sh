@@ -35,6 +35,25 @@ log_err() { echo "$STAMP  ERROR: $1" >> "$LOG"; echo "ERROR: $1" >&2; }
 # A21: run window floor for the post-run context-log check (120s slack for clock rounding).
 SINCE_UTC="$(date -u -v-120S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-120 seconds' +%Y-%m-%dT%H:%M:%SZ)"
 
+# A122: live-run observability — bracket each stage with a 'pipeline' activity record so the dashboard
+# Activity view shows what is running right now. The record carries THIS runner's pid ($$): the runner
+# is alive iff the stage is running, so liveness needs no heartbeat. Best-effort — a failure here MUST
+# NEVER break the scheduled stage (mirror of deploy/windows/run-task.ps1 Start-Activity/Stop-Activity).
+ACT_TOOL="$PLUGIN_ROOT/engine/tools/activity.py"
+ACT_ID="pipeline-$TASK_ID-$(date +%s)"
+ACT_STAGE="$("$PY" -c 'import json,sys
+t=[x for x in json.load(open(sys.argv[1]))["tasks"] if x["id"]==sys.argv[2]]
+cs=(t[0].get("context_stages") if t else None) or [sys.argv[2]]
+print(cs[0])' "$MANIFEST" "$TASK_ID" 2>/dev/null || echo "$TASK_ID")"
+activity_start() {
+  "$PY" "$ACT_TOOL" start --env-root "$ENV_ROOT" --id "$ACT_ID" --surface pipeline \
+    --title "$TASK_ID" --detail "$ACT_STAGE" --pid "$$" --repo aios >/dev/null 2>&1 || true
+}
+activity_finish() {  # $1 = stage exit code
+  local st=ended; [ "$1" -eq 0 ] || st=failed
+  "$PY" "$ACT_TOOL" finish --env-root "$ENV_ROOT" --id "$ACT_ID" --status "$st" >/dev/null 2>&1 || true
+}
+
 # A21: shared post-run tail — write the result, rotate a dated forensic copy, and run the
 # deterministic context-log check (the model self-reporting "line appended" is not evidence).
 # WARN-only: the task's own exit code stands; the WARN goes loud into last-run.log + last-result.
@@ -73,10 +92,12 @@ print(t[0].get("script","") if t else "")' "$MANIFEST" "$TASK_ID")"
   SCRIPT="$PLUGIN_ROOT/$SCRIPT_REL"
   [ -f "$SCRIPT" ] || { log_err "script not found at $SCRIPT"; exit 1; }
   cd "$ENV_ROOT"
+  activity_start
   set +e
   RESULT="$("$PY" "$SCRIPT" --env-root "$ENV_ROOT")"
   CODE=$?
   set -e
+  activity_finish "$CODE"
   complete_run "$RESULT"
   LAST="$(printf '%s\n' "$RESULT" | awk 'NF{l=$0} END{print l}')"
   echo "$STAMP  exit=$CODE  $LAST" >> "$LOG"
@@ -144,6 +165,7 @@ t=[x for x in json.load(open(sys.argv[1]))["tasks"] if x["id"]==sys.argv[2]]
 print(t[0].get("max_turns","") if t else "")' "$MANIFEST" "$TASK_ID")"
 [ -n "$TASK_MAXTURNS" ] && ARGS+=(--max-turns "$TASK_MAXTURNS")
 
+activity_start
 set +e
 # A16: mark this as a machine (fleet) run — the session-evidence hook stamps `machine_run: true`
 # so session-capture never synthesizes the pipeline's own headless sessions into records. Scoped
@@ -152,6 +174,7 @@ set +e
 RESULT="$(AIOS_MACHINE_RUN="$TASK_ID" "$CLAUDE" "${ARGS[@]}")"
 CODE=$?
 set -e
+activity_finish "$CODE"
 
 complete_run "$RESULT"
 LAST="$(printf '%s\n' "$RESULT" | awk 'NF{l=$0} END{print l}')"
