@@ -27,6 +27,7 @@ from backlog_parse import parse_backlog, station_for  # engine tools shim alread
 import draft_diff  # "Proposed change" diff (A109)
 import activity  # run-record contract (A119) — live-run observability
 import otel_runs  # Flow view: native-OTel traces (Jaeger store) → runs + graph + cost
+import pipeline_state  # master Flow view: backlog+factory+OTel -> pipeline stage model
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -266,6 +267,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._events()
         if route.startswith("/api/"):
             return self._api_get(route)
+        if route == "/pipeline" or route.startswith("/pipeline/"):
+            return self._serve_flow_app(route)
         return super().do_GET()
 
     def do_HEAD(self):
@@ -301,6 +304,25 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_flow_app(self, route):
+        base = (UI_DIR.parent / "flow-app" / "dist").resolve()
+        rel = route[len("/pipeline"):].lstrip("/") or "index.html"
+        target = (base / rel).resolve()
+        if base != target and base not in target.parents:      # no traversal outside dist/
+            return self._deny(404, "not found")
+        if target.is_dir():
+            target = target / "index.html"
+        if not target.is_file():
+            target = base / "index.html"                       # SPA fallback
+        if not target.is_file():
+            return self._deny(404, "flow-app not built (run: cd engine/dashboard/flow-app && npm ci && npm run build)")
+        ctype = {".js": "text/javascript", ".css": "text/css", ".html": "text/html; charset=utf-8",
+                 ".svg": "image/svg+xml", ".json": "application/json"}.get(target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(200); self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)
 
     def _api_get(self, route):
@@ -345,6 +367,10 @@ class Handler(SimpleHTTPRequestHandler):
             if not re.match(r"^[0-9a-fA-F]{1,40}$", tid):     # Jaeger trace ids are hex; never proxy junk
                 return self._deny(400, "bad trace id")
             return self._send_json(otel_runs.fetch_run(tid))
+        if route == "/api/pipeline":
+            m = pipeline_state.model(str(env), self.server._pipeline_prev)
+            self.server._pipeline_prev = m.get("stage_by_id", {})
+            return self._send_json(m)
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
@@ -676,6 +702,7 @@ def make_server(env_root, port=0):
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.env_root = Path(env_root)
     srv.token = secrets.token_urlsafe(32)
+    srv._pipeline_prev = {}   # per-process prev stage-by-id, for /api/pipeline flow diffs
     try:
         activity.prune(srv.env_root)
     except Exception:

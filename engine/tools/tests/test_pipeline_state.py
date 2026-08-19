@@ -1,6 +1,9 @@
-import os, sys, json
+import os, sys, json, threading
+import urllib.request, urllib.error
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "dashboard"))
 import pipeline_state as p
+from dashboard_server import make_server
 
 def _ctx(**kw):
     base = {k: set() for k in ("spec_ids", "plan_ids", "active_ids", "review_ids", "held_ids", "done_ids")}
@@ -113,3 +116,61 @@ def test_active_review_and_held_never_raise_on_malformed_json(tmp_path):
         json.dumps({"held": ["X1", "X2"]}), encoding="utf-8")  # held as list of strings, not dicts
     items, ctx = p.gather(str(tmp_path))          # must not raise
     assert ctx["active_ids"] == set() and ctx["held_ids"] == set()
+
+
+# --- Task 4: dashboard_server wiring — /api/pipeline + /pipeline/* static -----
+
+def _mk_env(tmp_path):
+    (tmp_path / "state").mkdir(exist_ok=True)
+    (tmp_path / "profile").mkdir(exist_ok=True)
+    (tmp_path / "BACKLOG.md").write_text(
+        "## Open\n- [ ] **Q1** — x.\n  - acceptance: y\n", encoding="utf-8")
+    return tmp_path
+
+
+def _get_json(srv, path):
+    port = srv.server_address[1]
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as r:
+        return json.loads(r.read())
+
+
+def test_api_pipeline_route_returns_model_and_tracks_flows(tmp_path):
+    # A real end-to-end HTTP hit through the running server — the brief's own draft test only
+    # called pipeline_state.model() directly, which would pass even with zero server wiring.
+    env = _mk_env(tmp_path)
+    srv = make_server(str(env), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        assert srv._pipeline_prev == {}   # make_server initializes the per-process flow-diff map
+        m = _get_json(srv, "/api/pipeline")
+        assert any(s["id"] == "backlog" and s["count"] == 1 for s in m["stages"])
+        assert m["flows"] == []                       # first poll: no prior state, no flows yet
+        assert srv._pipeline_prev == m["stage_by_id"]  # server updates its prev map after the call
+
+        # advance Q1 to the spec stage between polls (a spec doc naming it) and re-poll
+        specs = env / "docs" / "superpowers" / "specs"
+        specs.mkdir(parents=True)
+        (specs / "2026-08-19-q1-thing-design.md").write_text("# Q1 thing\nbody", encoding="utf-8")
+        m2 = _get_json(srv, "/api/pipeline")
+        assert {"item_id": "Q1", "from": "backlog", "to": "spec"} in m2["flows"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_pipeline_static_route_404s_with_not_built_message(tmp_path):
+    # flow-app/dist/ doesn't exist yet (built in a later task) — must 404 clearly, not 500/crash.
+    env = _mk_env(tmp_path)
+    srv = make_server(str(env), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        port = srv.server_address[1]
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/pipeline/", timeout=5)
+        assert e.value.code == 404
+        assert "not built" in e.value.read().decode().lower()
+    finally:
+        srv.shutdown()
+        srv.server_close()
