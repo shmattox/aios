@@ -86,6 +86,38 @@ def heartbeat(env_root, id, *, now=None, **updates):
     _atomic_write(_rec_path(env_root, id), rec)
 
 
+def start_span(env_root, run_id, *, name, kind="internal", parent_span_id=None, now=None):
+    if not _safe_id(run_id):
+        return None
+    rec = _read_json(_rec_path(env_root, run_id))
+    if not rec:
+        return None
+    spans = rec.setdefault("spans", [])
+    span_id = f"{run_id}#{len(spans) + 1}"
+    spans.append({"span_id": span_id, "parent_span_id": parent_span_id, "name": name,
+                  "kind": kind, "status": "running", "start": _now(now), "end": None,
+                  "input_tokens": 0, "output_tokens": 0, "cost": None, "error": None})
+    rec["heartbeat"] = _now(now)
+    _atomic_write(_rec_path(env_root, run_id), rec)
+    return span_id
+
+
+def end_span(env_root, run_id, span_id, *, status="ok", input_tokens=0, output_tokens=0,
+             cost=None, error=None, now=None):
+    if not _safe_id(run_id):
+        return
+    rec = _read_json(_rec_path(env_root, run_id))
+    if not rec:
+        return
+    for s in rec.get("spans", []):
+        if s.get("span_id") == span_id:
+            s.update({"status": status, "end": _now(now), "input_tokens": input_tokens,
+                      "output_tokens": output_tokens, "cost": cost, "error": error})
+            break
+    rec["heartbeat"] = _now(now)
+    _atomic_write(_rec_path(env_root, run_id), rec)
+
+
 def finish_run(env_root, id, status, *, now=None, **updates):
     if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
         return

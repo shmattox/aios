@@ -205,3 +205,25 @@ def test_start_run_carries_span_tree_fields(tmp_path):
 def test_start_run_root_defaults_true_without_parent(tmp_path):
     activity.start_run(tmp_path, id="factory-A1-1", surface="factory", title="d", now=0.0)
     assert activity.read_all(tmp_path)[0]["root"] is True
+
+
+# ─── Task 2: start_span / end_span ───
+
+def test_start_and_end_span(tmp_path):
+    activity.start_run(tmp_path, id="wf-1", surface="workflow", title="reconcile", now=0.0)
+    root = activity.start_span(tmp_path, "wf-1", name="invoke_workflow", now=0.0)
+    child = activity.start_span(tmp_path, "wf-1", name="audit", kind="invoke_agent",
+                                parent_span_id=root, now=1.0)
+    assert root == "wf-1#1" and child == "wf-1#2"
+    activity.end_span(tmp_path, "wf-1", child, status="ok",
+                      input_tokens=800, output_tokens=200, cost=0.9, now=5.0)
+    spans = activity.read_all(tmp_path)[0]["spans"]
+    assert len(spans) == 2
+    c = spans[1]
+    assert c["parent_span_id"] == root and c["kind"] == "invoke_agent"
+    assert c["status"] == "ok" and c["end"] == 5.0
+    assert c["input_tokens"] == 800 and c["output_tokens"] == 200 and c["cost"] == 0.9
+
+
+def test_start_span_bad_id_returns_none_no_write(tmp_path):
+    assert activity.start_span(tmp_path, "../evil", name="x") is None
