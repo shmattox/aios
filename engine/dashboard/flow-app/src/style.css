@@ -1,0 +1,14 @@
+:root { --bg-0:#0e0f11; --bg-1:#16171a; --bg-2:#1c1d21; --text-0:#e8e9ec; --text-1:#9a9ca3;
+  --text-2:#63656c; --accent:#6e79d6; --ok:#4cc38a; --border:rgba(255,255,255,.10);
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace; }
+html,body,#root { margin:0; height:100%; background:var(--bg-0); }
+.react-flow__attribution { display:none; }
+.react-flow__edge-path { stroke:rgba(255,255,255,.18); }
+.react-flow__edge.animated .react-flow__edge-path { stroke:var(--text-0); }
+.pnode { background:var(--bg-1); border:1px solid var(--border); border-left:2px solid var(--text-2);
+  border-radius:8px; padding:9px 12px; min-width:118px; font-family:"Inter",system-ui,sans-serif; }
+.pnode.hot { border-left-color:var(--accent); box-shadow:0 0 0 1px rgba(110,121,214,.14); }
+.pnode .pnode-lbl { font:600 11px/1.2 var(--mono); letter-spacing:.04em; text-transform:uppercase; color:var(--text-0); }
+.pnode .pnode-count { font:650 22px/1.1 var(--mono); color:var(--text-0); margin-top:3px; }
+.pnode .pnode-count.zero { color:var(--text-2); }
+.react-flow__handle { opacity:0; }
