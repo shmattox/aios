@@ -169,6 +169,21 @@ def run_cost(rec):
     return float(sum(s.get("cost") or 0.0 for s in (rec.get("spans") or [])))
 
 
+def build_graph(records):
+    """Project the span tree into {nodes, edges} for a layout engine (dagre). One rule:
+    an edge exists wherever a span declares a parent_span_id — intra-run tree AND cross-run
+    fan-out both fall out of it (the OTel parent_span_id contract)."""
+    nodes, edges = [], []
+    for r in records or []:
+        for s in r.get("spans") or []:
+            nodes.append({"id": s["span_id"], "label": s.get("name", ""),
+                          "status": s.get("status", "running"), "kind": s.get("kind", "internal"),
+                          "run_id": r.get("id")})
+            if s.get("parent_span_id"):
+                edges.append({"source": s["parent_span_id"], "target": s["span_id"]})
+    return {"nodes": nodes, "edges": edges}
+
+
 def read_all(env_root):
     out = []
     d = ACTIVITY_DIR(env_root)

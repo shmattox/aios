@@ -266,3 +266,25 @@ def test_run_cost_sums_span_costs(tmp_path):
 def test_run_cost_ignores_none_and_empty(tmp_path):
     assert activity.run_cost({"spans": []}) == 0.0
     assert activity.run_cost({"spans": [{"cost": None}, {"cost": 0.4}]}) == pytest.approx(0.4)
+
+
+# ─── Task 5: build_graph — the renderable projection ───
+
+def test_build_graph_projects_span_tree_and_fanout(tmp_path):
+    # a session invokes a workflow whose coordinator fans out to two agents
+    activity.start_run(tmp_path, id="session-1", surface="session", title="s", now=0.0)
+    inv = activity.start_span(tmp_path, "session-1", name="invoke_workflow", now=0.0)
+    activity.start_run(tmp_path, id="wf-1", surface="workflow", title="reconcile",
+                       parent_id="session-1", now=0.0)
+    coord = activity.start_span(tmp_path, "wf-1", name="coordinator",
+                                parent_span_id=inv, now=0.0)          # cross-run edge
+    activity.start_span(tmp_path, "wf-1", name="agent-a", parent_span_id=coord, now=0.0)
+    activity.start_span(tmp_path, "wf-1", name="agent-b", parent_span_id=coord, now=0.0)
+
+    g = activity.build_graph(activity.read_all(tmp_path))
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {"session-1#1", "wf-1#1", "wf-1#2", "wf-1#3"}
+    edges = {(e["source"], e["target"]) for e in g["edges"]}
+    assert edges == {("session-1#1", "wf-1#1"),   # session -> workflow (fan-in point)
+                     ("wf-1#1", "wf-1#2"),         # coordinator -> agent-a
+                     ("wf-1#1", "wf-1#3")}          # coordinator -> agent-b
