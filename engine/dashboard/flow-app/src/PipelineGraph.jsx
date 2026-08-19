@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import ReactFlow, {
   Background, Controls, Handle, Position,
-  ReactFlowProvider, useNodesState, useEdgesState, useUpdateNodeInternals,
+  ReactFlowProvider, useNodesState, useEdgesState, useStoreApi,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import "./style.css";
@@ -25,8 +25,9 @@ function Graph() {
   const model = usePipeline(4000);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const updateNodeInternals = useUpdateNodeInternals();
+  const store = useStoreApi();
 
+  // Sync the polled model into React Flow state.
   useEffect(() => {
     if (!model) return;
     const stages = model.stages || [];
@@ -51,12 +52,25 @@ function Graph() {
         animated: active.has(e.from + ">" + e.to),
       }))
     );
+  }, [model, setNodes, setEdges]);
 
-    // React Flow's auto-measure (ResizeObserver) does not reliably fire for async-loaded
-    // nodes; without a forced re-measure, handleBounds stays null and edges silently drop.
-    const ids = stages.map((s) => s.id);
-    requestAnimationFrame(() => ids.forEach((id) => updateNodeInternals(id)));
-  }, [model, setNodes, setEdges, updateNodeInternals]);
+  // Force React Flow to measure node/handle bounds AFTER the nodes commit to the DOM.
+  // Some environments' ResizeObserver does not fire for async-mounted nodes, leaving
+  // handleBounds null so every edge is silently dropped. Measuring directly from the
+  // committed DOM elements is deterministic. Keyed on `nodes` so it runs post-commit.
+  useEffect(() => {
+    if (!nodes.length) return;
+    const raf = requestAnimationFrame(() => {
+      const els = document.querySelectorAll(".react-flow__node");
+      if (!els.length) return;
+      store.getState().updateNodeDimensions(
+        Array.from(els).map((el) => ({
+          id: el.getAttribute("data-id"), nodeElement: el, forceUpdate: true,
+        }))
+      );
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [nodes, store]);
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
