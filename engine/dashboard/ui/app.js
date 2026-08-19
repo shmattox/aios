@@ -6,6 +6,7 @@ import { InboxView } from "/views/inbox.js";
 import { BoardView } from "/views/board.js";
 import { ActivityView } from "/views/activity.js";
 import { FlowView } from "/views/flow.js";
+import { PipelineView } from "/views/pipeline.js";
 
 // v1-panel compat: the existing panels/*.js take (mountEl, aios) and may read window.aios.
 const aiosCompat = {
@@ -30,6 +31,7 @@ const ICONS = {
   board: html`<svg class="ic" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1"/><rect x="10.8" y="2.5" width="3.4" height="9.5" rx="1"/></svg>`,
   activity: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8.5h3l1.5-5 3 9 1.5-4h3.5"/></svg>`,
   flow: html`<svg class="ic" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="3.8" r="1.8"/><circle cx="12.5" cy="12.2" r="1.8"/><path d="M5.3 7.2l5.4-2.6M5.3 8.8l5.4 2.6"/></svg>`,
+  pipeline: html`<svg class="ic" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.6"/><circle cx="8" cy="4" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="13" cy="8" r="1.6"/><path d="M4.4 7.3l2.4-2.1M4.4 8.7l2.4 2.1M9.4 4.6l2.4 2.6M9.4 11.4l2.4-2.6"/></svg>`,
   mirror: html`<svg class="ic" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>`,
   stats: html`<svg class="ic" viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13V6.5"/></svg>`,
 };
@@ -60,6 +62,7 @@ const NAV = [
   { key: "board", label: "Board", view: BoardView },
   { key: "activity", label: "Activity", view: ActivityView },
   { key: "flow", label: "Flow", view: FlowView },
+  { key: "pipeline", label: "Pipeline", view: PipelineView },
   { key: "mirror", label: "Mirror", view: MirrorView },
   { key: "stats", label: "Stats", soon: "v2b", view: () => html`<${Soon} name="Stats" note="Spend, gate metrics, throughput — v2b." />` },
 ];

@@ -220,7 +220,11 @@ def test_events_fingerprint_reacts_to_activity(server, env_root):
     port = server.server_address[1]
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/events",
                                  headers={"Host": f"127.0.0.1:{port}"})
-    stream = urllib.request.urlopen(req, timeout=5)
+    # Long-lived SSE stream: the blocking readline()s below wait on the server's poll loop,
+    # which is thread-starved under full-suite load — a tight timeout flakes here (unlike the
+    # quick request/response tests). Generous headroom keeps it deterministic without changing
+    # what's asserted.
+    stream = urllib.request.urlopen(req, timeout=20)
     stream.readline()  # 'event: hello'
     stream.readline()  # 'data: {}'
     stream.readline()  # blank

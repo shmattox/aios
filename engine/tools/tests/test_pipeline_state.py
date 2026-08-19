@@ -159,8 +159,26 @@ def test_api_pipeline_route_returns_model_and_tracks_flows(tmp_path):
         srv.server_close()
 
 
-def test_pipeline_static_route_404s_with_not_built_message(tmp_path):
-    # flow-app/dist/ doesn't exist yet (built in a later task) — must 404 clearly, not 500/crash.
+def test_pipeline_static_route_serves_built_app(tmp_path):
+    # flow-app/dist/ is committed and served static — /pipeline/ returns the built index.html.
+    env = _mk_env(tmp_path)
+    srv = make_server(str(env), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        port = srv.server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/pipeline/", timeout=5) as r:
+            assert r.status == 200
+            body = r.read().decode()
+        assert 'id="root"' in body           # the React mount point
+        assert "/pipeline/assets/" in body   # the scoped, based asset path
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_pipeline_static_route_blocks_traversal(tmp_path):
+    # the static handler must never serve outside flow-app/dist/.
     env = _mk_env(tmp_path)
     srv = make_server(str(env), port=0)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -168,9 +186,9 @@ def test_pipeline_static_route_404s_with_not_built_message(tmp_path):
     try:
         port = srv.server_address[1]
         with pytest.raises(urllib.error.HTTPError) as e:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/pipeline/", timeout=5)
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/pipeline/../../dashboard_server.py", timeout=5)
         assert e.value.code == 404
-        assert "not built" in e.value.read().decode().lower()
     finally:
         srv.shutdown()
         srv.server_close()
