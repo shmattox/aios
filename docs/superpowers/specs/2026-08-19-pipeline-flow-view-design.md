@@ -45,10 +45,13 @@ real sources and the dashboard serves it at **`/api/pipeline`**:
 
 ```json
 { "stages": [{"id": "backlog", "label": "Backlog", "count": 12,
-              "items": [{"id": "A1", "title": "...", "age_s": 900, "repo": "aios"}]}],
+              "items": [{"id": "A1", "title": "...", "repo": "aios"}]}],
   "edges":  [{"from": "backlog", "to": "brainstorm"}],
-  "flows":  [{"item_id": "A1", "from": "spec", "to": "implement", "at": 1787170000}] }
+  "flows":  [{"item_id": "A1", "from": "spec", "to": "implement"}] }
 ```
+<!-- Slice 1 ships this exact shape; `age_s` on items and `at` on flows are deferred until a
+     consumer needs them (the frontend uses neither). -->
+
 
 `flows` are transitions computed by diffing the current stage-assignment against the prior poll's
 (held in a small server-side cache) — the animation is *items actually moving*, not decoration.
