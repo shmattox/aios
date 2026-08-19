@@ -54,22 +54,29 @@ function Graph() {
     );
   }, [model, setNodes, setEdges]);
 
-  // Force React Flow to measure node/handle bounds AFTER the nodes commit to the DOM.
-  // Some environments' ResizeObserver does not fire for async-mounted nodes, leaving
-  // handleBounds null so every edge is silently dropped. Measuring directly from the
-  // committed DOM elements is deterministic. Keyed on `nodes` so it runs post-commit.
+  // Force React Flow to measure node/handle bounds. Its ResizeObserver auto-measure does not
+  // fire reliably for async-mounted nodes here (also embedded in an iframe), leaving handleBounds
+  // null so every edge is silently dropped. Retry until nodes are painted and edges render, then
+  // stop; re-arms on each poll via the `nodes` dep.
   useEffect(() => {
     if (!nodes.length) return;
-    const raf = requestAnimationFrame(() => {
+    let cancelled = false, tries = 0, timer;
+    const tick = () => {
+      if (cancelled) return;
       const els = document.querySelectorAll(".react-flow__node");
-      if (!els.length) return;
-      store.getState().updateNodeDimensions(
-        Array.from(els).map((el) => ({
-          id: el.getAttribute("data-id"), nodeElement: el, forceUpdate: true,
-        }))
-      );
-    });
-    return () => cancelAnimationFrame(raf);
+      if (els.length) {
+        store.getState().updateNodeDimensions(
+          Array.from(els).map((el) => ({
+            id: el.getAttribute("data-id"), nodeElement: el, forceUpdate: true,
+          }))
+        );
+      }
+      tries += 1;
+      const rendered = document.querySelector(".react-flow__edge-path");
+      if (!rendered && tries < 30) timer = setTimeout(tick, 120);
+    };
+    timer = setTimeout(tick, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [nodes, store]);
 
   return (
