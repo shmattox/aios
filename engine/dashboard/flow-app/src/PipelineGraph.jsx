@@ -1,5 +1,7 @@
-import React, { useMemo } from "react";
-import ReactFlow, { Background, Controls, Handle, Position } from "reactflow";
+import React, { useEffect } from "react";
+import ReactFlow, {
+  Background, Controls, Handle, Position, useNodesState, useEdgesState,
+} from "reactflow";
 import "reactflow/dist/style.css";
 import "./style.css";
 import { usePipeline } from "./usePipeline";
@@ -20,24 +22,45 @@ const nodeTypes = { stage: StageNode };
 
 export default function PipelineGraph() {
   const model = usePipeline(4000);
-  const { nodes, edges } = useMemo(() => {
-    const stages = (model && model.stages) || [];
-    const active = new Set(((model && model.flows) || []).map((f) => f.from + ">" + f.to));
-    const hot = new Set(((model && model.flows) || []).flatMap((f) => [f.from, f.to]));
-    const nodes = stages.map((s, i) => ({
-      id: s.id, type: "stage", draggable: false, position: { x: i * STAGE_X, y: STAGE_Y },
-      data: { label: s.label, count: s.count, hot: hot.has(s.id) },
-    }));
-    const edges = ((model && model.edges) || []).map((e) => ({
-      id: e.from + ">" + e.to, source: e.from, target: e.to, animated: active.has(e.from + ">" + e.to),
-    }));
-    return { nodes, edges };
-  }, [model]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  useEffect(() => {
+    if (!model) return;
+    const stages = model.stages || [];
+    const flows = model.flows || [];
+    const active = new Set(flows.map((f) => f.from + ">" + f.to));
+    const hot = new Set(flows.flatMap((f) => [f.from, f.to]));
+
+    // Merge onto existing node objects by id so React Flow's measured fields
+    // (width/height/handleBounds) survive each poll — no re-measure flicker.
+    setNodes((prev) => {
+      const byId = new Map(prev.map((n) => [n.id, n]));
+      return stages.map((s, i) => {
+        const base = byId.get(s.id) || {
+          id: s.id, type: "stage", draggable: false,
+          position: { x: i * STAGE_X, y: STAGE_Y },
+        };
+        return { ...base, data: { label: s.label, count: s.count, hot: hot.has(s.id) } };
+      });
+    });
+
+    setEdges(
+      (model.edges || []).map((e) => ({
+        id: e.from + ">" + e.to, source: e.from, target: e.to,
+        animated: active.has(e.from + ">" + e.to),
+      }))
+    );
+  }, [model, setNodes, setEdges]);
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView
-                 nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
+      <ReactFlow
+        nodes={nodes} edges={edges}
+        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes} fitView nodesConnectable={false} elementsSelectable={false}
+        proOptions={{ hideAttribution: true }}
+      >
         <Background color="#26282c" gap={22} size={1} />
         <Controls showInteractive={false} />
       </ReactFlow>
