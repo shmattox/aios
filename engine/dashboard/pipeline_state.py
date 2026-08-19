@@ -32,19 +32,19 @@ _ORDER = {sid: i for i, (sid, _) in enumerate(STAGES)}
 def classify_stage(item, ctx):
     """Most-advanced-stage-wins. `ctx` sets are id-membership per advanced stage."""
     iid = item.get("id") or ""
-    if item.get("status") == "done" or iid in ctx["done_ids"]:
+    if item.get("state") == "done" or iid in ctx["done_ids"]:
         return "complete"
-    if iid in ctx["held_ids"]:
+    if iid in ctx["held_ids"] or item.get("gate_human"):
         return "gate"
     if iid in ctx["review_ids"]:
         return "review"
     if iid in ctx["active_ids"]:
         return "subagent"
-    if iid in ctx["plan_ids"] or item.get("factory_ready"):
+    if iid in ctx["plan_ids"]:
         return "implement"
     if iid in ctx["spec_ids"]:
         return "spec"
-    if item.get("seed"):
+    if item.get("state") == "seed":
         return "brainstorm"
     return "backlog"
 
@@ -56,7 +56,7 @@ def build_model(items, ctx, prev_stage_by_id=None):
         sid = classify_stage(it, ctx)
         iid = it.get("id") or ""
         cur[iid] = sid
-        stage_items[sid].append({"id": it.get("id"), "title": it.get("title"), "repo": it.get("repo")})
+        stage_items[sid].append({"id": it.get("id"), "title": it.get("headline"), "repo": it.get("repo")})
     stages = [{"id": sid, "label": lbl, "count": len(stage_items[sid]), "items": stage_items[sid][:12]}
               for sid, lbl in STAGES]
     edges = [{"from": a, "to": b} for a, b in EDGES]
@@ -75,7 +75,11 @@ def _backlog_files(env_root):
         out.append(("env-ops", root_bl))
     proj = os.path.join(env_root, "Projects")
     if os.path.isdir(proj):
-        for d in sorted(os.listdir(proj)):
+        try:
+            entries = sorted(os.listdir(proj))
+        except OSError:
+            entries = []
+        for d in entries:
             bl = os.path.join(proj, d, "BACKLOG.md")
             if os.path.isfile(bl):
                 out.append((d, bl))
@@ -98,34 +102,37 @@ def _ids_in_docs(env_root, subdir):
 def _active_and_review_ids(env_root):
     """Live factory drains → subagent/review stage, from state/activity/factory-*.json."""
     active, review = set(), set()
-    import time as _t
-    now = _t.time()
-    for f in glob.glob(os.path.join(env_root, "state", "activity", "factory-*.json")):
-        try:
-            with open(f, encoding="utf-8") as fh:
-                rec = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        if rec.get("status") != "running" or (now - rec.get("heartbeat", 0)) > 90:
-            continue
-        detail = str(rec.get("detail") or "").lower()
-        bucket = review if "review" in detail or "gate" in detail else active
-        for i in rec.get("item_ids") or []:
-            bucket.add(i)
+    try:
+        import time as _t
+        now = _t.time()
+        for f in glob.glob(os.path.join(env_root, "state", "activity", "factory-*.json")):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    rec = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            if rec.get("status") != "running" or (now - rec.get("heartbeat", 0)) > 90:
+                continue
+            detail = str(rec.get("detail") or "").lower()
+            bucket = review if "review" in detail or "gate" in detail else active
+            for i in rec.get("item_ids") or []:
+                bucket.add(i)
+    except Exception:                                  # pragma: no cover - defensive
+        return set(), set()
     return active, review
 
 
 def _held_ids(env_root):
-    for name in ("brief-cache.json", "brief.json"):
-        f = os.path.join(env_root, "state", name)
-        if os.path.isfile(f):
-            try:
+    try:
+        for name in ("brief-cache.json", "brief.json"):
+            f = os.path.join(env_root, "state", name)
+            if os.path.isfile(f):
                 with open(f, encoding="utf-8") as fh:
                     d = json.load(fh)
                 return {h.get("id") for h in (d.get("held") or []) if h.get("id")}
-            except (OSError, ValueError):
-                return set()
-    return set()
+        return set()
+    except Exception:                                  # pragma: no cover - defensive
+        return set()
 
 
 def gather(env_root):
@@ -140,14 +147,17 @@ def gather(env_root):
         for it in parse_backlog(text):
             it["repo"] = repo
             items.append(it)
-            if it.get("status") == "done" and it.get("id"):
+            if it.get("state") == "done" and it.get("id"):
                 done_ids.add(it["id"])
+    # id-precision: only genuine backlog ids may stamp a stage, so _ID_RE false positives
+    # (stray tokens like "v2"/"s3" picked up from doc filenames/first-lines) can't classify.
+    real_ids = {it["id"] for it in items if it.get("id")}
     active, review = _active_and_review_ids(env_root)
     ctx = {
-        "spec_ids": _ids_in_docs(env_root, "specs"),
-        "plan_ids": _ids_in_docs(env_root, "plans"),
-        "active_ids": active, "review_ids": review,
-        "held_ids": _held_ids(env_root), "done_ids": done_ids,
+        "spec_ids": _ids_in_docs(env_root, "specs") & real_ids,
+        "plan_ids": _ids_in_docs(env_root, "plans") & real_ids,
+        "active_ids": active & real_ids, "review_ids": review & real_ids,
+        "held_ids": _held_ids(env_root) & real_ids, "done_ids": done_ids,
     }
     # an item can't be both spec- and plan-having in two stages: plan wins (handled by classify order)
     return items, ctx
