@@ -492,3 +492,32 @@ body.modal-open { overflow: hidden; }
   padding: 9px 13px; font-size: var(--fs-sm); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 #toast[hidden] { display: none; }
+
+/* -- flow view: native-OTel runs · graph · cost -- */
+.fg-strip { display: flex; gap: 10px; padding: 2px 2px 14px; flex-wrap: wrap; }
+.fg-strip .s { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; min-width: 76px; }
+.fg-strip .s .sl { display: block; font-size: var(--fs-xs); color: var(--text-2); text-transform: uppercase; letter-spacing: .08em; }
+.fg-strip .s .sn { font: 650 17px/1.2 var(--mono); }
+.fg-strip .s .sn small { font-size: 11px; color: var(--text-2); }
+.fg-strip .s.hot .sn { color: var(--err); }
+.fg-strip .s.warn .sn { color: var(--warn); font-size: 13px; }
+.flowdetail .fg-scroll { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-0); max-height: 380px; }
+.flowgraph { position: relative; }
+.fg-edges { position: absolute; inset: 0; pointer-events: none; }
+.fg-edge { fill: none; stroke: var(--border-hi); stroke-width: 1.2; }
+.fg-node { position: absolute; height: 40px; background: var(--bg-1); border: 1px solid var(--border);
+  border-left: 2px solid var(--text-2); border-radius: 6px; padding: 4px 8px; overflow: hidden; }
+.fg-node .fg-lbl { font: 600 11px/1.2 var(--mono); color: var(--text-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fg-node .fg-sub { font-size: 9.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fg-node.n-root { border-left-color: var(--accent); }
+.fg-node.n-llm { border-left-color: var(--text-1); }
+.fg-node.n-tool { border-left-color: var(--text-0); }
+.fg-node.n-agent { border-left-color: var(--ok); background: var(--bg-2); }   /* a subagent (fan-out) */
+.fg-node.n-exec { border-left-color: var(--text-2); }
+.fg-node.n-err { border-left-color: var(--err); }
+.fg-cost { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.fg-cost .vt { background: var(--bg-0); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; }
+.fg-cost .vt .vl { font: 600 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-2); }
+.fg-cost .vt .vn { font: 650 17px/1.2 var(--mono); margin-top: 4px; }
+.fg-cost .vt .vn small { font-size: 11px; color: var(--text-2); }
+.fg-errtext { color: var(--err); }

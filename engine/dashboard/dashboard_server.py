@@ -26,6 +26,7 @@ from state_validate import _extract_frontmatter, _parse_yaml  # engine YAML-subs
 from backlog_parse import parse_backlog, station_for  # engine tools shim already on sys.path
 import draft_diff  # "Proposed change" diff (A109)
 import activity  # run-record contract (A119) — live-run observability
+import otel_runs  # Flow view: native-OTel traces (Jaeger store) → runs + graph + cost
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -337,6 +338,13 @@ class Handler(SimpleHTTPRequestHandler):
         if route.startswith("/api/activity/") and route.endswith("/log"):
             rid = route[len("/api/activity/"):-len("/log")]
             return self._activity_log(rid)
+        if route == "/api/otel/runs":
+            return self._send_json(otel_runs.fetch_runs())
+        if route.startswith("/api/otel/run/"):
+            tid = route[len("/api/otel/run/"):]
+            if not re.match(r"^[0-9a-fA-F]{1,40}$", tid):     # Jaeger trace ids are hex; never proxy junk
+                return self._deny(400, "bad trace id")
+            return self._send_json(otel_runs.fetch_run(tid))
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):

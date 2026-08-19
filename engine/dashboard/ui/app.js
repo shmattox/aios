@@ -5,6 +5,7 @@ import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
 import { InboxView } from "/views/inbox.js";
 import { BoardView } from "/views/board.js";
 import { ActivityView } from "/views/activity.js";
+import { FlowView } from "/views/flow.js";
 
 // v1-panel compat: the existing panels/*.js take (mountEl, aios) and may read window.aios.
 const aiosCompat = {
@@ -58,7 +59,7 @@ const NAV = [
   { key: "inbox", label: "Inbox", view: InboxView },
   { key: "board", label: "Board", view: BoardView },
   { key: "activity", label: "Activity", view: ActivityView },
-  { key: "flow", label: "Flow", soon: "v2b", view: () => html`<${Soon} name="Flow" note="Live pipeline DAG — v2b." />` },
+  { key: "flow", label: "Flow", view: FlowView },
   { key: "mirror", label: "Mirror", view: MirrorView },
   { key: "stats", label: "Stats", soon: "v2b", view: () => html`<${Soon} name="Stats" note="Spend, gate metrics, throughput — v2b." />` },
 ];
