@@ -187,3 +187,21 @@ def test_prune_skips_log_path_for_unsafe_record_id(tmp_path, monkeypatch):
     activity.prune(tmp_path, retain_s=1, now=1000.0)
     # only the in-dir json is removed; no path built from the unsafe id
     assert all("etc" not in p and "passwd" not in p for p in removed_paths)
+
+
+# ─── Run/span data contract (Task 1: additive record fields on start_run) ───
+
+def test_start_run_carries_span_tree_fields(tmp_path):
+    activity.start_run(tmp_path, id="wf-recon-1", surface="workflow", title="vault-reconcile",
+                       parent_id="session-open-place-1", now=1000.0)
+    r = activity.read_all(tmp_path)[0]
+    assert r["parent_id"] == "session-open-place-1"
+    assert r["root"] is False            # has a parent -> not a root run
+    assert r["spans"] == []
+    assert r["input_tokens"] == 0 and r["output_tokens"] == 0
+    assert r["pending_approval"] is None
+
+
+def test_start_run_root_defaults_true_without_parent(tmp_path):
+    activity.start_run(tmp_path, id="factory-A1-1", surface="factory", title="d", now=0.0)
+    assert activity.read_all(tmp_path)[0]["root"] is True

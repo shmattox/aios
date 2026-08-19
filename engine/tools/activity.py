@@ -58,13 +58,16 @@ def session_run_id(slug, pid):
 
 
 def start_run(env_root, *, id, surface, title, item_ids=(), repo=None, pid=None,
-              log_path=None, worktree=None, detail="", now=None):
+              log_path=None, worktree=None, detail="", parent_id=None, root=None, now=None):
     if not _safe_id(id) or surface not in SURFACES:
         return None
     ts = _now(now)
     rec = {"id": id, "surface": surface, "title": title, "item_ids": list(item_ids),
            "repo": repo, "pid": pid, "started": ts, "heartbeat": ts, "ended": None,
            "status": "running", "tokens": 0, "cost_usd": 0.0,
+           "input_tokens": 0, "output_tokens": 0,
+           "parent_id": parent_id, "root": (parent_id is None) if root is None else bool(root),
+           "spans": [], "pending_approval": None,
            "log_path": log_path, "detail": detail or "", "worktree": worktree}
     _atomic_write(_rec_path(env_root, id), rec)
     return rec
