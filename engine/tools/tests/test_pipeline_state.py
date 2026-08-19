@@ -49,3 +49,24 @@ def test_build_model_backward_and_unchanged_are_not_flows():
     # unchanged -> not a flow
     m2 = p.build_model(items, _ctx(), prev_stage_by_id={"B1": "backlog"})
     assert m2["flows"] == []
+
+def test_gather_reads_backlogs_and_specs_best_effort(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()  # so it reads as an env root
+    (tmp_path / "BACKLOG.md").write_text(
+        "## Open\n- [ ] **Z1** — needs a spec.\n  - acceptance: x\n"
+        "- [ ] **Z2** — has a spec.\n  - acceptance: x\n", encoding="utf-8")
+    specs = tmp_path / "docs" / "superpowers" / "specs"; specs.mkdir(parents=True)
+    (specs / "2026-08-19-z2-thing-design.md").write_text("# Z2 thing\nbody", encoding="utf-8")
+    items, ctx = p.gather(str(tmp_path))
+    ids = {it["id"] for it in items}
+    assert "Z1" in ids and "Z2" in ids
+    assert "Z2" in ctx["spec_ids"] and "Z1" not in ctx["spec_ids"]
+    m = p.model(str(tmp_path))
+    by = {s["id"]: s for s in m["stages"]}
+    assert by["backlog"]["count"] == 1 and by["spec"]["count"] == 1   # Z1 backlog, Z2 spec
+
+def test_gather_missing_sources_never_raises(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    items, ctx = p.gather(str(tmp_path))          # no backlogs, no docs, no activity
+    assert items == [] and all(v == set() for v in ctx.values())
+    assert p.model(str(tmp_path))["stages"][0]["count"] == 0

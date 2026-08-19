@@ -3,6 +3,23 @@ item into one of 8 fixed factory stages and emits {stages, edges, flows}. Pure c
 model (unit-tested); the source gather is best-effort (a down/idle source contributes zero,
 never raises)."""
 
+import os
+import re
+import sys
+import glob
+import json
+
+_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
+if _TOOLS not in sys.path:
+    sys.path.insert(0, _TOOLS)
+try:
+    from backlog_parse import parse_backlog
+except Exception:                                  # pragma: no cover - defensive
+    def parse_backlog(text):
+        return []
+
+_ID_RE = re.compile(r"\b([A-Za-z]{1,4}\d+[a-z]?)\b")
+
 STAGES = [
     ("backlog", "Backlog"), ("brainstorm", "Brainstorm"), ("spec", "Spec"),
     ("implement", "Implement"), ("subagent", "Subagent builds"),
@@ -49,3 +66,93 @@ def build_model(items, ctx, prev_stage_by_id=None):
         if prev and prev != sid and _ORDER.get(sid, 0) > _ORDER.get(prev, 0):   # forward only
             flows.append({"item_id": iid, "from": prev, "to": sid})
     return {"stages": stages, "edges": edges, "flows": flows, "stage_by_id": cur}
+
+
+def _backlog_files(env_root):
+    out = []
+    root_bl = os.path.join(env_root, "BACKLOG.md")
+    if os.path.isfile(root_bl):
+        out.append(("env-ops", root_bl))
+    proj = os.path.join(env_root, "Projects")
+    if os.path.isdir(proj):
+        for d in sorted(os.listdir(proj)):
+            bl = os.path.join(proj, d, "BACKLOG.md")
+            if os.path.isfile(bl):
+                out.append((d, bl))
+    return out
+
+
+def _ids_in_docs(env_root, subdir):
+    """Item ids that appear in any docs/superpowers/<subdir>/*.md filename or first line."""
+    ids = set()
+    for f in glob.glob(os.path.join(env_root, "**", "docs", "superpowers", subdir, "*.md"), recursive=True):
+        ids.update(_ID_RE.findall(os.path.basename(f)))
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                ids.update(_ID_RE.findall(fh.readline()))
+        except OSError:
+            pass
+    return ids
+
+
+def _active_and_review_ids(env_root):
+    """Live factory drains → subagent/review stage, from state/activity/factory-*.json."""
+    active, review = set(), set()
+    import time as _t
+    now = _t.time()
+    for f in glob.glob(os.path.join(env_root, "state", "activity", "factory-*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if rec.get("status") != "running" or (now - rec.get("heartbeat", 0)) > 90:
+            continue
+        detail = str(rec.get("detail") or "").lower()
+        bucket = review if "review" in detail or "gate" in detail else active
+        for i in rec.get("item_ids") or []:
+            bucket.add(i)
+    return active, review
+
+
+def _held_ids(env_root):
+    for name in ("brief-cache.json", "brief.json"):
+        f = os.path.join(env_root, "state", name)
+        if os.path.isfile(f):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    d = json.load(fh)
+                return {h.get("id") for h in (d.get("held") or []) if h.get("id")}
+            except (OSError, ValueError):
+                return set()
+    return set()
+
+
+def gather(env_root):
+    items = []
+    done_ids = set()
+    for repo, bl in _backlog_files(env_root):
+        try:
+            with open(bl, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for it in parse_backlog(text):
+            it["repo"] = repo
+            items.append(it)
+            if it.get("status") == "done" and it.get("id"):
+                done_ids.add(it["id"])
+    active, review = _active_and_review_ids(env_root)
+    ctx = {
+        "spec_ids": _ids_in_docs(env_root, "specs"),
+        "plan_ids": _ids_in_docs(env_root, "plans"),
+        "active_ids": active, "review_ids": review,
+        "held_ids": _held_ids(env_root), "done_ids": done_ids,
+    }
+    # an item can't be both spec- and plan-having in two stages: plan wins (handled by classify order)
+    return items, ctx
+
+
+def model(env_root, prev_stage_by_id=None):
+    items, ctx = gather(env_root)
+    return build_model(items, ctx, prev_stage_by_id)
