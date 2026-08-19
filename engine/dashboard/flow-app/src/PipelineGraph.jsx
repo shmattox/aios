@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import ReactFlow, {
-  Background, Controls, Handle, Position, useNodesState, useEdgesState,
+  Background, Controls, Handle, Position,
+  ReactFlowProvider, useNodesState, useEdgesState, useUpdateNodeInternals,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import "./style.css";
@@ -20,10 +21,11 @@ function StageNode({ data }) {
 }
 const nodeTypes = { stage: StageNode };
 
-export default function PipelineGraph() {
+function Graph() {
   const model = usePipeline(4000);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const updateNodeInternals = useUpdateNodeInternals();
 
   useEffect(() => {
     if (!model) return;
@@ -32,8 +34,6 @@ export default function PipelineGraph() {
     const active = new Set(flows.map((f) => f.from + ">" + f.to));
     const hot = new Set(flows.flatMap((f) => [f.from, f.to]));
 
-    // Merge onto existing node objects by id so React Flow's measured fields
-    // (width/height/handleBounds) survive each poll — no re-measure flicker.
     setNodes((prev) => {
       const byId = new Map(prev.map((n) => [n.id, n]));
       return stages.map((s, i) => {
@@ -51,7 +51,12 @@ export default function PipelineGraph() {
         animated: active.has(e.from + ">" + e.to),
       }))
     );
-  }, [model, setNodes, setEdges]);
+
+    // React Flow's auto-measure (ResizeObserver) does not reliably fire for async-loaded
+    // nodes; without a forced re-measure, handleBounds stays null and edges silently drop.
+    const ids = stages.map((s) => s.id);
+    requestAnimationFrame(() => ids.forEach((id) => updateNodeInternals(id)));
+  }, [model, setNodes, setEdges, updateNodeInternals]);
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
@@ -65,5 +70,13 @@ export default function PipelineGraph() {
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>
+  );
+}
+
+export default function PipelineGraph() {
+  return (
+    <ReactFlowProvider>
+      <Graph />
+    </ReactFlowProvider>
   );
 }
