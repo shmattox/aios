@@ -164,6 +164,11 @@ def finish_run(env_root, id, status, *, now=None, **updates):
     _atomic_write(_rec_path(env_root, id), rec)
 
 
+def run_cost(rec):
+    """Derived run cost = sum of span costs (None-safe). Cost is never stored raw as truth."""
+    return float(sum(s.get("cost") or 0.0 for s in (rec.get("spans") or [])))
+
+
 def read_all(env_root):
     out = []
     d = ACTIVITY_DIR(env_root)

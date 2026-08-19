@@ -249,3 +249,20 @@ def test_request_and_resolve_approval(tmp_path):
     assert r2["status"] == "running"
     assert r2["pending_approval"]["awaiting"] is False
     assert r2["pending_approval"]["decision"] == "approved" and r2["pending_approval"]["responded_at"] == 3.0
+
+
+# ─── Task 4: run_cost — derived rollup ───
+
+def test_run_cost_sums_span_costs(tmp_path):
+    activity.start_run(tmp_path, id="wf-2", surface="workflow", title="t", now=0.0)
+    a = activity.start_span(tmp_path, "wf-2", name="a", now=0.0)
+    b = activity.start_span(tmp_path, "wf-2", name="b", now=0.0)
+    activity.end_span(tmp_path, "wf-2", a, cost=0.9, now=1.0)
+    activity.end_span(tmp_path, "wf-2", b, cost=0.6, now=1.0)  # b still costs even if not ended-with-cost elsewhere
+    rec = activity.read_all(tmp_path)[0]
+    assert activity.run_cost(rec) == pytest.approx(1.5)
+
+
+def test_run_cost_ignores_none_and_empty(tmp_path):
+    assert activity.run_cost({"spans": []}) == 0.0
+    assert activity.run_cost({"spans": [{"cost": None}, {"cost": 0.4}]}) == pytest.approx(0.4)
