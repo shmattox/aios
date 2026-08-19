@@ -227,3 +227,25 @@ def test_start_and_end_span(tmp_path):
 
 def test_start_span_bad_id_returns_none_no_write(tmp_path):
     assert activity.start_span(tmp_path, "../evil", name="x") is None
+
+
+# ─── Task 3: request_approval / resolve_approval + awaiting_approval status ───
+
+def test_request_and_resolve_approval(tmp_path):
+    activity.start_run(tmp_path, id="factory-PS274-1", surface="factory", title="d",
+                       pid=os.getpid(), now=0.0)
+    activity.request_approval(tmp_path, "factory-PS274-1", kind="gate",
+                              prompt="economics wire-format", resume_token="tok-1", now=1.0)
+    r = activity.read_all(tmp_path)[0]
+    assert r["status"] == "awaiting_approval"
+    assert r["pending_approval"]["awaiting"] is True
+    assert r["pending_approval"]["prompt"] == "economics wire-format"
+    assert r["pending_approval"]["resume_token"] == "tok-1"
+    assert activity.is_live(r, now=2.0) is False       # blocked, not live
+    assert activity.prune(tmp_path, retain_s=0, now=1e9) == 0   # not terminal -> never pruned
+
+    activity.resolve_approval(tmp_path, "factory-PS274-1", decision="approved", now=3.0)
+    r2 = activity.read_all(tmp_path)[0]
+    assert r2["status"] == "running"
+    assert r2["pending_approval"]["awaiting"] is False
+    assert r2["pending_approval"]["decision"] == "approved" and r2["pending_approval"]["responded_at"] == 3.0

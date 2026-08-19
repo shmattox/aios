@@ -118,6 +118,36 @@ def end_span(env_root, run_id, span_id, *, status="ok", input_tokens=0, output_t
     _atomic_write(_rec_path(env_root, run_id), rec)
 
 
+def request_approval(env_root, run_id, *, kind, prompt, resume_token=None, now=None):
+    if not _safe_id(run_id):
+        return
+    rec = _read_json(_rec_path(env_root, run_id))
+    if not rec:
+        return
+    ts = _now(now)
+    rec["status"] = "awaiting_approval"
+    rec["pending_approval"] = {"awaiting": True, "kind": kind, "prompt": prompt,
+                               "resume_token": resume_token, "requested_at": ts,
+                               "responded_at": None, "decision": None}
+    rec["heartbeat"] = ts
+    _atomic_write(_rec_path(env_root, run_id), rec)
+
+
+def resolve_approval(env_root, run_id, *, decision, now=None):
+    if not _safe_id(run_id):
+        return
+    rec = _read_json(_rec_path(env_root, run_id))
+    if not rec:
+        return
+    ts = _now(now)
+    pa = rec.get("pending_approval") or {}
+    pa.update({"awaiting": False, "decision": decision, "responded_at": ts})
+    rec["pending_approval"] = pa
+    rec["status"] = "running"
+    rec["heartbeat"] = ts
+    _atomic_write(_rec_path(env_root, run_id), rec)
+
+
 def finish_run(env_root, id, status, *, now=None, **updates):
     if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
         return
