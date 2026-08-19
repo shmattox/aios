@@ -25,3 +25,27 @@ def test_classify_precedence_most_advanced_wins():
     assert p.classify_stage({**it, "status": "done"}, _ctx()) == "complete"
     # a spec-having item that is ALSO in review classifies as review (more advanced)
     assert p.classify_stage(it, _ctx(spec_ids={"A1"}, review_ids={"A1"})) == "review"
+
+def test_build_model_counts_edges_and_forward_flows():
+    items = [
+        {"id": "A1", "status": "open", "seed": True, "repo": "aios", "title": "seed one"},
+        {"id": "A2", "status": "open", "seed": False, "repo": "aios", "title": "backlog two"},
+        {"id": "A3", "status": "done", "seed": False, "repo": "aios", "title": "done three"},
+    ]
+    m = p.build_model(items, _ctx(), prev_stage_by_id={"A1": "backlog"})
+    by = {s["id"]: s for s in m["stages"]}
+    assert by["brainstorm"]["count"] == 1 and by["brainstorm"]["items"][0]["id"] == "A1"
+    assert by["backlog"]["count"] == 1 and by["complete"]["count"] == 1
+    assert {"from": "backlog", "to": "brainstorm"} in m["edges"]
+    # A1 moved backlog -> brainstorm (forward) => a flow; A2/A3 first-seen => no flow
+    assert m["flows"] == [{"item_id": "A1", "from": "backlog", "to": "brainstorm"}]
+    assert m["stage_by_id"]["A1"] == "brainstorm"
+
+def test_build_model_backward_and_unchanged_are_not_flows():
+    items = [{"id": "B1", "status": "open", "seed": False, "title": "x"}]
+    # prev said B1 was in review; now it's backlog (backward) -> NOT a flow
+    m = p.build_model(items, _ctx(), prev_stage_by_id={"B1": "review"})
+    assert m["flows"] == []
+    # unchanged -> not a flow
+    m2 = p.build_model(items, _ctx(), prev_stage_by_id={"B1": "backlog"})
+    assert m2["flows"] == []

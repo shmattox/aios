@@ -30,3 +30,22 @@ def classify_stage(item, ctx):
     if item.get("seed"):
         return "brainstorm"
     return "backlog"
+
+
+def build_model(items, ctx, prev_stage_by_id=None):
+    stage_items = {sid: [] for sid, _ in STAGES}
+    cur = {}
+    for it in items:
+        sid = classify_stage(it, ctx)
+        iid = it.get("id") or ""
+        cur[iid] = sid
+        stage_items[sid].append({"id": it.get("id"), "title": it.get("title"), "repo": it.get("repo")})
+    stages = [{"id": sid, "label": lbl, "count": len(stage_items[sid]), "items": stage_items[sid][:12]}
+              for sid, lbl in STAGES]
+    edges = [{"from": a, "to": b} for a, b in EDGES]
+    flows = []
+    for iid, sid in cur.items():
+        prev = (prev_stage_by_id or {}).get(iid)
+        if prev and prev != sid and _ORDER.get(sid, 0) > _ORDER.get(prev, 0):   # forward only
+            flows.append({"item_id": iid, "from": prev, "to": sid})
+    return {"stages": stages, "edges": edges, "flows": flows, "stage_by_id": cur}
