@@ -345,6 +345,31 @@ def main(argv=None):
     pr.add_argument("--env-root", required=True)
     pr.add_argument("--retain-s", type=int, default=86400)
 
+    ss = sub.add_parser("span-start", help="open a span on a run")
+    _common(ss)
+    ss.add_argument("--name", required=True)
+    ss.add_argument("--kind", default="internal")
+    ss.add_argument("--parent-span-id", default=None)
+
+    se = sub.add_parser("span-end", help="close a span")
+    _common(se)
+    se.add_argument("--span-id", required=True)
+    se.add_argument("--status", default="ok")
+    se.add_argument("--in-tokens", type=int, default=0)
+    se.add_argument("--out-tokens", type=int, default=0)
+    se.add_argument("--cost", type=float, default=None)
+    se.add_argument("--error", default=None)
+
+    ap_ = sub.add_parser("approve", help="mark a run awaiting human approval")
+    _common(ap_)
+    ap_.add_argument("--kind", default="gate")
+    ap_.add_argument("--prompt", default="")
+    ap_.add_argument("--resume-token", default=None)
+
+    rs = sub.add_parser("resolve", help="resolve a pending approval")
+    _common(rs)
+    rs.add_argument("--decision", required=True)
+
     args = p.parse_args(argv)
     if not args.cmd:
         p.print_help(sys.stderr)
@@ -379,6 +404,20 @@ def main(argv=None):
             finish_run(args.env_root, args.id, args.status, **up)
         elif args.cmd == "prune":
             prune(args.env_root, retain_s=args.retain_s)
+        elif args.cmd == "span-start":
+            sid = start_span(args.env_root, args.id, name=args.name, kind=args.kind,
+                             parent_span_id=args.parent_span_id)
+            if sid:
+                print(sid)
+        elif args.cmd == "span-end":
+            end_span(args.env_root, args.id, args.span_id, status=args.status,
+                     input_tokens=args.in_tokens, output_tokens=args.out_tokens,
+                     cost=args.cost, error=args.error)
+        elif args.cmd == "approve":
+            request_approval(args.env_root, args.id, kind=args.kind, prompt=args.prompt,
+                             resume_token=args.resume_token)
+        elif args.cmd == "resolve":
+            resolve_approval(args.env_root, args.id, decision=args.decision)
     except Exception:
         return 0  # best-effort: a runtime hiccup must never break the runner
     return 0

@@ -288,3 +288,28 @@ def test_build_graph_projects_span_tree_and_fanout(tmp_path):
     assert edges == {("session-1#1", "wf-1#1"),   # session -> workflow (fan-in point)
                      ("wf-1#1", "wf-1#2"),         # coordinator -> agent-a
                      ("wf-1#1", "wf-1#3")}          # coordinator -> agent-b
+
+
+# ─── Task 6: CLI seam — span-start / span-end / approve / resolve ───
+
+def test_cli_span_start_prints_id_and_span_end_updates(tmp_path, capsys):
+    activity.start_run(tmp_path, id="wf-cli-1", surface="workflow", title="t", now=0.0)
+    rc = activity.main(["span-start", "--env-root", str(tmp_path), "--id", "wf-cli-1",
+                        "--name", "audit", "--kind", "invoke_agent"])
+    out = capsys.readouterr().out.strip()
+    assert rc == 0 and out == "wf-cli-1#1"
+    rc2 = activity.main(["span-end", "--env-root", str(tmp_path), "--id", "wf-cli-1",
+                         "--span-id", out, "--status", "ok", "--in-tokens", "500",
+                         "--out-tokens", "120", "--cost", "0.7"])
+    s = activity.read_all(tmp_path)[0]["spans"][0]
+    assert rc2 == 0 and s["status"] == "ok" and s["input_tokens"] == 500 and s["cost"] == 0.7
+
+
+def test_cli_approve_and_resolve(tmp_path):
+    activity.start_run(tmp_path, id="factory-cli-1", surface="factory", title="t", now=0.0)
+    activity.main(["approve", "--env-root", str(tmp_path), "--id", "factory-cli-1",
+                   "--kind", "gate", "--prompt", "needs you"])
+    assert activity.read_all(tmp_path)[0]["status"] == "awaiting_approval"
+    activity.main(["resolve", "--env-root", str(tmp_path), "--id", "factory-cli-1",
+                   "--decision", "approved"])
+    assert activity.read_all(tmp_path)[0]["status"] == "running"
