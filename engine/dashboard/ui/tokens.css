@@ -729,30 +729,47 @@ body.narrow .ai-drill { grid-template-columns: 1fr; }
 .uz-meta { color: var(--text-2); font-size: var(--fs-xs); }
 .uz-note { color: var(--text-2); font-size: var(--fs-xs); max-width: 60ch; padding: 8px 2px 0; }
 
-/* ── Files view ──────────────────────────────────────────────────────────── */
-.fm-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 2px 2px 10px; }
-.fm-crumb { background: none; border: none; color: var(--text-1); cursor: pointer; font: 500 var(--fs-sm)/1 var(--mono); padding: 3px 3px; }
-.fm-crumb:hover { color: var(--text-0); }
-.fm-sep { color: var(--text-2); }
-.fm-grid { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: start; }
-body.narrow .fm-grid { grid-template-columns: 1fr; }
-.fm-list { display: flex; flex-direction: column; gap: 1px; max-height: 70vh; overflow-y: auto;
-  border: 1px solid var(--border); border-radius: 10px; padding: 5px; background: var(--bg-1); }
-.fm-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 7px;
-  padding: 6px 8px; border-radius: 6px; cursor: pointer; }
-.fm-row:hover { background: var(--bg-2); }
-.fm-row.sel { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--border-hi); }
-.fm-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.fm-ic { text-align: center; color: var(--text-2); font-size: var(--fs-xs); }
-.fm-ic.dir { color: var(--text-1); }
-.fm-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-0); font-size: var(--fs-sm); }
-.fm-sz { color: var(--text-2); font-size: var(--fs-xs); }
-.fm-detail { min-width: 0; }
-.fm-editor { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-1); }
-.fm-ehead { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
-.fm-path { font: 500 var(--fs-xs)/1.3 var(--mono); color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.fm-meta { color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap; }
-.fm-dirty { color: var(--warn); }
-.fm-area { width: 100%; min-height: 62vh; resize: vertical; border: none; outline: none;
-  background: var(--bg-0); color: var(--text-0); padding: 12px 14px; box-sizing: border-box;
-  font: 400 12.5px/1.55 var(--mono); tab-size: 2; white-space: pre; overflow: auto; }
+/* ── Files view — locked tree (left) + tabbed editor (right), like a real editor ──────── */
+.fm { display: grid; grid-template-columns: 268px 1fr; height: calc(100vh - 150px); min-height: 420px;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-1); }
+body.narrow .fm { grid-template-columns: 1fr; height: auto; }
+.fm-tree { border-right: 1px solid var(--border); overflow: auto; padding: 8px 6px; }
+body.narrow .fm-tree { max-height: 240px; border-right: 0; border-bottom: 1px solid var(--border); }
+.fm-node { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px;
+  cursor: pointer; font: 500 12px/1.2 var(--font); color: var(--text-1); white-space: nowrap; }
+.fm-node:hover { background: var(--bg-2); color: var(--text-0); }
+.fm-node.sel { background: var(--bg-3); color: var(--text-0); }
+.fm-node.dir { color: var(--text-0); }
+.fm-node:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fm-node .tw { width: 11px; flex: none; text-align: center; color: var(--text-2); font-size: 9px; }
+.fm-node .fnm { overflow: hidden; text-overflow: ellipsis; }
+.fm-node .fnm.dim { color: var(--text-2); }
+/* right pane: tab strip + editor */
+.fm-pane { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.fm-tabs { display: flex; overflow-x: auto; flex: none; border-bottom: 1px solid var(--border); }
+.fm-tab { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 13px; flex: none;
+  border-right: 1px solid var(--border); cursor: pointer; color: var(--text-1);
+  font: 500 11.5px/1 var(--font); white-space: nowrap; }
+.fm-tab:hover { background: var(--bg-2); }
+.fm-tab.on { background: var(--bg-0); color: var(--text-0); box-shadow: inset 0 -2px 0 var(--text-0); }
+.fm-tab .fm-x { border: 0; background: none; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 1px; border-radius: 3px; }
+.fm-tab .fm-x:hover { color: var(--text-0); background: var(--bg-3); }
+.fm-main { display: flex; flex-direction: column; overflow: hidden; flex: 1; min-width: 0; }
+.fm-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 16px; border-bottom: 1px solid var(--border); flex: none; }
+.fm-path { font: 500 11.5px/1.3 var(--mono); color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fm-dot { color: var(--warn); }
+.fm-acts { display: flex; gap: 7px; flex: none; }
+.verb:disabled { opacity: .38; cursor: default; }
+.fm-empty { display: grid; place-items: center; flex: 1; }
+/* syntax-highlighted editor: a highlight layer behind a transparent textarea (same metrics) */
+.fm-code { position: relative; flex: 1; overflow: hidden; background: var(--bg-0); }
+.fm-hl, .fm-ta { margin: 0; border: 0; padding: 14px 18px; box-sizing: border-box;
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  font: 400 12.5px/1.7 var(--mono); tab-size: 2; letter-spacing: 0;
+  white-space: pre; word-wrap: normal; overflow: auto; }
+.fm-hl { color: var(--text-1); pointer-events: none; overflow: hidden; }
+.fm-ta { color: transparent; caret-color: var(--text-0); background: transparent; resize: none; outline: none; }
+.fm-hl .h { color: var(--text-0); font-weight: 600; }
+.fm-hl .s { color: var(--ok); }
+.fm-hl .c { color: var(--text-2); }

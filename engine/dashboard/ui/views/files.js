@@ -1,11 +1,11 @@
-// Files — browse and edit any text file under the environment root. The backend (files_state)
-// keeps the whole thing inside the env root and refuses secrets, binaries, and oversized files;
-// this is the face: a breadcrumb + directory listing on the left, a guarded editor on the right.
+// Files — a regular file-manager UI: a locked, expandable file TREE on the left; a tabbed editor
+// on the right (open several files as tabs, syntax-highlighted, Save/Revert per tab). The backend
+// (files_state) keeps everything inside the env root and refuses secrets/binaries/oversize.
 // Reads /api/files/tree + /api/files/read; saves via POST /api/files/write (token-gated).
 import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
 
-const fmtSize = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : n + "B");
 const base = (p) => (p || "").split("/").pop();
+const ext = (p) => { const b = base(p); const i = b.lastIndexOf("."); return i > 0 ? b.slice(i + 1).toLowerCase() : ""; };
 
 async function saveFile(path, content) {
   const r = await fetch("/api/files/write", {
@@ -19,85 +19,130 @@ async function saveFile(path, content) {
   return b;
 }
 
-function Crumbs({ dir, go }) {
-  const parts = (dir || "").split("/").filter(Boolean);
-  return html`<div class="fm-crumbs">
-    <button class="fm-crumb" onClick=${() => go("")}>env</button>
-    ${parts.map((p, i) => html`<span key=${i}><span class="fm-sep">/</span>
-      <button class="fm-crumb" onClick=${() => go(parts.slice(0, i + 1).join("/"))}>${p}</button></span>`)}
+// ---- lightweight, safe syntax highlight (escape first, then wrap) --------------------
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const MD = new Set(["md", "markdown", "txt", "mdx", ""]);
+function highlight(text, e) {
+  const md = MD.has(e);
+  return esc(text).split("\n").map((line) => {
+    if (md) {
+      if (/^#{1,6}\s/.test(line)) return `<span class="h">${line}</span>`;
+      return line.replace(/(`[^`]+`)/g, '<span class="s">$1</span>')
+                 .replace(/(\*\*[^*]+\*\*)/g, '<span class="h">$1</span>');
+    }
+    const cm = line.match(/^(\s*)((?:#|\/\/).*)$/);
+    if (cm) return `${cm[1]}<span class="c">${cm[2]}</span>`;
+    return line.replace(/("[^"]*"|'[^']*')/g, '<span class="s">$1</span>')
+               .replace(/((?:#|\/\/).*)$/, '<span class="c">$1</span>');
+  }).join("\n");
+}
+
+// ---- the left tree (lazy-expand, persistent) -----------------------------------------
+function TreeNode({ node, depth, expanded, childrenOf, onToggle, onOpen, activePath }) {
+  const isDir = node.dir;
+  const open = expanded.has(node.path);
+  const kids = childrenOf[node.path];
+  return html`<div>
+    <div class="fm-node ${isDir ? "dir" : ""} ${!isDir && node.path === activePath ? "sel" : ""}"
+         style="padding-left:${8 + depth * 13}px" tabindex="0"
+         onClick=${() => (isDir ? onToggle(node) : onOpen(node))}>
+      <span class="tw">${isDir ? (open ? "▾" : "▸") : ""}</span>
+      <span class="fnm">${node.name}</span>
+    </div>
+    ${isDir && open ? html`<div>${kids
+        ? kids.map((c) => html`<${TreeNode} node=${c} depth=${depth + 1} expanded=${expanded}
+            childrenOf=${childrenOf} onToggle=${onToggle} onOpen=${onOpen} activePath=${activePath} key=${c.path} />`)
+        : html`<div class="fm-node" style="padding-left:${8 + (depth + 1) * 13}px"><span class="tw"></span><span class="fnm dim">…</span></div>`}</div>` : null}
   </div>`;
 }
 
-function Editor({ sel }) {
-  const [file, setFile] = useState(null);
-  const [text, setText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const gen = useRef(0);
-
-  useEffect(() => {
-    if (!sel) { setFile(null); setText(""); return; }
-    const g = ++gen.current;
-    setFile(null); setText("");
-    api.get(`/api/files/read?path=${encodeURIComponent(sel)}`)
-      .then((d) => { if (g === gen.current) { setFile(d); setText(d.content || ""); } })
-      .catch(() => { if (g === gen.current) setFile({ error: "could not load file" }); });
-  }, [sel]);
-
-  if (!sel) return html`<p class="stub">Select a file to view or edit it.</p>`;
-  if (!file) return html`<p class="stub">Loading ${base(sel)}…</p>`;
-  if (file.error) return html`<article id="detail"><div class="head">
-      <div class="chips"><span class="chip id">${sel}</span></div><h1>${base(sel)}</h1>
-      <p class="why">${file.error}${file.too_large ? ` (${fmtSize(file.size)})` : ""}.</p></div></article>`;
-
-  const dirty = text !== file.content;
-  const save = async () => {
-    setSaving(true);
-    try { const b = await saveFile(sel, text); setFile({ ...file, content: text, size: b.bytes }); }
-    catch (e) { /* toasted */ } finally { setSaving(false); }
-  };
-  return html`<div class="fm-editor">
-    <div class="fm-ehead">
-      <span class="fm-path" title=${file.path}>${file.path}</span>
-      <span class="fm-meta">${fmtSize(file.size)}${dirty ? html` · <span class="fm-dirty">unsaved</span>` : ""}</span>
-      <button class="verb approve" disabled=${!dirty || saving} onClick=${save}>${saving ? "Saving…" : "Save"}</button>
-      <button class="verb" disabled=${!dirty || saving} onClick=${() => setText(file.content)}>Revert</button>
+// ---- the tabbed editor pane ----------------------------------------------------------
+function Editor({ tab, onChange, onSave, onRevert }) {
+  const taRef = useRef(null), hlRef = useRef(null);
+  const syncScroll = () => { if (hlRef.current && taRef.current) { hlRef.current.scrollTop = taRef.current.scrollTop; hlRef.current.scrollLeft = taRef.current.scrollLeft; } };
+  if (!tab) return html`<div class="fm-empty"><p class="stub">Open a file from the tree to view or edit it.</p></div>`;
+  if (tab.error) return html`<div class="fm-empty"><p class="stub">${tab.error}${tab.size ? ` (${tab.size} bytes)` : ""}.</p></div>`;
+  const dirty = tab.text !== tab.content;
+  return html`<div class="fm-main">
+    <div class="fm-bar">
+      <div class="fm-path" title=${tab.path}>${tab.path}${dirty ? html` <span class="fm-dot">●</span>` : ""}</div>
+      <div class="fm-acts">
+        <button class="verb" disabled=${!dirty} onClick=${onRevert}>Revert</button>
+        <button class="verb ok" disabled=${!dirty} onClick=${onSave}>Save</button>
+      </div>
     </div>
-    <textarea class="fm-area" spellcheck="false" value=${text}
-      onInput=${(e) => setText(e.target.value)}></textarea>
+    <div class="fm-code">
+      <pre class="fm-hl" ref=${hlRef} aria-hidden="true"
+        dangerouslySetInnerHTML=${{ __html: highlight(tab.text, ext(tab.path)) + "\n" }}></pre>
+      <textarea class="fm-ta" ref=${taRef} spellcheck="false" value=${tab.text}
+        onInput=${(e) => onChange(e.target.value)} onScroll=${syncScroll}></textarea>
+    </div>
   </div>`;
 }
 
 export function FilesView() {
-  const [dir, setDir] = useState("");
-  const [listing, setListing] = useState(null);
-  const [sel, setSel] = useState(null);
-  const gen = useRef(0);
+  const [roots, setRoots] = useState([]);
+  const [expanded, setExpanded] = useState(new Set());
+  const [childrenOf, setChildrenOf] = useState({});   // dirPath -> entries
+  const [tabs, setTabs] = useState([]);               // [{path, content, text, error?, size?}]
+  const [active, setActive] = useState(null);
 
-  useEffect(() => {
-    const g = ++gen.current;
-    api.get(`/api/files/tree?path=${encodeURIComponent(dir)}`)
-      .then((d) => { if (g === gen.current) setListing(d); })
-      .catch(() => { if (g === gen.current) setListing({ entries: [] }); });
-  }, [dir]);
+  const loadDir = (path) => api.get(`/api/files/tree?path=${encodeURIComponent(path)}`)
+    .then((d) => setChildrenOf((m) => ({ ...m, [path]: d.entries || [] })))
+    .catch(() => setChildrenOf((m) => ({ ...m, [path]: [] })));
 
-  const entries = listing?.entries || [];
-  const open = (e) => { if (e.dir) { setDir(e.path); } else { setSel(e.path); } };
+  useEffect(() => { api.get("/api/files/tree?path=").then((d) => setRoots(d.entries || [])).catch(() => setRoots([])); }, []);
 
-  return html`<section class="view">
+  const toggle = (node) => {
+    setExpanded((s) => { const n = new Set(s); n.has(node.path) ? n.delete(node.path) : n.add(node.path); return n; });
+    if (!childrenOf[node.path]) loadDir(node.path);
+  };
+
+  const open = (node) => {
+    setActive(node.path);
+    if (tabs.some((t) => t.path === node.path)) return;
+    setTabs((ts) => [...ts, { path: node.path, content: null, text: "", loading: true }]);
+    api.get(`/api/files/read?path=${encodeURIComponent(node.path)}`)
+      .then((d) => setTabs((ts) => ts.map((t) => t.path === node.path
+        ? (d.error ? { path: node.path, error: d.error, size: d.size } : { path: node.path, content: d.content, text: d.content })
+        : t)))
+      .catch(() => setTabs((ts) => ts.map((t) => t.path === node.path ? { path: node.path, error: "could not load file" } : t)));
+  };
+
+  const closeTab = (path, e) => {
+    e && e.stopPropagation();
+    setTabs((ts) => { const i = ts.findIndex((t) => t.path === path); const n = ts.filter((t) => t.path !== path);
+      if (active === path) setActive(n.length ? (n[Math.min(i, n.length - 1)].path) : null);
+      return n; });
+  };
+  const setText = (path, text) => setTabs((ts) => ts.map((t) => t.path === path ? { ...t, text } : t));
+  const cur = tabs.find((t) => t.path === active) || null;
+
+  const save = async () => {
+    if (!cur) return;
+    try { const b = await saveFile(cur.path, cur.text); setTabs((ts) => ts.map((t) => t.path === cur.path ? { ...t, content: cur.text, size: b.bytes } : t)); }
+    catch (e) { /* toasted */ }
+  };
+  const revert = () => cur && setText(cur.path, cur.content);
+
+  return html`<section class="view fmv">
     <div class="viewhead"><h1>Files</h1><span class="sub">browse and edit any file in the environment</span></div>
-    <${Crumbs} dir=${dir} go=${setDir} />
-    <div class="fm-grid">
-      <div class="fm-list">
-        ${entries.length ? entries.map((e) => html`
-          <div class="fm-row ${!e.dir && e.path === sel ? "sel" : ""}" key=${e.path} tabindex="0"
-               aria-current=${String(!e.dir && e.path === sel)} onClick=${() => open(e)}>
-            <span class="fm-ic ${e.dir ? "dir" : "file"}">${e.dir ? "▸" : "·"}</span>
-            <span class="fm-nm">${e.name}</span>
-            ${!e.dir ? html`<span class="fm-sz num">${fmtSize(e.size)}</span>` : null}
-          </div>`)
-          : html`<p class="stub">Empty directory.</p>`}
+    <div class="fm">
+      <div class="fm-tree">
+        ${roots.length ? roots.map((n) => html`<${TreeNode} node=${n} depth=${0} expanded=${expanded}
+            childrenOf=${childrenOf} onToggle=${toggle} onOpen=${open} activePath=${active} key=${n.path} />`)
+          : html`<p class="stub" style="padding:10px">Loading…</p>`}
       </div>
-      <div class="fm-detail"><${Editor} sel=${sel} /></div>
+      <div class="fm-pane">
+        ${tabs.length ? html`<div class="fm-tabs">
+          ${tabs.map((t) => html`<div class="fm-tab ${t.path === active ? "on" : ""}" key=${t.path}
+              onClick=${() => setActive(t.path)} title=${t.path}>
+            <span class="fm-tnm">${base(t.path)}${t.text !== t.content && !t.error && !t.loading ? " ●" : ""}</span>
+            <button class="fm-x" onClick=${(e) => closeTab(t.path, e)} aria-label="close">×</button>
+          </div>`)}
+        </div>` : null}
+        <${Editor} tab=${cur} onChange=${(v) => setText(active, v)} onSave=${save} onRevert=${revert} />
+      </div>
     </div>
   </section>`;
 }
