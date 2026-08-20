@@ -64,7 +64,8 @@ function Shell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [narrow, setNarrow] = useState(window.matchMedia("(max-width: 860px)").matches);
   const [ageTxt, setAgeTxt] = useState("");
-  const [inboxCount, setInboxCount] = useState(0);
+  const [inboxCount, setInboxCount] = useState(0);   // AIOS gate (held drafts)
+  const [swGate, setSwGate] = useState(0);           // Software factory gate ([GATE: human])
   const chord = useRef(null);
 
   // hash routing
@@ -100,6 +101,8 @@ function Shell() {
         setAgeTxt(newest ? `${Math.max(0, Math.round(Date.now() / 1000 - newest))}s` : "");
         const h = await api.get("/api/held");
         setInboxCount((h.held || []).length);   // the gate badge on the AIOS nav item
+        const pl = await api.get("/api/pipeline");
+        setSwGate((pl.stages || []).find((s) => s.id === "gate")?.count || 0);   // Software gate badge
       } catch (e) { /* server gone */ }
       timer = setTimeout(tick, 5000);
     };
@@ -154,6 +157,7 @@ function Shell() {
           ${ICONS[n.key]}
           <span class="lbl">${n.label}</span>
           ${n.key === "aios" && inboxCount ? html`<span class="count">${inboxCount}</span>` : null}
+          ${n.key === "software" && swGate ? html`<span class="count">${swGate}</span>` : null}
           ${n.soon ? html`<span class="phase">${n.soon}</span>` : null}
         </button>`)}
       <span class="spacer"></span>
