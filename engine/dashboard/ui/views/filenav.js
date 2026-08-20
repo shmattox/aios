@@ -23,11 +23,17 @@ export function toEnvFile(vaultRel, p) {
 }
 
 const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-// one token: a URL (→ external link) OR a file-path (env top-dir / KB folder + real extension → Files).
-// URL alternative comes first so a path inside a URL isn't split out on its own.
-const TOKEN_RE = /(https?:\/\/[^\s<>"'`)\]]+)|((?:\d\d_[A-Za-z][\w-]*|state|Projects|SecondBrain|Memory|profile|docs|Scripts|_tools|Artifacts|Scheduled|engine)\/[\w./-]+\.[A-Za-z0-9]{1,8})/g;
+const driveSearch = (val) => {
+  const seg = (val.split("/").map((x) => x.trim()).filter(Boolean).pop() || val).replace(/\s*\(.*?\)\s*$/, "").trim();
+  return "https://drive.google.com/drive/search?q=" + encodeURIComponent(seg);
+};
+// three token kinds, tried in order at each position:
+//   1) a URL                         → external link
+//   2) a `drive_path:` field value   → a Google Drive search for the file (we don't hold file ids)
+//   3) an in-repo file path          → opens in the Files editor
+const TOKEN_RE = /(https?:\/\/[^\s<>"'`)\]]+)|(?<=\bdrive_path\s*:\s*"?)([^"\n]+?)(?="?\s*(?:$|\n))|((?:\d\d_[A-Za-z][\w-]*|state|Projects|SecondBrain|Memory|profile|docs|Scripts|_tools|Artifacts|Scheduled|engine)\/[\w./-]+\.[A-Za-z0-9]{1,8})/gm;
 
-// Escape text; link every URL (opens externally) and every file path (opens in the Files editor).
+// Escape text; link URLs (external), drive_path values (Drive search), and file paths (Files editor).
 export function linkifyPaths(text, vaultRel) {
   if (text == null) return "";
   const s = String(text);
@@ -40,8 +46,13 @@ export function linkifyPaths(text, vaultRel) {
       const t = url.match(/[.,;:!?]+$/);          // don't swallow trailing sentence punctuation
       if (t) { trail = url.slice(-t[0].length); url = url.slice(0, -t[0].length); }
       out += `<a class="urllink" href="${escH(url)}" target="_blank" rel="noopener noreferrer">${escH(url)}</a>` + escH(trail);
-    } else {                                      // in-repo file path
-      out += `<span class="pathlink" data-path="${escH(toEnvFile(vaultRel, m[2]))}">${escH(m[2])}</span>`;
+    } else if (m[2] != null) {                    // drive_path value
+      const val = m[2];
+      out += val.includes("/")                    // a real Drive location (skip "(none …)", "internal")
+        ? `<a class="urllink" href="${escH(driveSearch(val))}" target="_blank" rel="noopener noreferrer">${escH(val)}</a>`
+        : escH(val);
+    } else {                                       // in-repo file path
+      out += `<span class="pathlink" data-path="${escH(toEnvFile(vaultRel, m[3]))}">${escH(m[3])}</span>`;
     }
     last = m.index + m[0].length;
   }
