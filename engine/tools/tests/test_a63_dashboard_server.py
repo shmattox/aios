@@ -74,10 +74,11 @@ def test_post_requires_token(server):
 
 
 def test_activity_view_registered_and_api_served(server):
-    # A121: the Activity view is wired into app.js (import + nav entry), and the
-    # /api/activity route it consumes is live behind the same server.
+    # A121 / IA rebuild: the Activity view folded into Overview — the landing page renders the
+    # running-now feed. Overview is wired into app.js, and the /api/activity route it consumes
+    # is live behind the same server.
     app_js = _get(server, "/app.js").read().decode("utf-8")
-    assert "views/activity.js" in app_js
+    assert "views/overview.js" in app_js
     body = json.loads(_get(server, "/api/activity").read())
     assert body["runs"] == [] and isinstance(body["_now"], (int, float))
 

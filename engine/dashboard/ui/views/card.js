@@ -3,9 +3,19 @@
 // Presentation + local respond-box state only; the parent supplies onAction(act, params)
 // and owns every API call, so the card holds zero write logic.
 import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
+import { openInFiles, linkifyPaths, onPathClick } from "./filenav.js";
 
 const KB_SILO = { familyoffice: "fo", personal: "per", gm: "gm", dev: "dev" };
 export const siloClass = (kb) => KB_SILO[String(kb || "").toLowerCase()] || "dev";
+
+// map a stored path to an env-relative Files path: vault-relative KB paths (02_FamilyOffice/…)
+// get the vault prefix; state/ and repo paths are already env-relative.
+function toEnvFile(vaultRel, p) {
+  if (!p) return null;
+  p = String(p).replace(/\\/g, "/");
+  if (vaultRel && !p.startsWith(vaultRel + "/") && /^\d\d_/.test(p)) return vaultRel + "/" + p;
+  return p;
+}
 
 const STATION_BLURB = {
   incoming: "Captured, not yet triaged — the pipeline sorts nightly.",
@@ -58,17 +68,17 @@ const shortPath = (p) => {
 // Build the drill-down links from a record's real fields. Never treat the board
 // card's `source` (a TYPE: "backlog"/"held") as a document path — that was the
 // "KB backlog" bug. Only explicit doc fields become links.
-export function docLinks(fields) {
+export function docLinks(fields, vaultRel) {
   const out = [];
   if (fields.state_path)
-    out.push({ tag: "state", label: shortPath(fields.state_path), route: "#/mirror" });
+    out.push({ tag: "state", label: shortPath(fields.state_path), file: toEnvFile(vaultRel, fields.state_path) });
   const paper = fields.papered_source || "";
   if (/^https?:\/\//.test(paper)) out.push({ tag: "drive", label: paper, open: paper });
   else if (paper) out.push({ tag: "drive", label: shortPath(paper), mock: `opens “${paper}” in Google Drive (dataroom)` });
   if (fields.draft_path)
-    out.push({ tag: "kb", label: shortPath(fields.draft_path), mock: `opens ${shortPath(fields.draft_path)} in Obsidian` });
+    out.push({ tag: "kb", label: shortPath(fields.draft_path), file: toEnvFile(vaultRel, fields.draft_path) });
   if (fields.backlog_path)
-    out.push({ tag: "kb", label: shortPath(fields.backlog_path), mock: `opens ${fields.backlog_path} — the repo backlog` });
+    out.push({ tag: "kb", label: shortPath(fields.backlog_path), file: toEnvFile(vaultRel, fields.backlog_path) });
   return out;
 }
 
@@ -76,6 +86,7 @@ export function docLinks(fields) {
 // v2a, so kb/drive links surface an informative toast (as the approved mockup did);
 // the in-app state link routes to the Mirror browser, which is real.
 function refOpen(link) {
+  if (link.file) { openInFiles(link.file); return; }   // source file → open in the Files editor
   if (link.route) { location.hash = link.route; return; }
   if (link.open) {
     if (/^https?:\/\//i.test(link.open)) {
@@ -115,7 +126,7 @@ function InlineLink({ link }) {
 const PROSE_LINK = /\[([^\]]+)\]\((state|drive|kb|notion):((?:[^()]|\([^()]*\))+)\)/g;
 function linkForTarget(tag, target) {
   target = String(target).trim();
-  if (tag === "state") return { tag, route: "#/mirror", mock: `opens ${target} in the Mirror` };
+  if (tag === "state") return { tag, file: target, mock: `opens ${target}` };
   if (tag === "kb") return { tag, mock: `opens ${target} in Obsidian` };
   if (tag === "notion") return { tag, mock: `opens ${target} in Notion` };
   return /^https?:\/\//i.test(target) ? { tag, open: target } : { tag, mock: `opens “${target}” in Google Drive` };
@@ -149,13 +160,13 @@ function citeRefs(item) {
   const add = (l) => { const k = l.tag + l.label; if (l.label && !seen.has(k)) { seen.add(k); out.push(l); } };
   if (item.thread_id) add({ tag: "state", label: `thread · ${item.thread_id}`, route: "#/mirror", mock: `opens the ${item.thread_id} action thread` });
   const cite = voiceCite(item.system_voice) || "";
-  for (const m of cite.matchAll(/state\/[^\s;,)]+/g)) add({ tag: "state", label: m[0], route: "#/mirror", mock: `opens ${m[0]} in the Mirror` });
+  for (const m of cite.matchAll(/state\/[^\s;,)]+/g)) add({ tag: "state", label: m[0], file: m[0], mock: `opens ${m[0]}` });
   for (const m of cite.matchAll(/collection:\/\/[A-Za-z0-9-]{8,}/g)) add({ tag: "notion", label: m[0], mock: `opens ${m[0]} in Notion` });
   for (const m of cite.matchAll(/https?:\/\/[^\s;,)]+/g)) add({ tag: "drive", label: m[0], open: m[0] });
   return out;
 }
 
-export function Card({ item, station, onAction }) {
+export function Card({ item, station, onAction, vaultRel }) {
   station = station || item.station || "needs_you";
   const isAct = item._kind === "act";
   const isDev = item._kind === "dev";  // a backlog pointer — read-only, no write verbs
@@ -197,7 +208,7 @@ export function Card({ item, station, onAction }) {
   };
 
   const verbs = isDev ? [] : isAct ? ACT_VERBS : (VERB_SETS[station] || VERB_SETS.needs_you);
-  const links = docLinks(item);
+  const links = docLinks(item, vaultRel);
   const sysText = voiceText(item.system_voice);
   const claudeText = voiceText(item.claude_voice);
   const flags = Array.isArray(item.flags) ? item.flags : (item.flags ? [item.flags] : []);
@@ -262,7 +273,9 @@ export function Card({ item, station, onAction }) {
           <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
           ${editing
             ? html`<textarea class="editarea" value=${editText} onInput=${(e) => setEditText(e.target.value)}></textarea>`
-            : html`<pre class="body">${draft == null ? "loading draft…" : (draft.markdown != null ? draft.markdown : "")}</pre>`}
+            : (draft == null
+                ? html`<pre class="body">loading draft…</pre>`
+                : html`<pre class="body" onClick=${onPathClick} dangerouslySetInnerHTML=${{ __html: linkifyPaths(draft.markdown != null ? draft.markdown : "", vaultRel) }}></pre>`)}
         `}
       </div>` : null}
 

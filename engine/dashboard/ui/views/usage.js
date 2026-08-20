@@ -1,0 +1,90 @@
+// Usage — where the spend goes. Three honest, separately-sourced lenses (the data isn't one
+// unified ledger, so we don't pretend it is): the daily cost series (/api/spend — factory drains),
+// run counts by surface (/api/activity — the run index), and agent-telemetry totals
+// (/api/otel/runs — OpenTelemetry). Each panel names its source.
+import { html, api, useState, useEffect } from "/lib.js";
+
+const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
+function fmtTok(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
+
+function Metric({ k, v, sub }) {
+  return html`<div class="ov-cell"><div class="ov-k">${k}</div><div class="ov-v">${v}</div><div class="ov-s">${sub || ""}</div></div>`;
+}
+
+// A compact daily cost bar chart. Bars scale to the max day; hover shows the day's detail.
+function CostBars({ days }) {
+  const show = days.slice(-42);           // last ~6 weeks
+  const max = Math.max(1, ...show.map((d) => d.cost_usd || 0));
+  const W = Math.max(show.length * 16, 60), H = 120, PAD = 4;
+  const bw = 11;
+  return html`<div class="uz-chart">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="uz-bars" role="img" aria-label="daily cost">
+      ${show.map((d, i) => {
+        const h = Math.max(1, Math.round(((d.cost_usd || 0) / max) * (H - PAD * 2)));
+        return html`<rect key=${d.date} x=${i * 16 + 2} y=${H - PAD - h} width=${bw} height=${h} rx="1.5"
+          class="uz-bar"><title>${d.date} · ${fmtUsd(d.cost_usd)} · ${fmtTok(d.output_tokens)} tok · ${d.drains || 0} drains</title></rect>`;
+      })}
+    </svg>
+  </div>`;
+}
+
+function Bar({ label, n, of, meta }) {
+  const pct = of ? Math.round((n / of) * 100) : 0;
+  return html`<div class="uz-row">
+    <span class="uz-lbl">${label}</span>
+    <span class="uz-track"><span class="uz-fill" style="width:${pct}%"></span></span>
+    <span class="uz-n num">${n}${meta ? html` <span class="uz-meta">${meta}</span>` : null}</span>
+  </div>`;
+}
+
+export function UsageView() {
+  const [spend, setSpend] = useState({ days: [] });
+  const [activity, setActivity] = useState({ runs: [] });
+  const [otel, setOtel] = useState(null);
+
+  useEffect(() => {
+    api.get("/api/spend").then((d) => setSpend({ days: d.days || [] })).catch(() => {});
+    api.get("/api/activity").then((d) => setActivity({ runs: d.runs || [] })).catch(() => {});
+    api.get("/api/otel/runs").then(setOtel).catch(() => setOtel({ agg: { jaeger_up: false } }));
+  }, []);
+
+  const days = spend.days, runs = activity.runs;
+  const totalCost = sum(days, (d) => d.cost_usd);
+  const totalTok = sum(days, (d) => d.output_tokens);
+  const totalDrains = sum(days, (d) => d.drains);
+
+  // by surface (run index) — counts, plus cost where the run carries it
+  const surfaces = {};
+  for (const r of runs) {
+    const s = r.surface || "other";
+    (surfaces[s] = surfaces[s] || { n: 0, cost: 0 }).n += 1;
+    surfaces[s].cost += Number(r.cost_usd) || 0;
+  }
+  const surfRows = Object.entries(surfaces).sort((a, b) => b[1].n - a[1].n);
+  const agg = otel?.agg || {};
+
+  return html`<section class="view">
+    <div class="viewhead"><h1>Usage</h1><span class="sub">where the spend goes</span></div>
+
+    <div class="ov-strip">
+      <${Metric} k="spend · tracked" v=${fmtUsd(totalCost)} sub=${days.length + " days of drains"} />
+      <${Metric} k="output tokens" v=${fmtTok(totalTok)} sub="factory drains" />
+      <${Metric} k="drains" v=${totalDrains} sub="all-time" />
+      <${Metric} k="agent telemetry" v=${agg.jaeger_up === false ? "—" : fmtUsd(agg.cost_usd)} sub=${agg.jaeger_up === false ? "store down" : (agg.runs || 0) + " runs · " + fmtTok(agg.tokens) + " tok"} />
+    </div>
+
+    <h3 class="ov-sect">Daily cost <span class="uz-src">· factory drains · /api/spend</span></h3>
+    ${days.length ? html`<${CostBars} days=${days} />` : html`<p class="stub">No spend recorded yet.</p>`}
+
+    <h3 class="ov-sect">By surface <span class="uz-src">· run index · /api/activity</span></h3>
+    ${surfRows.length ? html`<div class="uz-bars-list">
+      ${surfRows.map(([s, v]) => html`<${Bar} label=${s} n=${v.n} of=${runs.length}
+        meta=${v.cost ? "· " + fmtUsd(v.cost) : ""} key=${s} />`)}
+    </div>
+    <p class="uz-note">Run counts are complete; per-run cost is only attributed where the run
+      carries it (most sessions don't) — so the surface split is by volume, not dollars. The
+      authoritative cost series is the daily chart above.</p>`
+      : html`<p class="stub">No runs indexed yet.</p>`}
+  </section>`;
+}

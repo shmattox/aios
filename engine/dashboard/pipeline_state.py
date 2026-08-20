@@ -208,6 +208,48 @@ def model(env_root, prev_stage_by_id=None):
     return build_model(items, ctx, prev_stage_by_id)
 
 
+def _repo_root(env_root, repo):
+    return env_root if repo == "env-ops" else os.path.join(env_root, "Projects", repo)
+
+
+def item_detail(env_root, repo, item_id):
+    """The full backlog block for one factory item + any linked plan/spec/finding docs, so the
+    drill-in shows real content instead of a bare title. Best-effort; missing pieces come back
+    empty. Paths returned are env-relative (for the Files browser)."""
+    root = _repo_root(env_root, repo)
+    bl = os.path.join(root, "BACKLOG.md")
+    rel_bl = os.path.relpath(bl, env_root).replace("\\", "/") if os.path.isfile(bl) else None
+    body = ""
+    try:
+        with open(bl, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        lines = []
+    idpat = re.compile(r"\*\*" + re.escape(item_id) + r"\b")
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.lstrip()[:5].startswith(("- [", "- ◷", "- ⌛")) and idpat.search(ln)), None)
+    if start is not None:
+        block = [lines[start]]
+        for ln in lines[start + 1:]:
+            if re.match(r"^(- |#)", ln):     # next top-level item or heading ends the block
+                break
+            block.append(ln)
+        body = "\n".join(block).rstrip()
+    docs = []
+    for sub in ("plans", "specs", "findings"):
+        for f in sorted(glob.glob(os.path.join(root, "docs", "superpowers", sub, "*.md"))):
+            hit = item_id in os.path.basename(f)
+            if not hit:
+                try:
+                    with open(f, encoding="utf-8", errors="replace") as fh:
+                        hit = item_id in fh.readline()
+                except OSError:
+                    hit = False
+            if hit:
+                docs.append({"kind": sub[:-1], "path": os.path.relpath(f, env_root).replace("\\", "/")})
+    return {"id": item_id, "repo": repo, "backlog_path": rel_bl, "body": body, "docs": docs}
+
+
 def stage_detail(env_root, stage_id):
     """Full (uncapped) item list for ONE stage — the drill-in source, fetched on node click.
     Best-effort like the rest of the module; an unknown stage id returns None so the caller 404s."""

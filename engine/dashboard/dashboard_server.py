@@ -29,6 +29,9 @@ import activity  # run-record contract (A119) — live-run observability
 import otel_runs  # Flow view: native-OTel traces (Jaeger store) → runs + graph + cost
 import pipeline_state  # master Flow view: backlog+factory+OTel -> pipeline stage model
 import git_state       # cockpit: active worktrees + open PRs (best-effort, PRs bg-cached)
+import content_state   # content pipeline (capture→sort→ingest→gate→garden) summary from the queue
+import servers_state   # dev servers from launch.json + up/down probe
+import files_state     # guarded file browser + editor (contained to env root, secrets refused)
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -359,8 +362,53 @@ class Handler(SimpleHTTPRequestHandler):
             if detail is None:
                 return self._deny(404, "unknown pipeline stage")
             return self._send_json(detail)
+        if route == "/api/pipeline/item":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            repo, iid = qs.get("repo", [""])[0], qs.get("id", [""])[0]
+            # repo + id are used to build a backlog path — allow only safe tokens (no traversal)
+            if not re.match(r"^[A-Za-z0-9._-]{1,64}$", repo) or not re.match(r"^[A-Za-z0-9._:-]{1,80}$", iid):
+                return self._deny(400, "bad repo or id")
+            return self._send_json(pipeline_state.item_detail(str(env), repo, iid))
         if route == "/api/git":
             return self._send_json(git_state.state(str(env)))
+        if route == "/api/content":
+            data = content_state.summary(str(env))
+            # the vault's env-relative prefix, so the UI can map a vault-relative payload/draft
+            # path (e.g. "02_FamilyOffice/…") onto the Files browser ("SecondBrain/02_FamilyOffice/…")
+            try:
+                vault, _ = _connectors(env)
+                data["vault_rel"] = os.path.relpath(str(vault), str(env)).replace("\\", "/")
+            except (OSError, ValueError, KeyError):
+                data["vault_rel"] = None
+            return self._send_json(data)
+        if route.startswith("/api/content/stage/"):
+            # drill-in: uncapped item list for one content stage. The id is whitelisted against
+            # the fixed 5-stage set inside stage_detail (unknown -> None -> 404); used only as a
+            # dict key, so no traversal/injection surface.
+            detail = content_state.stage_detail(str(env), route[len("/api/content/stage/"):])
+            if detail is None:
+                return self._deny(404, "unknown content stage")
+            return self._send_json(detail)
+        if route == "/api/servers":
+            # the dashboard's own server isn't a launch.json dev server, so servers_state can't see
+            # it — inject it (it knows its port and is, by definition, up right now).
+            port = self.server.server_address[1]
+            me = {"repo": "aios", "name": "dashboard", "port": port,
+                  "url": f"http://localhost:{port}", "cmd": "python dashboard_server.py",
+                  "up": True, "self": True}
+            return self._send_json({"servers": [me] + servers_state.servers(str(env))})
+        if route == "/api/files/tree":
+            # file browser: list one dir under the env root. path containment + secret/noise
+            # denial live in files_state (realpath-based, symlink-safe); None -> 404.
+            rel = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path", [""])[0]
+            t = files_state.tree(str(env), rel)
+            return self._send_json(t) if t is not None else self._deny(404, "no such directory")
+        if route == "/api/files/read":
+            rel = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path", [""])[0]
+            return self._send_json(files_state.read(str(env), rel))
+        if route == "/api/files/search":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
+            return self._send_json(files_state.search(str(env), q))
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
@@ -665,6 +713,27 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_post(self, route):
         env = self.server.env_root
         tools = getattr(self.server, "tools_dir", HERE.parent / "tools")
+        if route == "/api/files/write":
+            # guarded editor save. do_POST already enforced Host + X-Aios-Token; files_state
+            # enforces containment, secret/symlink refusal, edit-only, and the size cap.
+            try:
+                params = json.loads(self._body or b"{}")
+            except ValueError:
+                return self._deny(400, "invalid JSON body")
+            if not isinstance(params, dict) or not isinstance(params.get("path"), str) \
+                    or not isinstance(params.get("content"), str):
+                return self._deny(400, "path and content (strings) required")
+            res = files_state.write(str(env), params["path"], params["content"])
+            return self._send_json(res, code=200 if res.get("ok") else 400)
+        if route == "/api/files/create":
+            try:
+                params = json.loads(self._body or b"{}")
+            except ValueError:
+                return self._deny(400, "invalid JSON body")
+            if not isinstance(params, dict) or not isinstance(params.get("path"), str):
+                return self._deny(400, "path (string) required")
+            res = files_state.create(str(env), params["path"])
+            return self._send_json(res, code=200 if res.get("ok") else 400)
         if not route.startswith("/api/action/"):
             return self._deny(404, f"unknown POST {route}")
         action_id = route[len("/api/action/"):]

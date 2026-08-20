@@ -200,3 +200,22 @@ def test_api_pipeline_stage_route(tmp_path):
 
 # (the /pipeline/* static route + its two tests were removed when the React Flow iframe app was
 # replaced by the native Preact cockpit view — /api/pipeline[/stage] remain the live data sources.)
+
+
+def test_item_detail_extracts_block_and_links_plans(tmp_path):
+    (tmp_path / "BACKLOG.md").write_text(
+        "## Open\n\n"
+        "- [ ] **H10** — first item headline\n"
+        "  - a sub-bullet mentioning docs/superpowers/plans/2026-08-20-h10-plan.md\n"
+        "  acceptance: it works\n"
+        "- [ ] **H11** — second item\n",
+        encoding="utf-8")
+    plans = tmp_path / "docs" / "superpowers" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-08-20-h10-plan.md").write_text("# H10 plan\n", encoding="utf-8")
+    d = p.item_detail(str(tmp_path), "env-ops", "H10")
+    assert d["backlog_path"] == "BACKLOG.md"
+    assert "first item headline" in d["body"] and "acceptance: it works" in d["body"]
+    assert "**H11**" not in d["body"]                       # block stops at the next item
+    assert d["docs"] == [{"kind": "plan", "path": "docs/superpowers/plans/2026-08-20-h10-plan.md"}]
+    assert p.item_detail(str(tmp_path), "env-ops", "H99")["body"] == ""   # missing id → empty
