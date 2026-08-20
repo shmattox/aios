@@ -575,6 +575,7 @@ body.modal-open { overflow: hidden; }
 .ov-st.up { background: var(--ok); box-shadow: 0 0 6px 1px rgba(76,195,138,.4); } .ov-st.down { background: var(--text-2); }
 .ov-si { flex: 1; min-width: 0; }
 .ov-si .nm { font: 600 12.5px/1 var(--font); color: var(--text-0); } .ov-si .nm .repo { color: var(--text-2); font-weight: 500; }
+.ov-si .nm .tag { margin-left: 7px; font: 600 8.5px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--text-2); border: 1px solid var(--border); border-radius: 6px; padding: 2px 5px; vertical-align: middle; }
 .ov-si .url { font: 500 10.5px/1 var(--mono); color: var(--text-2); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-ctrls { display: flex; gap: 6px; flex: none; }
 .ov-ctrls .verb { text-decoration: none; }

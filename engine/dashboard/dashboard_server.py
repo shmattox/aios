@@ -390,7 +390,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._deny(404, "unknown content stage")
             return self._send_json(detail)
         if route == "/api/servers":
-            return self._send_json({"servers": servers_state.servers(str(env))})
+            # the dashboard's own server isn't a launch.json dev server, so servers_state can't see
+            # it — inject it (it knows its port and is, by definition, up right now).
+            port = self.server.server_address[1]
+            me = {"repo": "aios", "name": "dashboard", "port": port,
+                  "url": f"http://localhost:{port}", "cmd": "python dashboard_server.py",
+                  "up": True, "self": True}
+            return self._send_json({"servers": [me] + servers_state.servers(str(env))})
         if route == "/api/files/tree":
             # file browser: list one dir under the env root. path containment + secret/noise
             # denial live in files_state (realpath-based, symlink-safe); None -> 404.

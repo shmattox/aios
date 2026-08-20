@@ -66,12 +66,14 @@ export function OverviewView() {
     <h3 class="ov-sect">Dev servers</h3>
     ${servers.length ? servers.map((s) => html`<div class="ov-srv" key=${s.repo + s.name + s.port}>
         <span class="ov-st ${s.up ? "up" : "down"}"></span>
-        <div class="ov-si"><div class="nm">${s.name} <span class="repo">· ${s.repo}</span></div>
+        <div class="ov-si"><div class="nm">${s.name} <span class="repo">· ${s.repo}</span>${s.self ? html`<span class="tag">this page</span>` : null}</div>
           <div class="url">${s.url || s.cmd}</div></div>
         <div class="ov-ctrls">
           ${s.up ? html`<a class="verb ok" href=${s.url} target="_blank" rel="noopener">Open</a>` : null}
-          <button class="verb" onClick=${() => toast("server control lands in the next slice")}>${s.up ? "Stop" : "Start"}</button>
-          <button class="verb" onClick=${() => toast("logs land in the next slice")}>Logs</button>
+          ${s.self
+            ? null
+            : html`<button class="verb" onClick=${() => toast("server control lands in the next slice")}>${s.up ? "Stop" : "Start"}</button>
+                   <button class="verb" onClick=${() => toast("logs land in the next slice")}>Logs</button>`}
         </div>
       </div>`) : html`<p class="stub">No dev servers declared.</p>`}
 
