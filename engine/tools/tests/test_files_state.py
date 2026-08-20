@@ -90,6 +90,26 @@ def test_write_refuses_create_secret_escape_and_oversize(tmp_path):
     assert f.write(env, "notes.txt", "y" * (2 * 1024 * 1024)).get("ok") is False  # oversize
 
 
+def test_search_finds_files_and_skips_secrets(tmp_path):
+    env = _env(tmp_path)
+    r = f.search(env, "notes")
+    assert "notes.txt" in r["results"]
+    r2 = f.search(env, "env")               # .env is secret — must not surface
+    assert not any(x.endswith(".env") for x in r2["results"])
+    assert f.search(env, "a")["results"] == []   # <2 chars → no-op
+
+
+def test_create_new_file_then_refuses_dupe_and_secret(tmp_path):
+    env = _env(tmp_path)
+    r = f.create(env, "sub/fresh.md")
+    assert r["ok"] is True and (tmp_path / "sub" / "fresh.md").is_file()
+    assert f.create(env, "sub/fresh.md").get("ok") is False       # already exists
+    assert f.create(env, ".env.new").get("ok") is False           # secret name
+    assert f.create(env, "nope/deep.md").get("ok") is False       # missing parent dir
+    assert f.create(env, "../escape.md").get("ok") is False       # traversal
+    assert not (tmp_path.parent / "escape.md").exists()
+
+
 def test_write_refuses_symlink_escape(tmp_path):
     env = _env(tmp_path)
     outside = tmp_path.parent / "outside.txt"

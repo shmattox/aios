@@ -134,7 +134,7 @@ function Shell() {
   return html`
     <header id="topbar">
       <${Logo} />
-      <span class="word">AIOS<span class="dot">·</span>v2</span>
+      <span class="word">AIOS</span>
       <span class="live"><span class="pulse"></span><span class="num">${ageTxt}</span></span>
       <button id="burger" aria-label="Menu" aria-expanded=${String(menuOpen)} onClick=${() => setMenuOpen((o) => !o)}>
         <svg class="ic" viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
@@ -143,7 +143,7 @@ function Shell() {
     <div id="scrim" onClick=${() => setMenuOpen(false)}></div>
 
     <aside id="side">
-      <div class="brand"><${Logo} /><span class="word">AIOS<span class="dot">·</span>v2</span></div>
+      <div class="brand"><${Logo} /><span class="word">AIOS</span></div>
       ${NAV.map((n) => n.section
         ? html`<div class="navsec" key=${"sec-" + n.section}>${n.section}</div>`
         : html`

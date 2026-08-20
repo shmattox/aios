@@ -393,6 +393,9 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/files/read":
             rel = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path", [""])[0]
             return self._send_json(files_state.read(str(env), rel))
+        if route == "/api/files/search":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
+            return self._send_json(files_state.search(str(env), q))
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
@@ -708,6 +711,15 @@ class Handler(SimpleHTTPRequestHandler):
                     or not isinstance(params.get("content"), str):
                 return self._deny(400, "path and content (strings) required")
             res = files_state.write(str(env), params["path"], params["content"])
+            return self._send_json(res, code=200 if res.get("ok") else 400)
+        if route == "/api/files/create":
+            try:
+                params = json.loads(self._body or b"{}")
+            except ValueError:
+                return self._deny(400, "invalid JSON body")
+            if not isinstance(params, dict) or not isinstance(params.get("path"), str):
+                return self._deny(400, "path (string) required")
+            res = files_state.create(str(env), params["path"])
             return self._send_json(res, code=200 if res.get("ok") else 400)
         if not route.startswith("/api/action/"):
             return self._deny(404, f"unknown POST {route}")

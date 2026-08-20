@@ -126,6 +126,44 @@ def read(env_root, rel):
     return {"path": _rel(_root(env_root), f), "content": text, "size": size}
 
 
+def search(env_root, q, limit=250):
+    """Recursive filename search under the env root (skip/secret dirs pruned). Returns matching
+    env-relative file paths, newest-scanned first is not guaranteed — order is walk order."""
+    q = (q or "").strip().lower()
+    if len(q) < 2:
+        return {"query": q, "results": []}
+    root = _root(env_root)
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d.lower() not in _SKIP_DIRS and not _is_secret(d)
+                       and not os.path.islink(os.path.join(dirpath, d))]
+        for name in filenames:
+            if _is_secret(name) or q not in name.lower():
+                continue
+            out.append(_rel(root, os.path.join(dirpath, name)))
+            if len(out) >= limit:
+                return {"query": q, "results": out, "truncated": True}
+    return {"query": q, "results": out}
+
+
+def create(env_root, rel):
+    """Create a new empty file. Refuses to overwrite, escape the root, touch a secret, or write
+    into a missing/secret directory."""
+    f = _resolve(env_root, rel)
+    if f is None:
+        return {"ok": False, "error": "path not allowed"}
+    if os.path.exists(f):
+        return {"ok": False, "error": "already exists"}
+    if not os.path.isdir(os.path.dirname(f)):
+        return {"ok": False, "error": "parent directory does not exist"}
+    try:
+        with io.open(f, "x", encoding="utf-8"):
+            pass
+    except OSError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "path": _rel(_root(env_root), f)}
+
+
 def write(env_root, rel, content):
     """Overwrite an existing text file. Returns {"ok": bool, …}. Edit-only: refuses to create a
     new file, write through a symlink, or exceed the size cap."""
