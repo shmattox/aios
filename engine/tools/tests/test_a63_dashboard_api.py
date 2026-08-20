@@ -116,6 +116,25 @@ def test_draft_resolves_relative_path_against_vault(tmp_path):
         srv.shutdown()
 
 
+def test_draft_relative_path_traversal_rejected(tmp_path):
+    # a draft_path escaping the vault via .. must 404, never read outside the vault.
+    (tmp_path / "profile").mkdir(); (tmp_path / "state" / "factory").mkdir(parents=True)
+    (tmp_path / "profile" / "connectors.yaml").write_text("vault:\n  live_root: SecondBrain\n", encoding="utf-8")
+    (tmp_path / "SecondBrain").mkdir()
+    (tmp_path / "secret.md").write_text("TOP SECRET", encoding="utf-8")   # outside the vault
+    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({
+        "held": [{"id": "x", "draft_path": "../secret.md", "conflict_key": "familyoffice/wiki/x.md"}]}), encoding="utf-8")
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}), encoding="utf-8")
+    srv = make_server(str(tmp_path), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?i=0", timeout=5)
+        assert e.value.code == 404
+    finally:
+        srv.shutdown()
+
+
 def test_draft_no_paper_evidence_key_when_absent(server):
     # queue item has no packet (fixture queue is empty) → key simply omitted.
     d = _get_json(server, "/api/draft?i=0")

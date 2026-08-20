@@ -223,10 +223,10 @@ function PrRows({ prs }) {
 // confirms, reject/dismiss require a reason.
 function HeldRows({ held, onGateAction, heldOpen, setHeldOpen, drafts }) {
   if (!held.length) return html`<div class="pv-empty">Nothing awaiting your decision.</div>`;
-  return held.map((it, i) => {
-    const open = heldOpen === i;
+  return held.map((it) => {
+    const open = heldOpen === it.id;   // keyed by id, not index — survives a poll reorder
     return html`<div key=${it.id}>
-      <div class="pv-row warn pv-held ${open ? "open" : ""}" onClick=${() => setHeldOpen(open ? null : i)}
+      <div class="pv-row warn pv-held ${open ? "open" : ""}" onClick=${() => setHeldOpen(open ? null : it.id)}
            title="Click to read the draft">
         <span class="pv-badge">${it.kb || "—"}</span>
         <div class="pv-rmain">
@@ -243,7 +243,7 @@ function HeldRows({ held, onGateAction, heldOpen, setHeldOpen, drafts }) {
           <button class="pv-verb" title="Dismiss" onClick=${(e) => { e.stopPropagation(); onGateAction("dismiss", it); }}>Dismiss</button>
         </div>
       </div>
-      ${open ? DraftPreview({ dr: drafts[i], rec: it.rec_reason }) : null}
+      ${open ? DraftPreview({ dr: drafts[it.id], rec: it.rec_reason }) : null}
     </div>`;
   });
 }
@@ -253,7 +253,8 @@ function DraftPreview({ dr, rec }) {
   return html`<div class="pv-exp">
     ${rec ? html`<p class="pv-detail"><b>why held: </b>${rec}</p>` : null}
     ${pe ? html`<p class="pv-detail pv-paper"><b>paper: </b>${pe.verdict}${pe.quote ? ` — “${pe.quote}”` : ""}${pe.doc ? ` (${pe.doc})` : ""}</p>` : null}
-    <pre class="pv-log">${dr == null ? "loading draft…" : dr.error ? "draft unavailable" : (dr.markdown || "").slice(0, 6000)}</pre>
+    <pre class="pv-log">${dr == null ? "loading draft…" : dr.error ? "draft unavailable"
+      : (dr.markdown || "").slice(0, 6000) + ((dr.markdown || "").length > 6000 ? "\n\n… (truncated — full draft in the vault)" : "")}</pre>
   </div>`;
 }
 
@@ -345,15 +346,17 @@ export function PipelineView() {
   // SSE: refresh model + activity the instant the factory changes anything (polls are the fallback).
   useLive(["activity"], () => { loadActivity(); loadModel(); });
 
-  // fetch the draft for the expanded held row (read-only; the index is the /api/held position).
+  // fetch the draft for the expanded held row (read-only). heldOpen is the item id; /api/draft
+  // wants the position, re-resolved here so a poll reorder can't pair a header with a stale draft.
+  const openIdx = heldOpen == null ? -1 : held.findIndex((h) => h.id === heldOpen);
   useEffect(() => {
-    if (heldOpen == null) return;
+    if (heldOpen == null || openIdx < 0) return;
     let alive = true;
-    api.get(`/api/draft?i=${heldOpen}`)
+    api.get(`/api/draft?i=${openIdx}`)
       .then((d) => { if (alive) setDrafts((m) => ({ ...m, [heldOpen]: d })); })
       .catch(() => { if (alive) setDrafts((m) => ({ ...m, [heldOpen]: { error: true } })); });
     return () => { alive = false; };
-  }, [heldOpen]);
+  }, [heldOpen, openIdx]);
 
   const pickStage = (id) => { setMode("activity"); setExpanded(null); setScope((cur) => (cur === id ? null : id)); };
   const clearScope = () => { setScope(null); setExpanded(null); };
