@@ -3,12 +3,12 @@ import React, { useEffect, useState } from "react";
 // One right-side panel shared by the graph (stage drill-in) and the feed (run log). `panel` is
 // either {kind:"stage", id} or {kind:"run", run}. Stage items whose id is currently in a factory
 // run cross-link to that run's log via onOpenRun.
-export function SidePanel({ panel, runByItem, onOpenRun, onClose }) {
+export function SidePanel({ panel, run, runByItem, onOpenRun, onClose }) {
   return (
     <aside className="detail">
       {panel.kind === "stage"
         ? <StageBody id={panel.id} runByItem={runByItem} onOpenRun={onOpenRun} onClose={onClose} />
-        : <RunBody run={panel.run} onClose={onClose} />}
+        : <RunBody run={run} onClose={onClose} />}
     </aside>
   );
 }
@@ -77,12 +77,19 @@ function fmtDur(r) {
 
 function RunBody({ run, onClose }) {
   const [log, setLog] = useState(null);   // {lines, available} | {error}
+  // Poll the log so an OPEN live run's tail keeps growing; keep the last good log on a transient
+  // poll failure (only surface an error if we never got one). Run meta (live/cost/duration) stays
+  // fresh via the `run` prop, which App re-derives from the latest poll each render.
   useEffect(() => {
     let alive = true;
     setLog(null);
-    fetch(`/api/activity/${encodeURIComponent(run.id)}/log?tail=200`)
-      .then((r) => r.json()).then((d) => { if (alive) setLog(d); }).catch(() => { if (alive) setLog({ error: true }); });
-    return () => { alive = false; };
+    const load = () =>
+      fetch(`/api/activity/${encodeURIComponent(run.id)}/log?tail=200`)
+        .then((r) => r.json()).then((d) => { if (alive) setLog(d); })
+        .catch(() => { if (alive) setLog((l) => l || { error: true }); });
+    load();
+    const t = setInterval(load, 4000);
+    return () => { alive = false; clearInterval(t); };
   }, [run.id]);
 
   const meta = [
@@ -96,7 +103,8 @@ function RunBody({ run, onClose }) {
   return (
     <>
       <PanelHead label={run.title || run.id}
-                 sub={`${run.surface} · ${run.live ? "live" : (run.status || "—")}`} onClose={onClose} />
+                 sub={[run.surface, run.live ? "live" : run.status].filter(Boolean).join(" · ") || "run"}
+                 onClose={onClose} />
       <div className="detail-body">
         <div className="rmeta">
           {meta.map(([k, v]) => (
