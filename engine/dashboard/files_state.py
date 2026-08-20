@@ -15,13 +15,17 @@ of the raw input, so encoded traversal and symlink escapes both fail closed."""
 import io
 import os
 
-# directories never traversed — noise + danger (.git corruption, huge dep trees)
+# directories never traversed — noise + danger (.git corruption, huge dep trees, credential stores).
+# Compared case-INSENSITIVELY (lowercased at match time) so `.GIT` can't slip through on a
+# case-insensitive filesystem whose realpath doesn't fold case (macOS APFS).
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache",
               ".pytest_cache", "dist", "build", ".next", ".turbo", "target", ".idea", ".vscode",
-              ".gradle", ".cache"}
-# files never read or written — secrets. Matched case-insensitively on the basename.
-_SECRET_NAMES = {"credentials", "credentials.json", "id_rsa", "id_ed25519", ".netrc", ".htpasswd",
-                 ".pgpass", ".dockercfg"}
+              ".gradle", ".cache", ".ssh", ".aws", ".gnupg", ".docker", ".azure", ".kube"}
+# files never read or written — secrets. Matched case-insensitively on EVERY path segment (not
+# just the basename), so `credentials/prod.json` is refused as well as a file named `credentials`.
+_SECRET_NAMES = {"credentials", "credentials.json", "credentials.yaml", "credentials.yml",
+                 "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".netrc", ".htpasswd", ".pgpass",
+                 ".dockercfg", ".npmrc", ".pypirc", "known_hosts", ".git-credentials"}
 _SECRET_SUFFIXES = (".key", ".pem", ".pfx", ".p12", ".keystore", ".crt", ".cer", ".jks")
 
 _READ_MAX = 512 * 1024        # 512 KB — refuse to open bigger as editable text
@@ -30,7 +34,8 @@ _WRITE_MAX = 1024 * 1024      # 1 MB — also bounded by the POST body cap
 
 def _is_secret(name):
     n = name.lower()
-    return n.startswith(".env") or n in _SECRET_NAMES or n.endswith(_SECRET_SUFFIXES)
+    return (n.startswith(".env") or n.startswith("secrets.")    # secrets.json/.yaml/.yml/.env…
+            or n in _SECRET_NAMES or n.endswith(_SECRET_SUFFIXES))
 
 
 def _root(env_root):
@@ -48,14 +53,16 @@ def _resolve(env_root, rel):
     # cheap pre-checks before touching disk: no drive letters, no explicit parent hops
     if ":" in rel or rel == ".." or rel.startswith("../") or "/../" in rel or rel.endswith("/.."):
         return None
+    if os.path.islink(os.path.join(root, rel)):     # refuse a symlinked final component outright
+        return None
     target = os.path.realpath(os.path.join(root, rel))
     # realpath comparison (symlink/.. safe) — must be the root or strictly beneath it
     if target != root and not target.startswith(root + os.sep):
         return None
     relparts = os.path.relpath(target, root).replace("\\", "/").split("/")
-    if any(p in _SKIP_DIRS for p in relparts):
+    if any(p.lower() in _SKIP_DIRS for p in relparts):    # case-insensitive (.GIT on macOS)
         return None
-    if _is_secret(relparts[-1]):
+    if any(_is_secret(p) for p in relparts):              # a secret at ANY depth, not just basename
         return None
     return target
 

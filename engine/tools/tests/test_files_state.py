@@ -52,6 +52,18 @@ def test_read_refuses_secret_binary_and_escape(tmp_path):
     assert f.read(env, "missing.md").get("error")                 # not a file
 
 
+def test_read_refuses_secret_at_any_depth(tmp_path):
+    env = _env(tmp_path)
+    (tmp_path / "credentials").mkdir()                            # a secret-NAMED directory
+    (tmp_path / "credentials" / "prod.json").write_bytes(b"{}\n")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / ".npmrc").write_bytes(b"registry=x\n")
+    (tmp_path / "app" / "id_ecdsa").write_bytes(b"key\n")
+    assert f.read(env, "credentials/prod.json").get("error")      # secret at a parent segment
+    assert f.read(env, "app/.npmrc").get("error")                 # expanded denylist
+    assert f.read(env, "app/id_ecdsa").get("error")               # more key names
+
+
 def test_read_too_large_refused(tmp_path):
     env = _env(tmp_path)
     big = tmp_path / "big.txt"
