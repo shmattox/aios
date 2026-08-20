@@ -84,9 +84,20 @@ export function FilesView() {
     setExpanded((s) => { const n = new Set(s); n.has(node.path) ? n.delete(node.path) : n.add(node.path); return n; });
     if (!childrenOf[node.path]) loadDir(node.path);
   };
+  // expand the tree down to `path` (loading each ancestor dir) so the file is revealed + highlighted
+  const reveal = (path) => {
+    const parts = String(path).split("/").filter(Boolean);
+    const dirs = [];
+    for (let i = 0; i < parts.length - 1; i++) dirs.push(parts.slice(0, i + 1).join("/"));
+    if (!dirs.length) return;
+    setExpanded((s) => { const n = new Set(s); dirs.forEach((d) => n.add(d)); return n; });
+    dirs.forEach((d) => { if (!childrenOf[d]) loadDir(d); });
+    if (q) { setQ(""); setResults(null); }   // leave search mode so the tree (not results) shows
+  };
   const openPath = (path) => {
     if (!path) return;
     setActive(path);
+    reveal(path);
     if (openRef.current.has(path)) return;
     openRef.current.add(path);
     setTabs((ts) => [...ts, { path, content: null, text: "", loading: true }]);
@@ -95,6 +106,15 @@ export function FilesView() {
         ? (d.error ? { path, error: d.error, size: d.size } : { path, content: d.content, text: d.content }) : t)))
       .catch(() => setTabs((ts) => ts.map((t) => t.path === path ? { path, error: "could not load file" } : t)));
   };
+  // once the revealed file's row is rendered in the tree, scroll it into view
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => {
+      const el = document.querySelector(".fm-tree .fm-node.sel");
+      if (el) el.scrollIntoView({ block: "center" });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [active, childrenOf]);
   useEffect(() => { const p = takePendingFile(); if (p) openPath(p); return subscribeOpenFile(openPath); }, []);
 
   // debounced recursive search
