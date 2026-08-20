@@ -432,7 +432,21 @@ class Handler(SimpleHTTPRequestHandler):
         # caller-supplied path.  # see A63 spec
         if not (0 <= idx < len(held)):
             return self._deny(404, "no such held row")
-        p = Path(held[idx].get("draft_path", ""))
+        # draft_path is stored RELATIVE to the vault root ("02_FamilyOffice/…"); resolve it there,
+        # not against the server's cwd. (An absolute path — e.g. in tests — is used as-is.)
+        raw = held[idx].get("draft_path", "")
+        p = Path(raw)
+        if not p.is_absolute():
+            try:
+                vault, _ = _connectors(self.server.env_root)
+            except OSError:
+                vault = None
+            if vault is None:
+                return self._deny(404, "draft file missing on disk")
+            p = (vault / raw).resolve()
+            vr = vault.resolve()
+            if p != vr and vr not in p.parents:      # defense-in-depth: never read outside the vault
+                return self._deny(404, "draft outside vault")
         if not p.is_file():
             return self._deny(404, "draft file missing on disk")
         draft_text = p.read_text(encoding="utf-8")

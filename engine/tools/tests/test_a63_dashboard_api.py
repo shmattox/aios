@@ -95,6 +95,27 @@ def test_draft_surfaces_paper_evidence(server, env_root):
     assert d["paper_evidence"]["doc"] == "Loan Mod.pdf"
 
 
+def test_draft_resolves_relative_path_against_vault(tmp_path):
+    # draft_path is stored RELATIVE to the vault; it must resolve there, not the server cwd
+    # (the real held records use relative paths — the absolute case above is a test artifact).
+    (tmp_path / "profile").mkdir(); (tmp_path / "state" / "factory").mkdir(parents=True)
+    (tmp_path / "profile" / "connectors.yaml").write_text("vault:\n  live_root: SecondBrain\n", encoding="utf-8")
+    rel = "02_FamilyOffice/wiki/staging/x.md"
+    dp = tmp_path / "SecondBrain" / "02_FamilyOffice" / "wiki" / "staging" / "x.md"
+    dp.parent.mkdir(parents=True); dp.write_text("# Relative draft", encoding="utf-8")
+    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({
+        "held": [{"id": "x", "draft_path": rel, "conflict_key": "familyoffice/wiki/sources/x.md"}]}), encoding="utf-8")
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}), encoding="utf-8")
+    srv = make_server(str(tmp_path), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?i=0", timeout=5) as r:
+            body = json.loads(r.read())
+        assert body["markdown"] == "# Relative draft"
+    finally:
+        srv.shutdown()
+
+
 def test_draft_no_paper_evidence_key_when_absent(server):
     # queue item has no packet (fixture queue is empty) → key simply omitted.
     d = _get_json(server, "/api/draft?i=0")

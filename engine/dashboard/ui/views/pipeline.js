@@ -116,7 +116,7 @@ function FlowGraph({ stages, flows, scope, onPick }) {
 }
 
 // ── feed: activity / worktrees / prs, with stage scoping + inline expand ──
-function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, held, onGateAction, stageItems, runByItem, expanded, setExpanded, logs }) {
+function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, held, onGateAction, heldOpen, setHeldOpen, drafts, stageItems, runByItem, expanded, setExpanded, logs }) {
   const wt = git.worktrees || [];
   const prs = git.prs || { items: [], loading: false };
   const vault = git.vault || [];
@@ -144,7 +144,7 @@ function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, held
         ? (scope
             ? StageItems({ items: stageItems, runByItem, expanded, setExpanded, logs })
             : ActivityRows({ runs: activity.runs, now: activity.now, expanded, setExpanded, logs }))
-        : mode === "gate" ? HeldRows({ held, onGateAction })
+        : mode === "gate" ? HeldRows({ held, onGateAction, heldOpen, setHeldOpen, drafts })
         : mode === "worktrees" ? WorktreeRows({ wt })
         : mode === "prs" ? PrRows({ prs })
         : VaultRows({ vault, now: activity.now })}
@@ -219,25 +219,42 @@ function PrRows({ prs }) {
 }
 
 // The actionable gate: held drafts awaiting a human decision (the same gated verbs the Inbox
-// fires). Economic/Paper-Governs items — approve confirms, reject/dismiss require a reason.
-function HeldRows({ held, onGateAction }) {
+// fires). Economic/Paper-Governs items — click a row to read the draft before deciding; approve
+// confirms, reject/dismiss require a reason.
+function HeldRows({ held, onGateAction, heldOpen, setHeldOpen, drafts }) {
   if (!held.length) return html`<div class="pv-empty">Nothing awaiting your decision.</div>`;
-  return held.map((it) => html`<div class="pv-row warn pv-held" key=${it.id}>
-    <span class="pv-badge">${it.kb || "—"}</span>
-    <div class="pv-rmain">
-      <div class="pv-rt">${it.title}</div>
-      <div class="pv-rm">
-        ${it.lane ? html`<span>${it.lane}</span>` : null}
-        ${it.recommended ? html`<span>rec ${it.recommended}</span>` : null}
-        ${it.rec_reason ? html`<span class="pv-recr">${it.rec_reason}</span>` : null}
+  return held.map((it, i) => {
+    const open = heldOpen === i;
+    return html`<div key=${it.id}>
+      <div class="pv-row warn pv-held ${open ? "open" : ""}" onClick=${() => setHeldOpen(open ? null : i)}
+           title="Click to read the draft">
+        <span class="pv-badge">${it.kb || "—"}</span>
+        <div class="pv-rmain">
+          <div class="pv-rt">${it.title}</div>
+          <div class="pv-rm">
+            ${it.lane ? html`<span>${it.lane}</span>` : null}
+            ${it.recommended ? html`<span>rec ${it.recommended}</span>` : null}
+            ${it.rec_reason ? html`<span class="pv-recr">${it.rec_reason}</span>` : null}
+          </div>
+        </div>
+        <div class="pv-verbs">
+          <button class="pv-verb ok" title="Ship (gated)" onClick=${(e) => { e.stopPropagation(); onGateAction("approve", it); }}>Ship</button>
+          <button class="pv-verb" title="Reject" onClick=${(e) => { e.stopPropagation(); onGateAction("reject", it); }}>Reject</button>
+          <button class="pv-verb" title="Dismiss" onClick=${(e) => { e.stopPropagation(); onGateAction("dismiss", it); }}>Dismiss</button>
+        </div>
       </div>
-    </div>
-    <div class="pv-verbs">
-      <button class="pv-verb ok" title="Ship (gated)" onClick=${() => onGateAction("approve", it)}>Ship</button>
-      <button class="pv-verb" title="Reject" onClick=${() => onGateAction("reject", it)}>Reject</button>
-      <button class="pv-verb" title="Dismiss" onClick=${() => onGateAction("dismiss", it)}>Dismiss</button>
-    </div>
-  </div>`);
+      ${open ? DraftPreview({ dr: drafts[i], rec: it.rec_reason }) : null}
+    </div>`;
+  });
+}
+
+function DraftPreview({ dr, rec }) {
+  const pe = dr && dr.paper_evidence;
+  return html`<div class="pv-exp">
+    ${rec ? html`<p class="pv-detail"><b>why held: </b>${rec}</p>` : null}
+    ${pe ? html`<p class="pv-detail pv-paper"><b>paper: </b>${pe.verdict}${pe.quote ? ` — “${pe.quote}”` : ""}${pe.doc ? ` (${pe.doc})` : ""}</p>` : null}
+    <pre class="pv-log">${dr == null ? "loading draft…" : dr.error ? "draft unavailable" : (dr.markdown || "").slice(0, 6000)}</pre>
+  </div>`;
 }
 
 function VaultRows({ vault, now }) {
@@ -263,6 +280,8 @@ export function PipelineView() {
   const [lastSync, setLastSync] = useState(0);      // epoch-s of the last successful poll
   const [clientNow, setClientNow] = useState(Date.now() / 1000);
   const [held, setHeld] = useState([]);             // gate: drafts awaiting a human decision
+  const [heldOpen, setHeldOpen] = useState(null);   // index of the expanded held row
+  const [drafts, setDrafts] = useState({});         // held index -> fetched draft
 
   const loadModel = () => api.get("/api/pipeline").then(setModel).catch(() => {});
   const loadActivity = () => api.get("/api/activity")
@@ -286,6 +305,7 @@ export function PipelineView() {
         if (r == null) return;   // cancelled -> abort (don't fire on a dismissed prompt)
         await api.post("dismiss", { id: item.id, reason: r || "below the worthiness bar" });
       }
+      setHeldOpen(null);   // indices shift after an item leaves the list
       loadHeld(); loadActivity();
     } catch (e) { /* api.post already toasted the failure */ }
   };
@@ -325,9 +345,19 @@ export function PipelineView() {
   // SSE: refresh model + activity the instant the factory changes anything (polls are the fallback).
   useLive(["activity"], () => { loadActivity(); loadModel(); });
 
+  // fetch the draft for the expanded held row (read-only; the index is the /api/held position).
+  useEffect(() => {
+    if (heldOpen == null) return;
+    let alive = true;
+    api.get(`/api/draft?i=${heldOpen}`)
+      .then((d) => { if (alive) setDrafts((m) => ({ ...m, [heldOpen]: d })); })
+      .catch(() => { if (alive) setDrafts((m) => ({ ...m, [heldOpen]: { error: true } })); });
+    return () => { alive = false; };
+  }, [heldOpen]);
+
   const pickStage = (id) => { setMode("activity"); setExpanded(null); setScope((cur) => (cur === id ? null : id)); };
   const clearScope = () => { setScope(null); setExpanded(null); };
-  const switchMode = (m) => { setMode(m); setExpanded(null); if (m !== "activity") setScope(null); };
+  const switchMode = (m) => { setMode(m); setExpanded(null); setHeldOpen(null); if (m !== "activity") setScope(null); };
 
   const stages = (model?.stages) || STAGES.map(([id, label]) => ({ id, label, count: 0 }));
   const gate = stages.find((s) => s.id === "gate")?.count ?? 0;
@@ -339,6 +369,7 @@ export function PipelineView() {
     <${FlowGraph} stages=${stages} flows=${model?.flows} scope=${scope} onPick=${pickStage} />
     <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} scopeInfo=${scopeInfo} clearScope=${clearScope}
              activity=${activity} git=${git} held=${held} onGateAction=${gateAction}
+             heldOpen=${heldOpen} setHeldOpen=${setHeldOpen} drafts=${drafts}
              stageItems=${stageItems} runByItem=${runByItem}
              expanded=${expanded} setExpanded=${setExpanded} logs=${logs} />
   </div>`;
