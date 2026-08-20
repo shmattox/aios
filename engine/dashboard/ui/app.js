@@ -7,6 +7,7 @@ import { BoardView } from "/views/board.js";
 import { AiosView } from "/views/aios.js";
 import { SoftwareView } from "/views/software.js";
 import { UsageView } from "/views/usage.js";
+import { FilesView } from "/views/files.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -40,7 +41,7 @@ const stub = (name, note) => () => html`<${Building} name=${name} note=${note} /
 const NAV = [
   { key: "overview", label: "Overview", view: OverviewView },
   { key: "board", label: "Board", view: BoardView },
-  { key: "files", label: "Files", view: stub("Files", "The file browser + editor over the whole environment.") },
+  { key: "files", label: "Files", view: FilesView },
   { key: "usage", label: "Usage", view: UsageView },
   { section: "pipelines" },
   { key: "aios", label: "AIOS", view: AiosView },
@@ -114,6 +115,7 @@ function Shell() {
         chord.current = null;
         if (e.key === "o") { location.hash = "#/overview"; return; }
         if (e.key === "b") { location.hash = "#/board"; return; }
+        if (e.key === "f") { location.hash = "#/files"; return; }
         if (e.key === "a") { location.hash = "#/aios"; return; }
         if (e.key === "s") { location.hash = "#/software"; return; }
         if (e.key === "u") { location.hash = "#/usage"; return; }
