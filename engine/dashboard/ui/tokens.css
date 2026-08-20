@@ -585,6 +585,7 @@ body.modal-open { overflow: hidden; }
 .pv-row.open { background: var(--bg-1); }
 .pv-row.run { border-left-color: var(--text-0); } .pv-row.ok { border-left-color: var(--text-2); }
 .pv-row.warn { border-left-color: var(--warn); } .pv-row.bad { border-left-color: var(--err); }
+.pv-row.stale { border-left-color: var(--err); }
 .pv-badge { font: 600 9px/1 var(--mono); letter-spacing: .04em; color: var(--text-1);
   border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; min-width: 42px; text-align: center; flex: none; }
 .pv-rmain { flex: 1; min-width: 0; }
@@ -595,6 +596,7 @@ body.modal-open { overflow: hidden; }
 .pv-rr { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
 .pv-st { display: flex; align-items: center; gap: 5px; font: 600 10px/1 var(--mono); text-transform: uppercase; color: var(--text-2); }
 .pv-st.run { color: var(--text-0); } .pv-st.ok { color: var(--ok); } .pv-st.warn { color: var(--warn); } .pv-st.bad { color: var(--err); }
+.pv-st.stale { color: var(--err); }
 .pv-st .d { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .pv-tm { font: 500 10px/1 var(--mono); color: var(--text-2); }
 

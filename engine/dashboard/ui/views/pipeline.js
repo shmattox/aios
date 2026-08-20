@@ -1,8 +1,8 @@
 // Pipeline cockpit — the factory as a live execution-flow graph, native to the dashboard
 // (no iframe, no build). Metrics strip + hand-drawn SVG flow graph + a working feed that
 // SCOPES to whichever stage you click. Reads /api/pipeline, /api/pipeline/stage/<id>,
-// /api/activity[/<id>/log], /api/git. Refreshes on the SSE `activity` signal + polls.
-import { html, api, useState, useEffect, useRef } from "/lib.js";
+// /api/activity[/<id>/log], /api/git. Refreshes on the SSE `activity` signal (useLive) + polls.
+import { html, api, useState, useEffect, useRef, useLive } from "/lib.js";
 
 const STAGES = [
   ["backlog", "Backlog"], ["brainstorm", "Brainstorm"], ["spec", "Spec"], ["implement", "Implement"],
@@ -18,12 +18,19 @@ function ago(sec) {
   if (sec < 86400) return Math.round(sec / 3600) + "h";
   return Math.round(sec / 86400) + "d";
 }
+// stale = record still says "running" but neither pid nor heartbeat is fresh — rendered loud,
+// never conflated with a genuinely live run (the activity contract's liveness invariant).
 function runClass(r) {
-  if (r.live || r.status === "running") return "run";
+  if (r.status === "running") return r.live ? "run" : "stale";
+  if (r.live) return "run";
   if (r.status === "shipped" || r.status === "ended") return "ok";
   if (r.status === "failed") return "bad";
   if (r.status === "parked" || r.pending_approval) return "warn";
   return "idle";
+}
+function runStatusText(r) {
+  if (r.status === "running") return r.live ? "running" : "stale";
+  return r.status || "—";
 }
 function stageKind(id) { return id === "gate" ? "gate" : id === "complete" ? "done" : null; }
 const fmtUsd = (n) => "$" + (n || 0).toFixed(2);
@@ -54,7 +61,6 @@ function Metrics({ runs, gate }) {
 function FlowGraph({ stages, flows, scope, onPick }) {
   const wrapRef = useRef(null);
   const [edges, setEdges] = useState([]);
-  const byId = Object.fromEntries(stages.map((s) => [s.id, s]));
   const maxc = Math.max(1, ...stages.map((s) => s.count));
   const active = new Set((flows || []).map((f) => f.from + ">" + f.to));
 
@@ -69,8 +75,9 @@ function FlowGraph({ stages, flows, scope, onPick }) {
         const x1 = a.right - box.left - 3, x2 = b.left - box.left + 3, y = a.top - box.top + 40;
         const mid = (x1 + x2) / 2;
         out.push({ d: `M${x1} ${y} C${mid} ${y}, ${mid} ${y}, ${x2} ${y}`,
-          w: 1 + (byId[STAGES[i][0]]?.count / maxc) * 5,
-          live: active.has(STAGES[i][0] + ">" + STAGES[i + 1][0]), dur: (0.9 + i * 0.12).toFixed(2) });
+          w: 1 + ((stages[i] && stages[i].count || 0) / maxc) * 5,
+          live: active.has((stages[i] && stages[i].id) + ">" + (stages[i + 1] && stages[i + 1].id)),
+          dur: (0.9 + i * 0.12).toFixed(2) });
       }
       setEdges(out);
     };
@@ -108,8 +115,7 @@ function FlowGraph({ stages, flows, scope, onPick }) {
 }
 
 // ── feed: activity / worktrees / prs, with stage scoping + inline expand ──
-function Feed({ mode, setMode, scope, clearScope, activity, git, stageItems, runByItem, expanded, setExpanded, logs }) {
-  const scopeStage = scope ? STAGES.find((s) => s[0] === scope) : null;
+function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stageItems, runByItem, expanded, setExpanded, logs }) {
   const wt = git.worktrees || [];
   const prs = git.prs || { items: [], loading: false };
   const extras = wt.filter((w) => !w.primary).length;
@@ -121,8 +127,8 @@ function Feed({ mode, setMode, scope, clearScope, activity, git, stageItems, run
           html`<button class="pv-tab ${mode === m ? "on" : ""}" key=${m} onClick=${() => setMode(m)}>
             ${lbl}${n ? html`<span class="pv-tn">${n}</span>` : null}</button>`)}
       </div>
-      ${scopeStage && mode === "activity"
-        ? html`<div class="pv-scope">viewing <b>${scopeStage[1]}</b> · ${scopeStage[2] ?? ""} <span class="pv-clr" onClick=${clearScope}>clear ✕</span></div>`
+      ${scopeInfo && mode === "activity"
+        ? html`<div class="pv-scope">viewing <b>${scopeInfo.label}</b> · ${scopeInfo.count} items <span class="pv-clr" onClick=${clearScope}>clear ✕</span></div>`
         : null}
     </div>
     <div class="pv-fbody">
@@ -154,7 +160,7 @@ function ActivityRows({ runs, now, expanded, setExpanded, logs }) {
           <div class="pv-rm">${r.repo ? html`<span class="repo">${r.repo}</span>` : null}
             ${r.item_ids && r.item_ids.length ? html`<span>${r.item_ids.join(" ")}</span>` : null}
             ${r.cost_usd ? html`<span>${fmtUsd(r.cost_usd)}</span>` : null}</div></div>
-        <div class="pv-rr"><span class="pv-st ${cls}">${r.live ? html`<span class="d"></span>` : null}${r.status || "—"}</span>
+        <div class="pv-rr"><span class="pv-st ${cls}">${r.live ? html`<span class="d"></span>` : null}${runStatusText(r)}</span>
           <span class="pv-tm">${ago(now - lastTs(r))}</span></div>
       </div>
       ${open ? html`${r.detail ? html`<div class="pv-exp"><p class="pv-detail">${r.detail}</p></div>` : null}${LogBlock({ log: logs[r.id] })}` : null}
@@ -230,34 +236,40 @@ export function PipelineView() {
     return () => { alive = false; clearInterval(t); };
   }, [scope]);
 
-  // fetch (and keep polling) the log for whatever row is expanded
+  // resolve the expanded row to a concrete run id (a scoped item maps to its factory run), fresh
+  // each render so a superseding run is followed rather than polling the dead one.
+  const runByItem = buildRunByItem(activity.runs);
+  const expandedRunId = expanded
+    ? (activity.runs.some((r) => r.id === expanded) ? expanded : (runByItem.get(expanded) || {}).id)
+    : null;
+
+  // fetch (and keep polling) the log for the expanded row
   useEffect(() => {
-    if (!expanded) return;
-    const runByItem = buildRunByItem(activity.runs);
-    const runId = activity.runs.some((r) => r.id === expanded) ? expanded : (runByItem.get(expanded) || {}).id;
-    if (!runId) return;
+    if (!expandedRunId) return;
     let alive = true;
-    const load = () => api.get(`/api/activity/${encodeURIComponent(runId)}/log?tail=200`)
-      .then((d) => { if (alive) setLogs((m) => ({ ...m, [runId]: d })); })
-      .catch(() => { if (alive) setLogs((m) => ({ ...m, [runId]: m[runId] || { error: true } })); });
+    const load = () => api.get(`/api/activity/${encodeURIComponent(expandedRunId)}/log?tail=200`)
+      .then((d) => { if (alive) setLogs((m) => ({ ...m, [expandedRunId]: d })); })
+      .catch(() => { if (alive) setLogs((m) => ({ ...m, [expandedRunId]: m[expandedRunId] || { error: true } })); });
     load(); const t = setInterval(load, 4000);
     return () => { alive = false; clearInterval(t); };
-  }, [expanded]);
+  }, [expandedRunId]);
 
-  const runByItem = buildRunByItem(activity.runs);
+  // SSE: refresh model + activity the instant the factory changes anything (polls are the fallback).
+  useLive(["activity"], () => { loadActivity(); loadModel(); });
+
   const pickStage = (id) => { setMode("activity"); setExpanded(null); setScope((cur) => (cur === id ? null : id)); };
   const clearScope = () => { setScope(null); setExpanded(null); };
   const switchMode = (m) => { setMode(m); setExpanded(null); if (m !== "activity") setScope(null); };
 
   const stages = (model?.stages) || STAGES.map(([id, label]) => ({ id, label, count: 0 }));
   const gate = stages.find((s) => s.id === "gate")?.count ?? 0;
-  const scopeStage = scope ? STAGES.find((s) => s[0] === scope) : null;
-  if (scopeStage) scopeStage[2] = (stages.find((s) => s.id === scope)?.count ?? 0) + " items";
+  const scoped = scope ? stages.find((s) => s.id === scope) : null;
+  const scopeInfo = scope ? { label: (scoped && scoped.label) || scope, count: (scoped && scoped.count) ?? 0 } : null;
 
   return html`<div class="pv-cockpit">
     <${Metrics} runs=${activity.runs} gate=${gate} />
     <${FlowGraph} stages=${stages} flows=${model?.flows} scope=${scope} onPick=${pickStage} />
-    <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} clearScope=${clearScope}
+    <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} scopeInfo=${scopeInfo} clearScope=${clearScope}
              activity=${activity} git=${git} stageItems=${stageItems} runByItem=${runByItem}
              expanded=${expanded} setExpanded=${setExpanded} logs=${logs} />
   </div>`;
