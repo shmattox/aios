@@ -1,5 +1,4 @@
-import React from "react";
-import { useActivity } from "./useActivity";
+import React, { useState } from "react";
 
 const SURFACE = { factory: "FAC", pipeline: "PIPE", session: "SESS", goal: "GOAL", workflow: "FLOW" };
 
@@ -24,26 +23,42 @@ function lastTs(r) {
   return Math.max(r.ended || 0, r.heartbeat || 0, r.started || 0);
 }
 
-export function ActivityFeed() {
-  const { runs, now } = useActivity(4000);
-  const sorted = [...runs].sort((a, b) => lastTs(b) - lastTs(a)).slice(0, 80);
+export function ActivityFeed({ activity, onRunClick, selectedRunId }) {
+  const { runs, now } = activity;
+  const [surface, setSurface] = useState("all");   // "all" | a surface key
+  const [liveOnly, setLiveOnly] = useState(false);
+
+  const present = [...new Set(runs.map((r) => r.surface))];
+  const filtered = runs
+    .filter((r) => (surface === "all" || r.surface === surface) && (!liveOnly || r.live))
+    .sort((a, b) => lastTs(b) - lastTs(a))
+    .slice(0, 80);
   const liveCount = runs.filter((r) => r.live).length;
 
   return (
     <section className="feed">
       <header className="feed-head">
-        <span className="feed-title">Activity</span>
+        <div className="feed-filters">
+          <button className={"chip" + (surface === "all" ? " on" : "")} onClick={() => setSurface("all")}>all</button>
+          {present.map((s) => (
+            <button className={"chip" + (surface === s ? " on" : "")} key={s} onClick={() => setSurface(s)}>
+              {(SURFACE[s] || s).toLowerCase()}
+            </button>
+          ))}
+          <button className={"chip" + (liveOnly ? " on" : "")} onClick={() => setLiveOnly((v) => !v)}>live</button>
+        </div>
         <span className="feed-meta">
           {liveCount ? <span className="feed-live"><span className="dot" />{liveCount} live</span> : null}
-          <span className="feed-count">{runs.length} runs</span>
+          <span className="feed-count">{filtered.length}/{runs.length}</span>
         </span>
       </header>
       <div className="feed-body">
-        {!sorted.length ? (
-          <div className="feed-empty">No activity recorded yet.</div>
+        {!filtered.length ? (
+          <div className="feed-empty">No matching activity.</div>
         ) : (
-          sorted.map((r) => (
-            <div className={"frow " + statusClass(r)} key={r.id}>
+          filtered.map((r) => (
+            <div className={"frow " + statusClass(r) + (r.id === selectedRunId ? " sel" : "")} key={r.id}
+                 onClick={() => onRunClick(r)} title="Open run log">
               <span className="fsurface">{SURFACE[r.surface] || r.surface}</span>
               <div className="fmain">
                 <div className="ftitle">{r.title || r.id}</div>
