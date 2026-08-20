@@ -6,6 +6,7 @@ import json, os, sys, time
 from pathlib import Path
 
 LIVE_WINDOW_S = 90
+SESSION_LIVE_WINDOW_S = 300   # a session whose transcript was written this recently is "running now"
 SURFACES = ("factory", "pipeline", "session", "goal", "workflow")
 TERMINAL = ("shipped", "parked", "no-op", "failed", "ended")
 SAFE_ID_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-")
@@ -240,7 +241,18 @@ def is_live(rec, now):
         return False
     if _pid_alive(rec.get("pid")):
         return True
-    return (now - rec.get("heartbeat", 0)) <= LIVE_WINDOW_S
+    if (now - rec.get("heartbeat", 0)) <= LIVE_WINDOW_S:
+        return True
+    # A session's transcript (log_path) is appended on every turn, so a fresh mtime is the real
+    # "this session is active right now" signal — the id-encoded pid is the ephemeral hook process
+    # and the record isn't otherwise heartbeated, so without this a running session decays to dead.
+    lp = rec.get("log_path")
+    if lp:
+        try:
+            return (now - os.path.getmtime(lp)) <= SESSION_LIVE_WINDOW_S
+        except OSError:
+            return False
+    return False
 
 
 def run_with_activity(env_root, *, id, title, stages, now=None):

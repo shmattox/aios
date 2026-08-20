@@ -33,7 +33,15 @@ export function OverviewView() {
 
   const runs = activity.runs, now = activity.now;
   const today = runs.filter((r) => lastTs(r) >= startOfTodaySec());
-  const live = runs.filter((r) => r.live);
+  // one row per actual run: a session can carry two capture records for one transcript — dedupe
+  // by log_path (keeping the most recently-touched), so each running session shows exactly once.
+  const live = [];
+  const seenLog = new Set();
+  for (const r of runs.filter((r) => r.live).sort((a, b) => lastTs(b) - lastTs(a))) {
+    const key = r.log_path || r.id;
+    if (seenLog.has(key)) continue;
+    seenLog.add(key); live.push(r);
+  }
   const drains = live.filter((r) => r.surface === "factory").length;
   const gate = (factory?.stages || []).find((s) => s.id === "gate")?.count ?? 0;
   const cst = content?.nodes || [];
