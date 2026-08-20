@@ -371,6 +371,14 @@ class Handler(SimpleHTTPRequestHandler):
             m = pipeline_state.model(str(env), self.server._pipeline_prev)
             self.server._pipeline_prev = m.get("stage_by_id", {})
             return self._send_json(m)
+        if route.startswith("/api/pipeline/stage/"):
+            # drill-in: full uncapped item list for one stage. The id is whitelisted against
+            # the fixed 8-stage set inside stage_detail (unknown -> None -> 404); used only as a
+            # dict key, so no traversal/injection surface.
+            detail = pipeline_state.stage_detail(str(env), route[len("/api/pipeline/stage/"):])
+            if detail is None:
+                return self._deny(404, "unknown pipeline stage")
+            return self._send_json(detail)
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):

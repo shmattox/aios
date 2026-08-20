@@ -152,8 +152,47 @@ def test_api_pipeline_route_returns_model_and_tracks_flows(tmp_path):
         specs = env / "docs" / "superpowers" / "specs"
         specs.mkdir(parents=True)
         (specs / "2026-08-19-q1-thing-design.md").write_text("# Q1 thing\nbody", encoding="utf-8")
+        p.reset_cache()   # in prod the two polls are >TTL apart; force the re-scan here
         m2 = _get_json(srv, "/api/pipeline")
         assert {"item_id": "Q1", "from": "backlog", "to": "spec"} in m2["flows"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_stage_detail_returns_full_uncapped_items(tmp_path):
+    # build a backlog stage with MORE than the poll preview cap (12) and assert stage_detail
+    # returns them all — the drill-in must not silently truncate.
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    lines = "".join(f"- [ ] **B{i}** — item {i}.\n  - acceptance: x\n" for i in range(20))
+    (tmp_path / "BACKLOG.md").write_text("## Open\n" + lines, encoding="utf-8")
+    detail = p.stage_detail(str(tmp_path), "backlog")
+    assert detail["count"] == 20 and len(detail["items"]) == 20   # uncapped
+    assert detail["label"] == "Backlog"
+    assert {it["id"] for it in detail["items"]} == {f"B{i}" for i in range(20)}
+    # poll model still caps its preview to 12 for the same stage
+    assert len(p.model(str(tmp_path))["stages"][0]["items"]) == 12
+
+
+def test_stage_detail_unknown_stage_is_none(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    assert p.stage_detail(str(tmp_path), "bogus") is None
+    assert p.stage_detail(str(tmp_path), "../secret") is None   # not a real stage id -> None
+
+
+def test_api_pipeline_stage_route(tmp_path):
+    env = _mk_env(tmp_path)   # one open item Q1 -> backlog
+    srv = make_server(str(env), port=0)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        d = _get_json(srv, "/api/pipeline/stage/backlog")
+        assert d["id"] == "backlog" and d["count"] == 1
+        assert d["items"][0]["id"] == "Q1"
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{srv.server_address[1]}/api/pipeline/stage/bogus", timeout=5)
+        assert e.value.code == 404
     finally:
         srv.shutdown()
         srv.server_close()

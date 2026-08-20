@@ -8,6 +8,7 @@ import re
 import sys
 import glob
 import json
+import time
 
 _TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
 if _TOOLS not in sys.path:
@@ -49,7 +50,9 @@ def classify_stage(item, ctx):
     return "backlog"
 
 
-def build_model(items, ctx, prev_stage_by_id=None):
+def _group_by_stage(items, ctx):
+    """Full stage_id -> [item dict] map (uncapped) + the item-id -> stage map.
+    Shared by build_model (which caps to a poll-light preview) and stage_detail (full)."""
     stage_items = {sid: [] for sid, _ in STAGES}
     cur = {}
     for it in items:
@@ -57,6 +60,13 @@ def build_model(items, ctx, prev_stage_by_id=None):
         iid = it.get("id") or ""
         cur[iid] = sid
         stage_items[sid].append({"id": it.get("id"), "title": it.get("headline"), "repo": it.get("repo")})
+    return stage_items, cur
+
+
+def build_model(items, ctx, prev_stage_by_id=None):
+    stage_items, cur = _group_by_stage(items, ctx)
+    # The 4s poll carries only counts + a small preview; the full per-stage list is fetched
+    # on demand via stage_detail() when a node is clicked (keeps the poll light).
     stages = [{"id": sid, "label": lbl, "count": len(stage_items[sid]), "items": stage_items[sid][:12]}
               for sid, lbl in STAGES]
     edges = [{"from": a, "to": b} for a, b in EDGES]
@@ -68,34 +78,42 @@ def build_model(items, ctx, prev_stage_by_id=None):
     return {"stages": stages, "edges": edges, "flows": flows, "stage_by_id": cur}
 
 
-def _backlog_files(env_root):
-    out = []
-    root_bl = os.path.join(env_root, "BACKLOG.md")
-    if os.path.isfile(root_bl):
-        out.append(("env-ops", root_bl))
+def _repo_roots(env_root):
+    """The env root + each Projects/<repo> dir — the only places backlogs and superpowers docs
+    live. Backlogs/docs are scanned ONLY here, never via a recursive ** walk of the whole env
+    (which would traverse the SecondBrain vault, every node_modules, and .git — seconds per call)."""
+    roots = [env_root]
     proj = os.path.join(env_root, "Projects")
     if os.path.isdir(proj):
         try:
-            entries = sorted(os.listdir(proj))
+            roots += [os.path.join(proj, d) for d in sorted(os.listdir(proj))
+                      if os.path.isdir(os.path.join(proj, d))]
         except OSError:
-            entries = []
-        for d in entries:
-            bl = os.path.join(proj, d, "BACKLOG.md")
-            if os.path.isfile(bl):
-                out.append((d, bl))
+            pass
+    return roots
+
+
+def _backlog_files(env_root):
+    out = []
+    for root in _repo_roots(env_root):
+        bl = os.path.join(root, "BACKLOG.md")
+        if os.path.isfile(bl):
+            out.append(("env-ops" if root == env_root else os.path.basename(root), bl))
     return out
 
 
 def _ids_in_docs(env_root, subdir):
-    """Item ids that appear in any docs/superpowers/<subdir>/*.md filename or first line."""
+    """Item ids that appear in any docs/superpowers/<subdir>/*.md filename or first line.
+    Scans only the known repo roots (env + Projects/*), never a recursive ** walk."""
     ids = set()
-    for f in glob.glob(os.path.join(env_root, "**", "docs", "superpowers", subdir, "*.md"), recursive=True):
-        ids.update(_ID_RE.findall(os.path.basename(f)))
-        try:
-            with open(f, encoding="utf-8", errors="replace") as fh:
-                ids.update(_ID_RE.findall(fh.readline()))
-        except OSError:
-            pass
+    for root in _repo_roots(env_root):
+        for f in glob.glob(os.path.join(root, "docs", "superpowers", subdir, "*.md")):
+            ids.update(_ID_RE.findall(os.path.basename(f)))
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    ids.update(_ID_RE.findall(fh.readline()))
+            except OSError:
+                pass
     return ids
 
 
@@ -163,6 +181,40 @@ def gather(env_root):
     return items, ctx
 
 
-def model(env_root, prev_stage_by_id=None):
+_GATHER_CACHE = {}      # env_root -> (ts, items, ctx)
+_GATHER_TTL = 3.0       # gather() is a full multi-repo FS scan; a poll + drill-in share one recent scan
+
+
+def reset_cache():
+    """Drop the gather TTL cache — for tests, or to force an immediate re-scan."""
+    _GATHER_CACHE.clear()
+
+
+def _cached_gather(env_root):
+    """gather() re-scans every repo's backlog/specs/plans/activity — too costly to run on every
+    /api/pipeline poll (4s) AND every drill-in fetch. A short TTL lets concurrent requests share
+    one recent scan; TTL < poll interval keeps counts live."""
+    now = time.time()
+    hit = _GATHER_CACHE.get(env_root)
+    if hit and now - hit[0] < _GATHER_TTL:
+        return hit[1], hit[2]
     items, ctx = gather(env_root)
+    _GATHER_CACHE[env_root] = (now, items, ctx)
+    return items, ctx
+
+
+def model(env_root, prev_stage_by_id=None):
+    items, ctx = _cached_gather(env_root)
     return build_model(items, ctx, prev_stage_by_id)
+
+
+def stage_detail(env_root, stage_id):
+    """Full (uncapped) item list for ONE stage — the drill-in source, fetched on node click.
+    Best-effort like the rest of the module; an unknown stage id returns None so the caller 404s."""
+    labels = dict(STAGES)
+    if stage_id not in labels:
+        return None
+    items, ctx = _cached_gather(env_root)
+    stage_items, _ = _group_by_stage(items, ctx)
+    lst = stage_items.get(stage_id, [])
+    return {"id": stage_id, "label": labels[stage_id], "count": len(lst), "items": lst}
