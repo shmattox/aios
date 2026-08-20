@@ -3,6 +3,7 @@
 // (files_state) keeps everything inside the env root and refuses secrets/binaries/oversize.
 // Reads /api/files/tree + /api/files/read; saves via POST /api/files/write (token-gated).
 import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
+import { takePendingFile, subscribeOpenFile } from "./filenav.js";
 
 const base = (p) => (p || "").split("/").pop();
 const ext = (p) => { const b = base(p); const i = b.lastIndexOf("."); return i > 0 ? b.slice(i + 1).toLowerCase() : ""; };
@@ -86,6 +87,7 @@ export function FilesView() {
   const [childrenOf, setChildrenOf] = useState({});   // dirPath -> entries
   const [tabs, setTabs] = useState([]);               // [{path, content, text, error?, size?}]
   const [active, setActive] = useState(null);
+  const openRef = useRef(new Set());                   // open tab paths (stable across closures)
 
   const loadDir = (path) => api.get(`/api/files/tree?path=${encodeURIComponent(path)}`)
     .then((d) => setChildrenOf((m) => ({ ...m, [path]: d.entries || [] })))
@@ -98,16 +100,28 @@ export function FilesView() {
     if (!childrenOf[node.path]) loadDir(node.path);
   };
 
-  const open = (node) => {
-    setActive(node.path);
-    if (tabs.some((t) => t.path === node.path)) return;
-    setTabs((ts) => [...ts, { path: node.path, content: null, text: "", loading: true }]);
-    api.get(`/api/files/read?path=${encodeURIComponent(node.path)}`)
-      .then((d) => setTabs((ts) => ts.map((t) => t.path === node.path
-        ? (d.error ? { path: node.path, error: d.error, size: d.size } : { path: node.path, content: d.content, text: d.content })
+  useEffect(() => { openRef.current = new Set(tabs.map((t) => t.path)); }, [tabs]);
+
+  const openPath = (path) => {
+    if (!path) return;
+    setActive(path);
+    if (openRef.current.has(path)) return;             // already open — just focus it
+    openRef.current.add(path);
+    setTabs((ts) => [...ts, { path, content: null, text: "", loading: true }]);
+    api.get(`/api/files/read?path=${encodeURIComponent(path)}`)
+      .then((d) => setTabs((ts) => ts.map((t) => t.path === path
+        ? (d.error ? { path, error: d.error, size: d.size } : { path, content: d.content, text: d.content })
         : t)))
-      .catch(() => setTabs((ts) => ts.map((t) => t.path === node.path ? { path: node.path, error: "could not load file" } : t)));
+      .catch(() => setTabs((ts) => ts.map((t) => t.path === path ? { path, error: "could not load file" } : t)));
   };
+  const open = (node) => openPath(node.path);
+
+  // open a file requested from another page (a source-file link), now and on later requests
+  useEffect(() => {
+    const p = takePendingFile();
+    if (p) openPath(p);
+    return subscribeOpenFile((path) => openPath(path));
+  }, []);
 
   const closeTab = (path, e) => {
     e && e.stopPropagation();

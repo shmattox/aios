@@ -443,8 +443,8 @@ body.narrow #detail {
 #modal[hidden] { display: none; }
 #modal .mscrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.58); }
 #modal-card {
-  position: relative; width: min(620px, calc(100vw - 28px));
-  max-height: 82vh; max-height: 82dvh; overflow-y: auto;
+  position: relative; width: min(880px, calc(100vw - 40px));
+  max-height: 86vh; max-height: 86dvh; overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
   background: var(--bg-1); border: 1px solid var(--border-hi);
@@ -713,6 +713,14 @@ body.narrow .ai-drill { grid-template-columns: 1fr; }
 .ai-row .t .sub { color: var(--text-2); font-size: var(--fs-xs); font-family: var(--mono); }
 .ai-row .age { color: var(--text-2); font-size: var(--fs-xs); }
 .ai-detail { min-width: 0; }
+/* clickable source-file link (→ opens the Files editor) */
+.fileref { display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 6px 10px; cursor: pointer; color: var(--text-1); font: 500 var(--fs-xs)/1 var(--mono); }
+.fileref:hover { border-color: var(--border-hi); color: var(--text-0); }
+.fileref .frk { flex: none; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); font-size: 9px; }
+.fileref .frp { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileref .go { flex: none; color: var(--text-2); }
 
 /* ── Usage view ──────────────────────────────────────────────────────────── */
 .uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }

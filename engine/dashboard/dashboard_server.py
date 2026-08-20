@@ -365,7 +365,15 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/git":
             return self._send_json(git_state.state(str(env)))
         if route == "/api/content":
-            return self._send_json(content_state.summary(str(env)))
+            data = content_state.summary(str(env))
+            # the vault's env-relative prefix, so the UI can map a vault-relative payload/draft
+            # path (e.g. "02_FamilyOffice/…") onto the Files browser ("SecondBrain/02_FamilyOffice/…")
+            try:
+                vault, _ = _connectors(env)
+                data["vault_rel"] = os.path.relpath(str(vault), str(env)).replace("\\", "/")
+            except (OSError, ValueError, KeyError):
+                data["vault_rel"] = None
+            return self._send_json(data)
         if route.startswith("/api/content/stage/"):
             # drill-in: uncapped item list for one content stage. The id is whitelisted against
             # the fixed 5-stage set inside stage_detail (unknown -> None -> 404); used only as a
