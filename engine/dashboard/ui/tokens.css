@@ -745,9 +745,9 @@ body.narrow .ai-detail #detail { height: auto; }
 .fileref .frp { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileref .go { flex: none; color: var(--text-2); }
 /* inline file paths inside body/draft/payload text — click to open in the Files editor */
-.pathlink { color: var(--link); cursor: pointer; text-decoration: underline;
+.pathlink, .urllink { color: var(--link); cursor: pointer; text-decoration: underline;
   text-decoration-color: rgba(94, 176, 239, 0.45); text-underline-offset: 2px; border-radius: 2px; }
-.pathlink:hover { text-decoration-color: var(--link); background: rgba(94, 176, 239, 0.1); }
+.pathlink:hover, .urllink:hover { text-decoration-color: var(--link); background: rgba(94, 176, 239, 0.1); }
 
 /* ── Usage view ──────────────────────────────────────────────────────────── */
 .uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }

@@ -23,18 +23,26 @@ export function toEnvFile(vaultRel, p) {
 }
 
 const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-// a file path token: an env top-dir or a KB folder, then a path ending in a real extension
-const PATH_RE = /((?:\d\d_[A-Za-z][\w-]*|state|Projects|SecondBrain|Memory|profile|docs|Scripts|_tools|Artifacts|Scheduled|engine)\/[\w./-]+\.[A-Za-z0-9]{1,8})/g;
+// one token: a URL (→ external link) OR a file-path (env top-dir / KB folder + real extension → Files).
+// URL alternative comes first so a path inside a URL isn't split out on its own.
+const TOKEN_RE = /(https?:\/\/[^\s<>"'`)\]]+)|((?:\d\d_[A-Za-z][\w-]*|state|Projects|SecondBrain|Memory|profile|docs|Scripts|_tools|Artifacts|Scheduled|engine)\/[\w./-]+\.[A-Za-z0-9]{1,8})/g;
 
-// Escape text and wrap any file-path token in a clickable span carrying its env-relative target.
+// Escape text; link every URL (opens externally) and every file path (opens in the Files editor).
 export function linkifyPaths(text, vaultRel) {
   if (text == null) return "";
   const s = String(text);
   let out = "", last = 0, m;
-  PATH_RE.lastIndex = 0;
-  while ((m = PATH_RE.exec(s)) !== null) {
+  TOKEN_RE.lastIndex = 0;
+  while ((m = TOKEN_RE.exec(s)) !== null) {
     out += escH(s.slice(last, m.index));
-    out += `<span class="pathlink" data-path="${escH(toEnvFile(vaultRel, m[1]))}">${escH(m[1])}</span>`;
+    if (m[1]) {                                   // external URL
+      let url = m[1], trail = "";
+      const t = url.match(/[.,;:!?]+$/);          // don't swallow trailing sentence punctuation
+      if (t) { trail = url.slice(-t[0].length); url = url.slice(0, -t[0].length); }
+      out += `<a class="urllink" href="${escH(url)}" target="_blank" rel="noopener noreferrer">${escH(url)}</a>` + escH(trail);
+    } else {                                      // in-repo file path
+      out += `<span class="pathlink" data-path="${escH(toEnvFile(vaultRel, m[2]))}">${escH(m[2])}</span>`;
+    }
     last = m.index + m[0].length;
   }
   out += escH(s.slice(last));
