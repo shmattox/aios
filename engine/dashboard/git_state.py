@@ -64,6 +64,8 @@ def worktrees(env_root):
 # --- PRs: TTL cache refreshed off-thread so the request never blocks on the network ----------
 _PR_TTL = 60.0
 _PR_LOCK = threading.Lock()
+# Not keyed by env_root: a dashboard_server process serves exactly one env_root for its lifetime
+# (set once at startup). A future multi-env process would need to key this.
 _PR_CACHE = {"ts": 0.0, "prs": [], "refreshing": False, "loaded": False}
 
 
@@ -72,7 +74,7 @@ def _refresh_prs(env_root):
     try:
         for root in _repo_roots(env_root):
             remote = _run(["git", "-C", root, "remote", "get-url", "origin"], timeout=5)
-            if not remote or "github.com" not in remote:
+            if not remote or "github.com" not in remote:   # cheap pre-filter; gh does the real host resolution
                 continue
             out = _run(["gh", "pr", "list", "--json", "number,title,headRefName,state,url,isDraft",
                         "--limit", "30"], cwd=root, timeout=10)
@@ -98,7 +100,12 @@ def prs(env_root):
         stale = now - _PR_CACHE["ts"] > _PR_TTL
         if stale and not _PR_CACHE["refreshing"]:
             _PR_CACHE["refreshing"] = True
-            threading.Thread(target=_refresh_prs, args=(env_root,), daemon=True).start()
+            try:
+                threading.Thread(target=_refresh_prs, args=(env_root,), daemon=True).start()
+            except RuntimeError:
+                # thread creation failed (e.g. thread exhaustion): reset the flag so a later call
+                # retries, and never raise — this module promises best-effort.
+                _PR_CACHE["refreshing"] = False
         return {"items": list(_PR_CACHE["prs"]), "loading": not _PR_CACHE["loaded"]}
 
 

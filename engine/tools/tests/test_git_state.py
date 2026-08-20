@@ -50,6 +50,20 @@ def test_prs_shape_and_background_refresh(tmp_path):
     assert done["loading"] is False and done["items"] == []
 
 
+def test_prs_thread_start_failure_never_raises_and_resets_flag(tmp_path, monkeypatch):
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    g.reset_pr_cache()
+
+    class BoomThread:
+        def __init__(self, *a, **k): pass
+        def start(self): raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(g.threading, "Thread", BoomThread)
+    r = g.prs(str(tmp_path))                       # must not raise
+    assert r == {"items": [], "loading": True}
+    assert g._PR_CACHE["refreshing"] is False      # flag reset -> a later call retries
+
+
 def test_state_keys(tmp_path):
     (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
     g.reset_pr_cache()
