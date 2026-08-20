@@ -39,12 +39,30 @@ const sum = (a, f) => a.reduce((s, r) => s + (f(r) || 0), 0);
 const startOfTodaySec = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
 
 // ── metrics strip ─────────────────────────────────────────────
-function Metrics({ runs, gate, fresh }) {
+function sparkPath(vals, w, h) {
+  if (!vals.length) return "";
+  const mx = Math.max(...vals, 1), step = vals.length > 1 ? w / (vals.length - 1) : 0;
+  return vals.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)} ${(h - (v / mx) * (h - 2) - 1).toFixed(1)}`).join(" ");
+}
+function Spark({ vals }) {
+  if (!vals || vals.length < 2) return html`<div class="pv-spark"></div>`;
+  const w = 78, h = 15, mx = Math.max(...vals, 1);
+  const last = vals[vals.length - 1];
+  return html`<svg class="pv-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d=${sparkPath(vals, w, h)} fill="none" stroke="var(--text-2)" stroke-width="1.2" />
+    <circle cx=${w - 0.5} cy=${(h - (last / mx) * (h - 2) - 1).toFixed(1)} r="1.5" fill="var(--text-0)" />
+  </svg>`;
+}
+
+function Metrics({ runs, gate, fresh, spend }) {
   const today = startOfTodaySec();
   const tr = runs.filter((r) => lastTs(r) >= today);
+  const days = ((spend && spend.days) || []).slice(-14);
   const cells = [
-    { k: "spend · today", v: fmtUsd(sum(tr, (r) => r.cost_usd)), sub: fmtUsd(sum(runs, (r) => r.cost_usd)) + " all" },
-    { k: "tokens · today", v: fmtTok(sum(tr, (r) => r.tokens)), sub: fmtTok(sum(runs, (r) => r.tokens)) + " all" },
+    { k: "spend · today", v: fmtUsd(sum(tr, (r) => r.cost_usd)), sub: fmtUsd(sum(runs, (r) => r.cost_usd)) + " all",
+      spark: days.map((d) => d.cost_usd || 0) },
+    { k: "tokens · today", v: fmtTok(sum(tr, (r) => r.tokens)), sub: fmtTok(sum(runs, (r) => r.tokens)) + " all",
+      spark: days.map((d) => d.output_tokens || 0) },
     { k: "drains live", v: String(runs.filter((r) => r.surface === "factory" && r.live).length), sub: "factory" },
     { k: "ships · today", v: String(tr.filter((r) => r.status === "shipped").length), sub: "shipped", cls: "ok" },
     { k: "gate depth", v: String(gate), sub: "awaiting you", cls: gate ? "warn" : "" },
@@ -53,6 +71,7 @@ function Metrics({ runs, gate, fresh }) {
     ${cells.map((c) => html`<div class="pv-mcell" key=${c.k}>
       <div class="pv-mk">${c.k}</div>
       <div class="pv-mrow"><div class="pv-mv ${c.cls || ""}">${c.v}</div><div class="pv-msub">${c.sub}</div></div>
+      ${c.spark ? html`<${Spark} vals=${c.spark} />` : null}
     </div>`)}
     ${fresh ? html`<div class="pv-fresh"><span class="pv-pulse"></span>updated ${fresh} ago</div>` : null}
   </div>`;
@@ -273,6 +292,7 @@ export function PipelineView() {
   const [model, setModel] = useState(null);
   const [activity, setActivity] = useState({ runs: [], now: 0 });
   const [git, setGit] = useState({ worktrees: [], prs: { items: [], loading: true }, vault: [] });
+  const [spend, setSpend] = useState({ days: [] });  // daily cost/token series for the sparklines
   const [mode, setMode] = useState("activity");
   const [scope, setScope] = useState(null);         // stage id
   const [stageItems, setStageItems] = useState(null);
@@ -290,6 +310,7 @@ export function PipelineView() {
   const loadGit = () => api.get("/api/git")
     .then((d) => setGit({ worktrees: d.worktrees || [], prs: d.prs || { items: [], loading: false }, vault: d.vault || [] })).catch(() => {});
   const loadHeld = () => api.get("/api/held").then((d) => setHeld(d.held || [])).catch(() => {});
+  const loadSpend = () => api.get("/api/spend").then((d) => setSpend(d && d.days ? d : { days: [] })).catch(() => {});
 
   // the gated verbs (same CLIs the Inbox fires). These write real state — economic/Paper-Governs
   // items — so approve confirms and reject/dismiss require a reason; api.post is token-gated + toasts.
@@ -311,9 +332,9 @@ export function PipelineView() {
     } catch (e) { /* api.post already toasted the failure */ }
   };
 
-  useEffect(() => { loadModel(); loadActivity(); loadGit(); loadHeld(); }, []);
+  useEffect(() => { loadModel(); loadActivity(); loadGit(); loadHeld(); loadSpend(); }, []);
   useEffect(() => { const t = setInterval(() => { loadModel(); loadActivity(); loadHeld(); }, 4000); return () => clearInterval(t); }, []);
-  useEffect(() => { const t = setInterval(loadGit, 10000); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = setInterval(() => { loadGit(); loadSpend(); }, 10000); return () => clearInterval(t); }, []);
   useEffect(() => { const t = setInterval(() => setClientNow(Date.now() / 1000), 1000); return () => clearInterval(t); }, []);
 
   // stage drill-in: fetch the scoped stage's full item list
@@ -368,7 +389,7 @@ export function PipelineView() {
   const scopeInfo = scope ? { label: (scoped && scoped.label) || scope, count: (scoped && scoped.count) ?? 0 } : null;
 
   return html`<div class="pv-cockpit">
-    <${Metrics} runs=${activity.runs} gate=${gate} fresh=${lastSync ? ago(clientNow - lastSync) : null} />
+    <${Metrics} runs=${activity.runs} gate=${gate} spend=${spend} fresh=${lastSync ? ago(clientNow - lastSync) : null} />
     <${FlowGraph} stages=${stages} flows=${model?.flows} scope=${scope} onPick=${pickStage} />
     <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} scopeInfo=${scopeInfo} clearScope=${clearScope}
              activity=${activity} git=${git} held=${held} onGateAction=${gateAction}
