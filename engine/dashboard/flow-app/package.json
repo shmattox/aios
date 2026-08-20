@@ -1,8 +1,0 @@
-{
-  "name": "aios-flow-app",
-  "private": true,
-  "type": "module",
-  "scripts": { "build": "vite build", "dev": "vite" },
-  "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1", "reactflow": "^11.11.4" },
-  "devDependencies": { "@vitejs/plugin-react": "^4.3.1", "vite": "^5.4.0" }
-}

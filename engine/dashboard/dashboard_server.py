@@ -268,8 +268,6 @@ class Handler(SimpleHTTPRequestHandler):
             return self._events()
         if route.startswith("/api/"):
             return self._api_get(route)
-        if route == "/pipeline" or route.startswith("/pipeline/"):
-            return self._serve_flow_app(route)
         return super().do_GET()
 
     def do_HEAD(self):
@@ -305,25 +303,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
-
-    def _serve_flow_app(self, route):
-        base = (UI_DIR.parent / "flow-app" / "dist").resolve()
-        rel = route[len("/pipeline"):].lstrip("/") or "index.html"
-        target = (base / rel).resolve()
-        if base != target and base not in target.parents:      # no traversal outside dist/
-            return self._deny(404, "not found")
-        if target.is_dir():
-            target = target / "index.html"
-        if not target.is_file():
-            target = base / "index.html"                       # SPA fallback
-        if not target.is_file():
-            return self._deny(404, "flow-app not built (run: cd engine/dashboard/flow-app && npm ci && npm run build)")
-        ctype = {".js": "text/javascript", ".css": "text/css", ".html": "text/html; charset=utf-8",
-                 ".svg": "image/svg+xml", ".json": "application/json"}.get(target.suffix, "application/octet-stream")
-        body = target.read_bytes()
-        self.send_response(200); self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)
 
     def _api_get(self, route):
