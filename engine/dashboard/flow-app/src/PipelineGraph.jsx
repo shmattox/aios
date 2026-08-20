@@ -5,7 +5,6 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import "./style.css";
-import { usePipeline } from "./usePipeline";
 
 const STAGE_X = 190, STAGE_Y = 90;
 
@@ -23,8 +22,7 @@ const nodeTypes = { stage: StageNode };
 
 // Controlled graph: panel state lives in App (shared with the activity feed). Clicking a stage
 // calls onStageClick(id); onStageClick(null) clears. `selectedStage` drives the node highlight.
-function Graph({ selectedStage, onStageClick }) {
-  const model = usePipeline(4000);
+function Graph({ model, selectedStage, onStageClick }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const store = useStoreApi();
