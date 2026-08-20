@@ -35,9 +35,9 @@ export function FlowGraph({ nodes, sel, onSel }) {
 export function StageList({ label, rows, sel, onSel }) {
   return html`<div class="ai-list">
     <div class="ai-listhead">${label} · <span class="num">${rows.length}</span></div>
-    ${rows.length ? rows.map((r) => html`
-      <div class="ai-row ${r.id === sel ? "sel" : ""}" key=${r.id} tabindex="0"
-           aria-current=${String(r.id === sel)} onClick=${() => onSel(r.id)}>
+    ${rows.length ? rows.map((r, i) => html`
+      <div class="ai-row ${r.id != null && r.id === sel ? "sel" : ""}" key=${r.id ?? i} tabindex="0"
+           aria-current=${String(r.id != null && r.id === sel)} onClick=${() => onSel(r.id)}>
         <span class="silo ${r.silo || "dev"}"></span>
         <span class="t"><span class="title">${r.title || r.id}</span>
           <span class="sub">${r.sub || ""}</span></span>

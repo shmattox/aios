@@ -3,7 +3,7 @@
 // items are backlog pointers: the dashboard doesn't act on them (they drain in a worktree or a
 // native session), so every item opens a read-only pointer card. Reads /api/pipeline +
 // /api/pipeline/stage/<id>.
-import { html, api, useState, useEffect } from "/lib.js";
+import { html, api, useState, useEffect, useRef } from "/lib.js";
 import { FlowGraph, StageList } from "./pipeflow.js";
 
 // A read-only pointer card for a factory item.
@@ -33,6 +33,7 @@ export function SoftwareView() {
   const [stage, setStage] = useState(null);
   const [detail, setDetail] = useState(null);
   const [sel, setSel] = useState(null);
+  const gen = useRef(0);                          // request generation — stale stage loads are dropped
 
   const load = () => api.get("/api/pipeline").then(setModel).catch(() => {});
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
@@ -42,12 +43,17 @@ export function SoftwareView() {
     }
   }, [model]);
 
-  const loadStage = () => api.get(`/api/pipeline/stage/${stage}`).then(setDetail).catch(() => setDetail({ items: [] }));
+  const loadStage = () => {
+    const g = ++gen.current;                       // invalidate any in-flight load for a prior stage
+    api.get(`/api/pipeline/stage/${stage}`)
+      .then((d) => { if (g === gen.current) setDetail(d); })
+      .catch(() => { if (g === gen.current) setDetail({ items: [] }); });
+  };
   useEffect(() => { if (stage != null) { setSel(null); loadStage(); } }, [stage]);
 
   const nodes = model?.stages || [];
   const items = detail?.items || [];
-  const selItem = items.find((it) => it.id === sel) || null;
+  const selItem = (sel != null && items.find((it) => it.id === sel)) || null;
   const stageLabel = nodes.find((n) => n.id === stage)?.label || "";
   const done = nodes.find((n) => n.id === "complete")?.count || 0;
 

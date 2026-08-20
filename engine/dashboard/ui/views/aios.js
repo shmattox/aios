@@ -2,7 +2,7 @@
 // Click a stage to drill into its items; the gate stage lists the real held drafts and opens
 // the rich card (Ship / Reject / preview) — the same gated actions as the Inbox. Pre-gate
 // stages open a read-only info card. Reads /api/content, /api/content/stage/<id>, /api/held.
-import { html, api, useState, useEffect, toast } from "/lib.js";
+import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
 import { Card, siloClass } from "./card.js";
 import { FlowGraph, StageList } from "./pipeflow.js";
 
@@ -45,6 +45,7 @@ export function AiosView() {
   const [stage, setStage] = useState(null);      // null until content picks the first populated node
   const [detail, setDetail] = useState(null);   // {items:[…]} for the selected stage
   const [sel, setSel] = useState(null);          // selected item id
+  const gen = useRef(0);                          // request generation — stale stage loads are dropped
 
   const loadContent = () => api.get("/api/content").then(setContent).catch(() => {});
   useEffect(() => { loadContent(); const t = setInterval(loadContent, 5000); return () => clearInterval(t); }, []);
@@ -57,13 +58,15 @@ export function AiosView() {
 
   // load the drill-in for the selected stage (gate uses the rich /api/held; others the queue rows)
   const loadStage = () => {
+    const g = ++gen.current;                       // invalidate any in-flight load for a prior stage
+    const ok = (fn) => (v) => { if (g === gen.current) fn(v); };
     if (stage === "gate") {
-      api.get("/api/held").then((d) => {
+      api.get("/api/held").then(ok((d) => {
         const rows = (d.held || []).map((h, i) => ({ ...h, _kind: "held", draft_index: h.draft_index != null ? h.draft_index : i }));
         setDetail({ items: rows });
-      }).catch(() => setDetail({ items: [] }));
+      })).catch(ok(() => setDetail({ items: [] })));
     } else {
-      api.get(`/api/content/stage/${stage}`).then((d) => setDetail(d)).catch(() => setDetail({ items: [] }));
+      api.get(`/api/content/stage/${stage}`).then(ok((d) => setDetail(d))).catch(ok(() => setDetail({ items: [] })));
     }
   };
   useEffect(() => { if (stage != null) { setSel(null); loadStage(); } }, [stage]);
@@ -82,7 +85,7 @@ export function AiosView() {
 
   const nodes = content?.nodes || [];
   const items = detail?.items || [];
-  const selItem = items.find((it) => it.id === sel) || null;
+  const selItem = (sel != null && items.find((it) => it.id === sel)) || null;
   const stageLabel = nodes.find((n) => n.id === stage)?.label || "";
   const isGate = stage === "gate";
 
