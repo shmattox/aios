@@ -64,9 +64,26 @@ def test_prs_thread_start_failure_never_raises_and_resets_flag(tmp_path, monkeyp
     assert g._PR_CACHE["refreshing"] is False      # flag reset -> a later call retries
 
 
+def test_parse_vault_fields_and_auto_flag():
+    raw = "aaa111\x001787234808\x00PlaceSchema vault reconcile — marketing sweep\n" \
+          "bbb222\x001787224505\x00auto: sync (machine)\n" \
+          "ccc333\x001787233227\x00chore(env-sync): flush 3 edits\n" \
+          "malformed-line-no-nuls"
+    v = g._parse_vault(raw)
+    assert len(v) == 3
+    assert v[0]["hash"] == "aaa111" and v[0]["ts"] == 1787234808 and v[0]["auto"] is False
+    assert v[1]["auto"] is True and v[2]["auto"] is True   # auto: / chore(env-sync) = machinery
+
+
+def test_vault_writes_on_nongit_never_raises(tmp_path):
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    assert g.vault_writes(str(tmp_path)) == []      # no SecondBrain repo -> empty, no raise
+
+
 def test_state_keys(tmp_path):
     (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
     g.reset_pr_cache()
     st = g.state(str(tmp_path))
-    assert set(st.keys()) == {"worktrees", "prs"}
+    assert set(st.keys()) == {"worktrees", "prs", "vault"}
     assert isinstance(st["worktrees"], list) and set(st["prs"].keys()) == {"items", "loading"}
+    assert isinstance(st["vault"], list)

@@ -115,5 +115,32 @@ def reset_pr_cache():
         _PR_CACHE.update(ts=0.0, prs=[], refreshing=False, loaded=False)
 
 
+def _parse_vault(raw):
+    """Parse `git log --pretty=%h\\x00%ct\\x00%s` into vault-write records. Pure (unit-tested)."""
+    out = []
+    for line in (raw or "").splitlines():
+        parts = line.split("\x00")
+        if len(parts) < 3:
+            continue
+        try:
+            ts = int(parts[1])
+        except (ValueError, TypeError):
+            ts = 0
+        subj = parts[2]
+        # auto sync-backbone commits are machinery, not authored knowledge changes
+        auto = subj.startswith("auto:") or subj.startswith("chore(env-sync)")
+        out.append({"hash": parts[0], "ts": ts, "subject": subj, "auto": auto})
+    return out
+
+
+def vault_writes(env_root, limit=30):
+    """Recent SecondBrain vault commits — what knowledge changed. Best-effort (a missing/non-git
+    vault contributes zero). Local git log, so fast enough to compute per request."""
+    sb = os.path.join(env_root, "SecondBrain")
+    raw = _run(["git", "-C", sb, "log", "-" + str(limit), "--no-merges",
+                "--pretty=format:%h%x00%ct%x00%s"], timeout=6)
+    return _parse_vault(raw)
+
+
 def state(env_root):
-    return {"worktrees": worktrees(env_root), "prs": prs(env_root)}
+    return {"worktrees": worktrees(env_root), "prs": prs(env_root), "vault": vault_writes(env_root)}

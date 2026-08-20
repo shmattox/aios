@@ -39,7 +39,7 @@ const sum = (a, f) => a.reduce((s, r) => s + (f(r) || 0), 0);
 const startOfTodaySec = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
 
 // ── metrics strip ─────────────────────────────────────────────
-function Metrics({ runs, gate }) {
+function Metrics({ runs, gate, fresh }) {
   const today = startOfTodaySec();
   const tr = runs.filter((r) => lastTs(r) >= today);
   const cells = [
@@ -54,6 +54,7 @@ function Metrics({ runs, gate }) {
       <div class="pv-mk">${c.k}</div>
       <div class="pv-mrow"><div class="pv-mv ${c.cls || ""}">${c.v}</div><div class="pv-msub">${c.sub}</div></div>
     </div>`)}
+    ${fresh ? html`<div class="pv-fresh"><span class="pv-pulse"></span>updated ${fresh} ago</div>` : null}
   </div>`;
 }
 
@@ -118,13 +119,19 @@ function FlowGraph({ stages, flows, scope, onPick }) {
 function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stageItems, runByItem, expanded, setExpanded, logs }) {
   const wt = git.worktrees || [];
   const prs = git.prs || { items: [], loading: false };
+  const vault = git.vault || [];
   const extras = wt.filter((w) => !w.primary).length;
 
   return html`<div class="pv-feed">
     <div class="pv-fhead">
       <div class="pv-tabs">
-        ${[["activity", "Activity"], ["worktrees", "Worktrees", extras], ["prs", "PRs", prs.items.length]].map(([m, lbl, n]) =>
-          html`<button class="pv-tab ${mode === m ? "on" : ""}" key=${m} onClick=${() => setMode(m)}>
+        ${[
+          { m: "activity", lbl: "Activity" },
+          { m: "worktrees", lbl: "Worktrees", n: extras, title: `${extras} active drain${extras === 1 ? "" : "s"} of ${wt.length} worktrees` },
+          { m: "prs", lbl: "PRs", n: prs.items.length, title: "open pull requests" },
+          { m: "vault", lbl: "Vault", n: vault.filter((v) => !v.auto).length, title: "recent secondbrain writes (excludes auto-sync)" },
+        ].map(({ m, lbl, n, title }) =>
+          html`<button class="pv-tab ${mode === m ? "on" : ""}" key=${m} title=${title || ""} onClick=${() => setMode(m)}>
             ${lbl}${n ? html`<span class="pv-tn">${n}</span>` : null}</button>`)}
       </div>
       ${scopeInfo && mode === "activity"
@@ -137,7 +144,8 @@ function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stag
             ? StageItems({ items: stageItems, runByItem, expanded, setExpanded, logs })
             : ActivityRows({ runs: activity.runs, now: activity.now, expanded, setExpanded, logs }))
         : mode === "worktrees" ? WorktreeRows({ wt })
-        : PrRows({ prs })}
+        : mode === "prs" ? PrRows({ prs })
+        : VaultRows({ vault, now: activity.now })}
     </div>
   </div>`;
 }
@@ -208,24 +216,39 @@ function PrRows({ prs }) {
   </a>`);
 }
 
+function VaultRows({ vault, now }) {
+  if (!vault.length) return html`<div class="pv-empty">No recent vault writes.</div>`;
+  return vault.map((v) => html`<div class="pv-row ${v.auto ? "ok" : "run"}" key=${v.hash}>
+    <span class="pv-badge">${(v.hash || "").slice(0, 7)}</span>
+    <div class="pv-rmain"><div class="pv-rt">${v.subject}</div>
+      <div class="pv-rm"><span>${v.auto ? "auto-sync" : "authored"}</span></div></div>
+    <div class="pv-rr"><span class="pv-tm">${v.ts ? ago((now || Date.now() / 1000) - v.ts) : ""}</span></div>
+  </div>`);
+}
+
 // ── the view ──────────────────────────────────────────────────
 export function PipelineView() {
   const [model, setModel] = useState(null);
   const [activity, setActivity] = useState({ runs: [], now: 0 });
-  const [git, setGit] = useState({ worktrees: [], prs: { items: [], loading: true } });
+  const [git, setGit] = useState({ worktrees: [], prs: { items: [], loading: true }, vault: [] });
   const [mode, setMode] = useState("activity");
   const [scope, setScope] = useState(null);         // stage id
   const [stageItems, setStageItems] = useState(null);
   const [expanded, setExpanded] = useState(null);   // run id / item id with log open
   const [logs, setLogs] = useState({});
+  const [lastSync, setLastSync] = useState(0);      // epoch-s of the last successful poll
+  const [clientNow, setClientNow] = useState(Date.now() / 1000);
 
   const loadModel = () => api.get("/api/pipeline").then(setModel).catch(() => {});
-  const loadActivity = () => api.get("/api/activity").then((d) => setActivity({ runs: d.runs || [], now: d._now || 0 })).catch(() => {});
-  const loadGit = () => api.get("/api/git").then((d) => setGit({ worktrees: d.worktrees || [], prs: d.prs || { items: [], loading: false } })).catch(() => {});
+  const loadActivity = () => api.get("/api/activity")
+    .then((d) => { setActivity({ runs: d.runs || [], now: d._now || 0 }); setLastSync(Date.now() / 1000); }).catch(() => {});
+  const loadGit = () => api.get("/api/git")
+    .then((d) => setGit({ worktrees: d.worktrees || [], prs: d.prs || { items: [], loading: false }, vault: d.vault || [] })).catch(() => {});
 
   useEffect(() => { loadModel(); loadActivity(); loadGit(); }, []);
   useEffect(() => { const t = setInterval(() => { loadModel(); loadActivity(); }, 4000); return () => clearInterval(t); }, []);
   useEffect(() => { const t = setInterval(loadGit, 10000); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = setInterval(() => setClientNow(Date.now() / 1000), 1000); return () => clearInterval(t); }, []);
 
   // stage drill-in: fetch the scoped stage's full item list
   useEffect(() => {
@@ -267,7 +290,7 @@ export function PipelineView() {
   const scopeInfo = scope ? { label: (scoped && scoped.label) || scope, count: (scoped && scoped.count) ?? 0 } : null;
 
   return html`<div class="pv-cockpit">
-    <${Metrics} runs=${activity.runs} gate=${gate} />
+    <${Metrics} runs=${activity.runs} gate=${gate} fresh=${lastSync ? ago(clientNow - lastSync) : null} />
     <${FlowGraph} stages=${stages} flows=${model?.flows} scope=${scope} onPick=${pickStage} />
     <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} scopeInfo=${scopeInfo} clearScope=${clearScope}
              activity=${activity} git=${git} stageItems=${stageItems} runByItem=${runByItem}
