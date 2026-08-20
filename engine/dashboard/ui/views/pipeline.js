@@ -282,8 +282,9 @@ export function PipelineView() {
         const r = window.prompt("Reject reason:"); if (!r) return;
         await api.post("gate_reject", { id: item.id, reason: r });
       } else if (kind === "dismiss") {
-        const r = window.prompt("Dismiss reason:") || "below the worthiness bar";
-        await api.post("dismiss", { id: item.id, reason: r });
+        const r = window.prompt("Dismiss reason:");
+        if (r == null) return;   // cancelled -> abort (don't fire on a dismissed prompt)
+        await api.post("dismiss", { id: item.id, reason: r || "below the worthiness bar" });
       }
       loadHeld(); loadActivity();
     } catch (e) { /* api.post already toasted the failure */ }
