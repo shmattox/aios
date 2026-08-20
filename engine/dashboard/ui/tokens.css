@@ -705,3 +705,18 @@ body.narrow .ai-drill { grid-template-columns: 1fr; }
 .ai-row .t .sub { color: var(--text-2); font-size: var(--fs-xs); font-family: var(--mono); }
 .ai-row .age { color: var(--text-2); font-size: var(--fs-xs); }
 .ai-detail { min-width: 0; }
+
+/* ── Usage view ──────────────────────────────────────────────────────────── */
+.uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }
+.uz-chart { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+.uz-bars { width: 100%; height: 120px; display: block; }
+.uz-bar { fill: var(--text-1); transition: fill var(--motion); }
+.uz-bar:hover { fill: var(--accent); }
+.uz-bars-list { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
+.uz-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 10px; }
+.uz-lbl { font: 500 var(--fs-sm)/1 var(--mono); color: var(--text-1); text-transform: capitalize; }
+.uz-track { height: 8px; background: var(--bg-2); border-radius: 4px; overflow: hidden; }
+.uz-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.uz-n { font-size: var(--fs-sm); color: var(--text-0); white-space: nowrap; }
+.uz-meta { color: var(--text-2); font-size: var(--fs-xs); }
+.uz-note { color: var(--text-2); font-size: var(--fs-xs); max-width: 60ch; padding: 8px 2px 0; }

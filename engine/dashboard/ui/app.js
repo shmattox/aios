@@ -6,6 +6,7 @@ import { OverviewView } from "/views/overview.js";
 import { BoardView } from "/views/board.js";
 import { AiosView } from "/views/aios.js";
 import { SoftwareView } from "/views/software.js";
+import { UsageView } from "/views/usage.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -40,7 +41,7 @@ const NAV = [
   { key: "overview", label: "Overview", view: OverviewView },
   { key: "board", label: "Board", view: BoardView },
   { key: "files", label: "Files", view: stub("Files", "The file browser + editor over the whole environment.") },
-  { key: "usage", label: "Usage", view: stub("Usage", "Where the spend actually goes — by day, surface, model, repo.") },
+  { key: "usage", label: "Usage", view: UsageView },
   { section: "pipelines" },
   { key: "aios", label: "AIOS", view: AiosView },
   { key: "software", label: "Software", view: SoftwareView },
