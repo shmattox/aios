@@ -1,14 +1,16 @@
 import React, { useState, useMemo } from "react";
 import PipelineGraph from "./PipelineGraph";
-import { ActivityFeed } from "./ActivityFeed";
+import { Feed } from "./Feed";
 import { SidePanel } from "./SidePanel";
 import { useActivity } from "./useActivity";
+import { useGit } from "./useGit";
 import "./style.css";
 
 // Cockpit shell: owns the ONE right-side panel (a stage's items OR a run's log) shared by the
 // graph and the feed, plus the activity poll (so a stage item can cross-link to its factory run).
 export default function App() {
   const activity = useActivity(4000);
+  const git = useGit(10000);
   const [panel, setPanel] = useState(null);   // null | {kind:"stage", id} | {kind:"run", runId}
 
   // item_id -> its most-recent run (ascending sort => last write wins), for stage-item cross-links.
@@ -35,8 +37,8 @@ export default function App() {
       <div className="graph-wrap">
         <PipelineGraph selectedStage={panel?.kind === "stage" ? panel.id : null} onStageClick={openStage} />
       </div>
-      <ActivityFeed activity={activity} onRunClick={openRun}
-                    selectedRunId={panel?.kind === "run" ? panel.runId : null} />
+      <Feed activity={activity} git={git} onRunClick={openRun}
+            selectedRunId={panel?.kind === "run" ? panel.runId : null} />
       {panel ? (
         <SidePanel panel={panel} run={openRunObj} runByItem={runByItem}
                    onOpenRun={openRun} onClose={() => setPanel(null)} />

@@ -28,6 +28,7 @@ import draft_diff  # "Proposed change" diff (A109)
 import activity  # run-record contract (A119) — live-run observability
 import otel_runs  # Flow view: native-OTel traces (Jaeger store) → runs + graph + cost
 import pipeline_state  # master Flow view: backlog+factory+OTel -> pipeline stage model
+import git_state       # cockpit: active worktrees + open PRs (best-effort, PRs bg-cached)
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -379,6 +380,8 @@ class Handler(SimpleHTTPRequestHandler):
             if detail is None:
                 return self._deny(404, "unknown pipeline stage")
             return self._send_json(detail)
+        if route == "/api/git":
+            return self._send_json(git_state.state(str(env)))
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
