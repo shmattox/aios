@@ -1,7 +1,7 @@
 import React from "react";
 import { useActivity } from "./useActivity";
 
-const SURFACE = { factory: "FAC", pipeline: "PIPE", session: "SESS" };
+const SURFACE = { factory: "FAC", pipeline: "PIPE", session: "SESS", goal: "GOAL", workflow: "FLOW" };
 
 // running/live -> accent pulse; shipped/ended -> ok; failed -> bad; parked/held -> warn.
 function statusClass(r) {
@@ -13,7 +13,7 @@ function statusClass(r) {
 }
 
 function ago(sec) {
-  if (!sec || sec < 0) return "";
+  if (sec == null || sec < 0) return "";
   if (sec < 60) return Math.round(sec) + "s";
   if (sec < 3600) return Math.round(sec / 60) + "m";
   if (sec < 86400) return Math.round(sec / 3600) + "h";
@@ -57,7 +57,7 @@ export function ActivityFeed() {
                 <span className={"fstat " + statusClass(r)}>
                   {r.live ? <span className="dot" /> : null}{r.status || "—"}
                 </span>
-                <span className="ftime">{ago(now ? now - lastTs(r) : (r.age_s || 0))}</span>
+                <span className="ftime">{ago(now - lastTs(r))}</span>
               </div>
             </div>
           ))
