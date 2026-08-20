@@ -3,12 +3,14 @@
    Dark-only is a spec decision (A63 §6). One breakpoint: max-width 860px.
    No horizontal scroll at any width >=320px. */
 :root {
-  --bg-0: #0e0f11; --bg-1: #16171a; --bg-2: #1c1d21; --bg-3: #232529;
-  --text-0: #e8e9ec; --text-1: #9a9ca3; --text-2: #63656c;
-  --accent: #6e79d6; --accent-dim: #3d437a; --accent-glow: rgba(110, 121, 214, 0.13);
-  --ok: #4cc38a; --warn: #e5a50a; --err: #e5534b;
-  --border: rgba(255, 255, 255, 0.08); --border-hi: rgba(255, 255, 255, 0.16);
-  --radius: 6px;
+  /* monochrome, thin-line — near-black layered panels, faint white hairlines. The only
+     "accent" is white light (--accent); green/amber are reserved for semantic state dots. */
+  --bg-0: #0c0d0f; --bg-1: #141518; --bg-2: #191b1f; --bg-3: #1f2228;
+  --text-0: #eceded; --text-1: #8b8e95; --text-2: #54575e;
+  --accent: #f4f5f7; --accent-dim: rgba(255, 255, 255, 0.14); --accent-glow: rgba(244, 245, 247, 0.13);
+  --ok: #54c98a; --warn: #e5a50a; --err: #e5534b;
+  --border: rgba(255, 255, 255, 0.08); --border-hi: rgba(255, 255, 255, 0.14);
+  --radius: 7px;
   --font: "Inter", "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
   --fs: 15px; --fs-sm: 13px; --fs-xs: 11.5px;
@@ -36,7 +38,7 @@ svg.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none
 svg.logo { width: 22px; height: 22px; flex: none; color: var(--text-0); }
 svg.logo circle { stroke: currentColor; }
 .word { font-weight: 650; letter-spacing: 0.05em; }
-.word .dot { color: var(--accent); }
+.word .dot { color: var(--text-2); }
 .pulse {
   width: 7px; height: 7px; flex: none; border-radius: 50%;
   background: var(--ok); animation: pulse 2.4s ease-in-out infinite;
@@ -87,9 +89,9 @@ svg.logo circle { stroke: currentColor; }
 .nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .nav-item .lbl { flex: 1; text-align: left; overflow: hidden; }
 .nav-item .count {
-  font-size: var(--fs-xs); font-family: var(--mono);
-  background: var(--accent-dim); color: var(--text-0);
-  border-radius: 9px; padding: 1px 6px;
+  font: 600 10px/1 var(--mono); color: var(--text-1);
+  background: var(--bg-0); border: 1px solid var(--border);
+  border-radius: 8px; padding: 2px 6px;
 }
 .nav-item.soon { color: var(--text-2); cursor: default; }
 .nav-item.soon:hover { background: none; color: var(--text-2); }
@@ -129,8 +131,8 @@ body.side-collapsed #collapse .ic { transform: rotate(180deg); }
 
 /* -- content -- */
 #content { margin-left: var(--side-w); transition: margin-left var(--motion); }
-main { max-width: 1180px; margin: 0 auto; padding: 14px 14px 80px; }
-@media (max-width: 860px) { main { padding-top: 58px; } }
+main { width: 100%; padding: 18px 26px 80px; }   /* full width — the flow graphs want the room */
+@media (max-width: 860px) { main { padding: 58px 16px 80px; } }
 .view[hidden] { display: none; }
 .viewhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 4px 2px 12px; }
 .viewhead h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
@@ -665,29 +667,36 @@ body.modal-open { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) { .pv-edges animate { display: none; } }
 
-/* ── AIOS content-pipeline flow view ─────────────────────────────────────── */
-.ai-flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 6px 2px 4px; }
-.ai-node { flex: 0 0 auto; width: 108px; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 3px; background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: 10px; padding: 13px 8px; cursor: pointer; color: var(--text-1);
-  transition: background var(--motion), border-color var(--motion), color var(--motion); }
-.ai-node:hover { background: var(--bg-2); }
-.ai-node.sel { border-color: var(--accent); background: var(--bg-2); color: var(--text-0); box-shadow: 0 0 0 1px var(--accent-dim); }
-.ai-node.empty { color: var(--text-2); }
-.ai-node .ai-count { font: 650 22px/1 var(--mono); font-variant-numeric: tabular-nums; color: inherit; }
-.ai-node.empty .ai-count { color: var(--text-2); opacity: .55; }
-.ai-node .ai-lbl { font: 600 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
-.ai-node.sel .ai-lbl { color: var(--text-1); }
-.ai-node .ai-tag { font: 600 7.5px/1 var(--mono); letter-spacing: .06em; color: var(--text-2);
-  border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; margin-top: 1px; }
-/* connector: three dots that stream when the upstream node holds work to advance */
-.ai-edge { flex: 1 1 26px; min-width: 26px; align-self: center; display: flex; align-items: center;
-  justify-content: center; gap: 5px; height: 40px; }
-.ai-edge .d { width: 4px; height: 4px; border-radius: 50%; background: var(--border-hi, #333); }
-.ai-edge.on .d { background: var(--text-0); animation: aiflow 1.5s linear infinite; }
-.ai-edge.on .d:nth-child(2) { animation-delay: .5s; } .ai-edge.on .d:nth-child(3) { animation-delay: 1s; }
-@keyframes aiflow { 0%, 100% { opacity: .18; } 50% { opacity: 1; } }
-.ai-life { color: var(--text-2); font-size: var(--fs-xs); font-family: var(--mono); padding: 2px 2px 10px; }
+/* ── pipeline flow view (AIOS + Software) — framed panel, dot·number·bar·label nodes ── */
+.ai-flow { display: flex; align-items: flex-start; gap: 0; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-1); padding: 16px 20px; }
+.ai-node { flex: 0 0 auto; min-width: 92px; display: flex; flex-direction: column; align-items: flex-start;
+  gap: 0; background: none; border: 0; text-align: left; padding: 5px 8px; border-radius: 8px;
+  cursor: pointer; color: var(--text-0); transition: background var(--motion); }
+.ai-node:hover { background: var(--bg-3); }
+.ai-node.sel { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--border-hi); }
+.ai-node .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-2); margin-bottom: 7px; }
+.ai-node.live .ai-dot { background: var(--accent); box-shadow: 0 0 8px 1px var(--accent-glow); }
+.ai-node.gate .ai-dot { background: var(--warn); }
+.ai-node.done .ai-dot { background: var(--ok); }
+.ai-node .ai-n { font: 600 25px/1 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--text-0); }
+.ai-node.dim .ai-n { color: var(--text-2); }
+.ai-node .ai-bar { height: 3px; width: 100%; background: var(--border); border-radius: 2px; margin: 9px 0 6px; overflow: hidden; }
+.ai-node .ai-bar i { display: block; height: 100%; background: var(--text-1); border-radius: 2px; }
+.ai-node.gate .ai-bar i { background: var(--warn); }
+.ai-node.done .ai-bar i { background: var(--ok); }
+.ai-node.live .ai-bar i { background: var(--accent); }
+.ai-node .ai-lbl { display: flex; align-items: center; gap: 5px; font: 600 9px/1.3 var(--mono);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-1); white-space: nowrap; }
+.ai-node .ai-24 { font: 600 7.5px/1 var(--mono); letter-spacing: .04em; color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px 3px; }
+/* connector: a thin hairline that sweeps a light pulse when the upstream node holds work */
+.ai-edge { flex: 1 1 20px; min-width: 18px; align-self: center; height: 2px; margin-top: 8px;
+  background: var(--border); border-radius: 2px; overflow: hidden; position: relative; }
+.ai-edge i { position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--text-1), transparent); transform: translateX(-120%); }
+.ai-edge.on i { animation: aiflow 1.8s linear infinite; }
+@keyframes aiflow { to { transform: translateX(320%); } }
+.ai-life { color: var(--text-2); font-size: var(--fs-xs); font-family: var(--mono); padding: 10px 2px 14px; }
 
 .ai-drill { display: grid; grid-template-columns: 330px 1fr; gap: 14px; align-items: start; }
 body.narrow .ai-drill { grid-template-columns: 1fr; }
@@ -697,7 +706,7 @@ body.narrow .ai-drill { grid-template-columns: 1fr; }
 .ai-row { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 10px;
   padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }
 .ai-row:hover { background: var(--bg-1); }
-.ai-row.sel { background: var(--bg-2); border-color: var(--accent-dim); }
+.ai-row.sel { background: var(--bg-3); border-color: var(--border-hi); }
 .ai-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ai-row .silo { width: 8px; height: 8px; border-radius: 2px; }
 .ai-row .t { min-width: 0; }
@@ -710,21 +719,21 @@ body.narrow .ai-drill { grid-template-columns: 1fr; }
 .uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }
 .uz-chart { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
 .uz-bars { width: 100%; height: 120px; display: block; }
-.uz-bar { fill: var(--text-1); transition: fill var(--motion); }
-.uz-bar:hover { fill: var(--accent); }
+.uz-bar { fill: var(--text-2); transition: fill var(--motion); }
+.uz-bar:hover { fill: var(--text-0); }
 .uz-bars-list { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
 .uz-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 10px; }
 .uz-lbl { font: 500 var(--fs-sm)/1 var(--mono); color: var(--text-1); text-transform: capitalize; }
-.uz-track { height: 8px; background: var(--bg-2); border-radius: 4px; overflow: hidden; }
-.uz-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.uz-track { height: 8px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+.uz-fill { display: block; height: 100%; background: var(--text-1); border-radius: 4px; }
 .uz-n { font-size: var(--fs-sm); color: var(--text-0); white-space: nowrap; }
 .uz-meta { color: var(--text-2); font-size: var(--fs-xs); }
 .uz-note { color: var(--text-2); font-size: var(--fs-xs); max-width: 60ch; padding: 8px 2px 0; }
 
 /* ── Files view ──────────────────────────────────────────────────────────── */
 .fm-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 2px 2px 10px; }
-.fm-crumb { background: none; border: none; color: var(--accent); cursor: pointer; font: 500 var(--fs-sm)/1 var(--mono); padding: 3px 3px; }
-.fm-crumb:hover { color: var(--text-0); text-decoration: underline; }
+.fm-crumb { background: none; border: none; color: var(--text-1); cursor: pointer; font: 500 var(--fs-sm)/1 var(--mono); padding: 3px 3px; }
+.fm-crumb:hover { color: var(--text-0); }
 .fm-sep { color: var(--text-2); }
 .fm-grid { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: start; }
 body.narrow .fm-grid { grid-template-columns: 1fr; }
@@ -733,10 +742,10 @@ body.narrow .fm-grid { grid-template-columns: 1fr; }
 .fm-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 7px;
   padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .fm-row:hover { background: var(--bg-2); }
-.fm-row.sel { background: var(--bg-2); box-shadow: inset 2px 0 0 var(--accent); }
+.fm-row.sel { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--border-hi); }
 .fm-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .fm-ic { text-align: center; color: var(--text-2); font-size: var(--fs-xs); }
-.fm-ic.dir { color: var(--accent); }
+.fm-ic.dir { color: var(--text-1); }
 .fm-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-0); font-size: var(--fs-sm); }
 .fm-sz { color: var(--text-2); font-size: var(--fs-xs); }
 .fm-detail { min-width: 0; }

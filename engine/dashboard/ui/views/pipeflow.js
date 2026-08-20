@@ -5,27 +5,36 @@
 // domain-agnostic. An edge animates only when its upstream node holds work to advance.
 import { html } from "/lib.js";
 
-function Node({ node, sel, onSel }) {
-  const empty = !node.count;
-  return html`<button class="ai-node ${sel ? "sel" : ""} ${empty ? "empty" : ""}"
+// dot state: gate → amber, terminal (complete/garden) → green, else the default grey (white when live)
+function nodeState(n) {
+  if (n.id === "gate") return "gate";
+  if (n.id === "complete" || n.id === "garden") return "done";
+  return n.count && n.kind === "phase" ? "live" : "";
+}
+
+function Node({ node, sel, onSel, max }) {
+  const pct = max ? Math.max(5, Math.round((node.count / max) * 100)) : 0;
+  return html`<button class="ai-node ${sel ? "sel" : ""} ${node.count ? "" : "dim"} ${nodeState(node)}"
       aria-selected=${String(sel)} title=${node.label + " · " + node.count}
       onClick=${() => onSel(node.id)}>
-    <span class="ai-count">${node.count}</span>
-    <span class="ai-lbl">${node.label}</span>
-    ${node.kind === "phase" ? html`<span class="ai-tag">24h</span>` : null}
+    <span class="ai-dot"></span>
+    <span class="ai-n">${node.count}</span>
+    <span class="ai-bar"><i style="width:${pct}%"></i></span>
+    <span class="ai-lbl">${node.label}${node.kind === "phase" ? html`<span class="ai-24">24h</span>` : null}</span>
   </button>`;
 }
 
+// a thin connecting line; it sweeps a light pulse only when the upstream node holds work
 function Edge({ active }) {
-  return html`<div class="ai-edge ${active ? "on" : ""}" aria-hidden="true">
-    <span class="d"></span><span class="d"></span><span class="d"></span></div>`;
+  return html`<div class="ai-edge ${active ? "on" : ""}" aria-hidden="true"><i></i></div>`;
 }
 
 export function FlowGraph({ nodes, sel, onSel }) {
   if (!nodes.length) return html`<p class="stub">Loading pipeline…</p>`;
+  const max = Math.max(1, ...nodes.map((n) => n.count || 0));
   return html`<div class="ai-flow">
     ${nodes.map((n, i) => html`
-      <${Node} node=${n} sel=${n.id === sel} onSel=${onSel} key=${n.id} />
+      <${Node} node=${n} sel=${n.id === sel} onSel=${onSel} max=${max} key=${n.id} />
       ${i < nodes.length - 1 ? html`<${Edge} active=${n.count > 0} key=${"e" + n.id} />` : null}
     `)}
   </div>`;
