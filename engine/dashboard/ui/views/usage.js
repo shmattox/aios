@@ -51,8 +51,15 @@ export function UsageView() {
 
   const days = spend.days, runs = activity.runs;
   const totalCost = sum(days, (d) => d.cost_usd);
-  const totalTok = sum(days, (d) => d.output_tokens);
   const totalDrains = sum(days, (d) => d.drains);
+
+  // real cost/tokens = OpenTelemetry (the claude_code.interaction traces). Today = runs started
+  // since local midnight; the telemetry window = everything Jaeger still retains.
+  const agg = otel?.agg || {}, otelUp = agg.jaeger_up !== false, otelRuns = otel?.runs || [];
+  const sot = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; })();
+  const otelToday = otelRuns.filter((r) => (r.started || 0) >= sot);
+  const spendToday = sum(otelToday, (r) => r.cost_usd);
+  const tokToday = sum(otelToday, (r) => r.total_tokens);
 
   // by surface (run index) — counts, plus cost where the run carries it
   const surfaces = {};
@@ -62,16 +69,17 @@ export function UsageView() {
     surfaces[s].cost += Number(r.cost_usd) || 0;
   }
   const surfRows = Object.entries(surfaces).sort((a, b) => b[1].n - a[1].n);
-  const agg = otel?.agg || {};
 
   return html`<section class="view">
     <div class="viewhead"><h1>Usage</h1><span class="sub">where the spend goes</span></div>
 
     <div class="ov-strip">
-      <${Metric} k="spend · tracked" v=${fmtUsd(totalCost)} sub=${days.length + " days of drains"} />
-      <${Metric} k="output tokens" v=${fmtTok(totalTok)} sub="factory drains" />
-      <${Metric} k="drains" v=${totalDrains} sub="all-time" />
-      <${Metric} k="agent telemetry" v=${agg.jaeger_up === false ? "—" : fmtUsd(agg.cost_usd)} sub=${agg.jaeger_up === false ? "store down" : (agg.runs || 0) + " runs · " + fmtTok(agg.tokens) + " tok"} />
+      <${Metric} k="spend · today" v=${otel == null ? "…" : otelUp ? fmtUsd(spendToday) : "—"}
+        sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs` : "telemetry store down"} />
+      <${Metric} k="telemetry · window" v=${otelUp ? fmtUsd(agg.cost_usd) : "—"}
+        sub=${otelUp ? `${agg.runs || 0} runs · ${fmtTok(agg.tokens)} tok` : "store down"} />
+      <${Metric} k="factory drains" v=${fmtUsd(totalCost)} sub=${`${totalDrains} drains · ${days.length} days`} />
+      <${Metric} k="errors" v=${otelUp ? (agg.errors || 0) : "—"} sub="telemetry window" cls=${agg.errors ? "warn" : ""} />
     </div>
 
     <h3 class="ov-sect">Daily cost <span class="uz-src">· factory drains · /api/spend</span></h3>
