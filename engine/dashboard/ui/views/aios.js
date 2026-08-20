@@ -4,26 +4,10 @@
 // stages open a read-only info card. Reads /api/content, /api/content/stage/<id>, /api/held.
 import { html, api, useState, useEffect, toast } from "/lib.js";
 import { Card, siloClass } from "./card.js";
+import { FlowGraph, StageList } from "./pipeflow.js";
 
 const REPLY = { respond: 1, append: 1, comment: 1 };
 const when = (s) => (s ? String(s).slice(0, 10) : "");
-
-// One flow node in the horizontal chain.
-function Node({ node, sel, onSel }) {
-  const empty = !node.count;
-  return html`<button class="ai-node ${sel ? "sel" : ""} ${empty ? "empty" : ""}"
-      aria-selected=${String(sel)} title=${node.label + " · " + node.count}
-      onClick=${() => onSel(node.id)}>
-    <span class="ai-count">${node.count}</span>
-    <span class="ai-lbl">${node.label}</span>
-  </button>`;
-}
-
-// The connector between two nodes — animates only when the upstream node holds work to advance.
-function Edge({ active }) {
-  return html`<div class="ai-edge ${active ? "on" : ""}" aria-hidden="true">
-    <span class="d"></span><span class="d"></span><span class="d"></span></div>`;
-}
 
 // A read-only info card for a pre-gate item (no draft / no gated action here).
 function InfoCard({ item, stage }) {
@@ -49,11 +33,17 @@ function InfoCard({ item, stage }) {
   </article>`;
 }
 
+// Map a drill-in item to the shared list-row shape.
+const toRow = (it) => ({
+  id: it.id, title: it.title || it.id, silo: siloClass(it.kb),
+  sub: `${it.kb || ""}${it.source ? " · " + it.source : ""}${it.recommended ? " · rec: " + it.recommended : ""}`,
+  when: when(it.when),
+});
+
 export function AiosView() {
   const [content, setContent] = useState(null);
   const [stage, setStage] = useState(null);      // null until content picks the first populated node
   const [detail, setDetail] = useState(null);   // {items:[…]} for the selected stage
-  const [held, setHeld] = useState([]);          // rich gate items (draft_index-mapped)
   const [sel, setSel] = useState(null);          // selected item id
 
   const loadContent = () => api.get("/api/content").then(setContent).catch(() => {});
@@ -70,10 +60,10 @@ export function AiosView() {
     if (stage === "gate") {
       api.get("/api/held").then((d) => {
         const rows = (d.held || []).map((h, i) => ({ ...h, _kind: "held", draft_index: h.draft_index != null ? h.draft_index : i }));
-        setHeld(rows); setDetail({ items: rows });
-      }).catch(() => { setHeld([]); setDetail({ items: [] }); });
+        setDetail({ items: rows });
+      }).catch(() => setDetail({ items: [] }));
     } else {
-      api.get(`/api/content/stage/${stage}`).then((d) => { setHeld([]); setDetail(d); }).catch(() => setDetail({ items: [] }));
+      api.get(`/api/content/stage/${stage}`).then((d) => setDetail(d)).catch(() => setDetail({ items: [] }));
     }
   };
   useEffect(() => { if (stage != null) { setSel(null); loadStage(); } }, [stage]);
@@ -94,38 +84,23 @@ export function AiosView() {
   const items = detail?.items || [];
   const selItem = items.find((it) => it.id === sel) || null;
   const stageLabel = nodes.find((n) => n.id === stage)?.label || "";
+  const isGate = stage === "gate";
 
   return html`<section class="view ai">
     <div class="viewhead"><h1>AIOS</h1>
       <span class="sub">content pipeline · capture → sort → ingest → gate → garden</span></div>
 
-    <div class="ai-flow">
-      ${nodes.length ? nodes.map((n, i) => html`
-        <${Node} node=${n} sel=${n.id === stage} onSel=${setStage} key=${n.id} />
-        ${i < nodes.length - 1 ? html`<${Edge} active=${n.count > 0} key=${"e" + n.id} />` : null}
-      `) : html`<p class="stub">Loading pipeline…</p>`}
-    </div>
+    <${FlowGraph} nodes=${nodes} sel=${stage} onSel=${setStage} />
     ${content ? html`<p class="ai-life">${content.shipped} shipped · ${content.rejected} rejected · ${content.sorted} sorted, lifetime</p>` : null}
 
     <div class="ai-drill">
-      <div class="ai-list">
-        <div class="ai-listhead">${stageLabel} · <span class="num">${items.length}</span></div>
-        ${items.length ? items.map((it) => html`
-          <div class="ai-row ${it.id === sel ? "sel" : ""}" key=${it.id} tabindex="0"
-               aria-current=${String(it.id === sel)} onClick=${() => setSel(it.id)}>
-            <span class="silo ${siloClass(it.kb)}"></span>
-            <span class="t"><span class="title">${it.title || it.id}</span>
-              <span class="sub">${it.kb || ""}${it.source ? " · " + it.source : ""}${it.recommended ? " · rec: " + it.recommended : ""}</span></span>
-            ${it.when ? html`<span class="age num">${when(it.when)}</span>` : null}
-          </div>`)
-          : html`<p class="stub">Nothing in ${(stageLabel || "this stage").toLowerCase()} right now.</p>`}
-      </div>
+      <${StageList} label=${stageLabel} rows=${items.map(toRow)} sel=${sel} onSel=${setSel} />
       <div class="ai-detail">
         ${selItem
-          ? (stage === "gate"
+          ? (isGate
               ? html`<${Card} item=${selItem} station="needs_you" onAction=${(a, p) => act(selItem, a, p)} />`
               : html`<${InfoCard} item=${selItem} stage=${stageLabel} />`)
-          : html`<p class="stub">Select an item to see the ${stage === "gate" ? "draft and decide" : "details"}.</p>`}
+          : html`<p class="stub">Select an item to see the ${isGate ? "draft and decide" : "details"}.</p>`}
       </div>
     </div>
   </section>`;

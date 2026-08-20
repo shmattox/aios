@@ -678,6 +678,8 @@ body.modal-open { overflow: hidden; }
 .ai-node.empty .ai-count { color: var(--text-2); opacity: .55; }
 .ai-node .ai-lbl { font: 600 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
 .ai-node.sel .ai-lbl { color: var(--text-1); }
+.ai-node .ai-tag { font: 600 7.5px/1 var(--mono); letter-spacing: .06em; color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; margin-top: 1px; }
 /* connector: three dots that stream when the upstream node holds work to advance */
 .ai-edge { flex: 1 1 26px; min-width: 26px; align-self: center; display: flex; align-items: center;
   justify-content: center; gap: 5px; height: 40px; }

@@ -5,6 +5,7 @@ import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
 import { OverviewView } from "/views/overview.js";
 import { BoardView } from "/views/board.js";
 import { AiosView } from "/views/aios.js";
+import { SoftwareView } from "/views/software.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -42,7 +43,7 @@ const NAV = [
   { key: "usage", label: "Usage", view: stub("Usage", "Where the spend actually goes — by day, surface, model, repo.") },
   { section: "pipelines" },
   { key: "aios", label: "AIOS", view: AiosView },
-  { key: "software", label: "Software", view: stub("Software", "The software factory: backlog → … → complete.") },
+  { key: "software", label: "Software", view: SoftwareView },
   { key: "marketing", label: "Marketing", soon: "soon" },
   { key: "ops", label: "Ops", soon: "soon" },
 ];
@@ -113,6 +114,7 @@ function Shell() {
         if (e.key === "o") { location.hash = "#/overview"; return; }
         if (e.key === "b") { location.hash = "#/board"; return; }
         if (e.key === "a") { location.hash = "#/aios"; return; }
+        if (e.key === "s") { location.hash = "#/software"; return; }
         if (e.key === "u") { location.hash = "#/usage"; return; }
       }
       if (e.key === "g") { chord.current = "g"; setTimeout(() => { chord.current = null; }, 900); return; }
