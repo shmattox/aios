@@ -168,10 +168,9 @@ body.narrow .card-row[aria-current="true"] {
   border-bottom-left-radius: 0; border-bottom-right-radius: 0;
   border-bottom-color: transparent;
 }
-.silo.fo  { background: #c58af9; }
-.silo.per { background: #4cc38a; }
-.silo.gm  { background: #58a6ff; }
-.silo.dev { background: #e5a50a; }
+/* silo/kb identity is shown in text, not colour — monochrome dots keep the B&W thin-line look.
+   Only semantic STATE (gate/done/error) earns colour. */
+.silo, .silo.fo, .silo.per, .silo.gm, .silo.dev { background: var(--text-2); }
 
 /* -- detail card (right pane wide / accordion narrow) -- */
 #detail { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; min-width: 0; }
@@ -188,7 +187,7 @@ body.narrow #detail {
 }
 .chip.id { font-family: var(--mono); }
 .chip.pg { color: var(--warn); border-color: rgba(229, 165, 10, 0.45); background: rgba(229, 165, 10, 0.07); }
-.chip.fo-c { color: #c58af9; border-color: rgba(197, 138, 249, 0.4); }
+.chip.fo-c { color: var(--text-1); border-color: var(--border); }
 /* dev-card status badges (parked/blocked/decided/veto/done/gated) */
 .chip.badge-parked { color: var(--warn); border-color: rgba(229, 165, 10, 0.4); background: rgba(229, 165, 10, 0.07); }
 .chip.badge-blocked, .chip.badge-gated { color: var(--err); border-color: rgba(229, 83, 75, 0.4); background: rgba(229, 83, 75, 0.07); }

@@ -84,7 +84,7 @@ export function FilesView() {
   const open = (e) => { if (e.dir) { setDir(e.path); } else { setSel(e.path); } };
 
   return html`<section class="view">
-    <div class="viewhead"><h1>Files</h1><span class="sub">browse &amp; edit any file in the environment</span></div>
+    <div class="viewhead"><h1>Files</h1><span class="sub">browse and edit any file in the environment</span></div>
     <${Crumbs} dir=${dir} go=${setDir} />
     <div class="fm-grid">
       <div class="fm-list">
