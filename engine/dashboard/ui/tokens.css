@@ -8,7 +8,7 @@
   --bg-0: #0c0d0f; --bg-1: #141518; --bg-2: #191b1f; --bg-3: #1f2228;
   --text-0: #eceded; --text-1: #8b8e95; --text-2: #54575e;
   --accent: #f4f5f7; --accent-dim: rgba(255, 255, 255, 0.14); --accent-glow: rgba(244, 245, 247, 0.13);
-  --ok: #54c98a; --warn: #e5a50a; --err: #e5534b;
+  --ok: #54c98a; --warn: #e5a50a; --err: #e5534b; --link: #5eb0ef;
   --border: rgba(255, 255, 255, 0.08); --border-hi: rgba(255, 255, 255, 0.14);
   --radius: 7px;
   --font: "Inter", "Segoe UI", system-ui, sans-serif;
@@ -745,9 +745,9 @@ body.narrow .ai-detail #detail { height: auto; }
 .fileref .frp { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileref .go { flex: none; color: var(--text-2); }
 /* inline file paths inside body/draft/payload text — click to open in the Files editor */
-.pathlink { color: var(--text-0); cursor: pointer; text-decoration: underline;
-  text-decoration-color: var(--text-2); text-underline-offset: 2px; border-radius: 2px; }
-.pathlink:hover { text-decoration-color: var(--text-0); background: var(--bg-2); }
+.pathlink { color: var(--link); cursor: pointer; text-decoration: underline;
+  text-decoration-color: rgba(94, 176, 239, 0.45); text-underline-offset: 2px; border-radius: 2px; }
+.pathlink:hover { text-decoration-color: var(--link); background: rgba(94, 176, 239, 0.1); }
 
 /* ── Usage view ──────────────────────────────────────────────────────────── */
 .uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }
