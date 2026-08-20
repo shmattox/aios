@@ -116,7 +116,7 @@ function FlowGraph({ stages, flows, scope, onPick }) {
 }
 
 // ── feed: activity / worktrees / prs, with stage scoping + inline expand ──
-function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stageItems, runByItem, expanded, setExpanded, logs }) {
+function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, held, onGateAction, stageItems, runByItem, expanded, setExpanded, logs }) {
   const wt = git.worktrees || [];
   const prs = git.prs || { items: [], loading: false };
   const vault = git.vault || [];
@@ -127,6 +127,7 @@ function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stag
       <div class="pv-tabs">
         ${[
           { m: "activity", lbl: "Activity" },
+          { m: "gate", lbl: "Gate", n: held.length, title: "held drafts awaiting your decision" },
           { m: "worktrees", lbl: "Worktrees", n: extras, title: `${extras} active drain${extras === 1 ? "" : "s"} of ${wt.length} worktrees` },
           { m: "prs", lbl: "PRs", n: prs.items.length, title: "open pull requests" },
           { m: "vault", lbl: "Vault", n: vault.filter((v) => !v.auto).length, title: "recent secondbrain writes (excludes auto-sync)" },
@@ -143,6 +144,7 @@ function Feed({ mode, setMode, scope, scopeInfo, clearScope, activity, git, stag
         ? (scope
             ? StageItems({ items: stageItems, runByItem, expanded, setExpanded, logs })
             : ActivityRows({ runs: activity.runs, now: activity.now, expanded, setExpanded, logs }))
+        : mode === "gate" ? HeldRows({ held, onGateAction })
         : mode === "worktrees" ? WorktreeRows({ wt })
         : mode === "prs" ? PrRows({ prs })
         : VaultRows({ vault, now: activity.now })}
@@ -216,6 +218,28 @@ function PrRows({ prs }) {
   </a>`);
 }
 
+// The actionable gate: held drafts awaiting a human decision (the same gated verbs the Inbox
+// fires). Economic/Paper-Governs items — approve confirms, reject/dismiss require a reason.
+function HeldRows({ held, onGateAction }) {
+  if (!held.length) return html`<div class="pv-empty">Nothing awaiting your decision.</div>`;
+  return held.map((it) => html`<div class="pv-row warn pv-held" key=${it.id}>
+    <span class="pv-badge">${it.kb || "—"}</span>
+    <div class="pv-rmain">
+      <div class="pv-rt">${it.title}</div>
+      <div class="pv-rm">
+        ${it.lane ? html`<span>${it.lane}</span>` : null}
+        ${it.recommended ? html`<span>rec ${it.recommended}</span>` : null}
+        ${it.rec_reason ? html`<span class="pv-recr">${it.rec_reason}</span>` : null}
+      </div>
+    </div>
+    <div class="pv-verbs">
+      <button class="pv-verb ok" title="Ship (gated)" onClick=${() => onGateAction("approve", it)}>Ship</button>
+      <button class="pv-verb" title="Reject" onClick=${() => onGateAction("reject", it)}>Reject</button>
+      <button class="pv-verb" title="Dismiss" onClick=${() => onGateAction("dismiss", it)}>Dismiss</button>
+    </div>
+  </div>`);
+}
+
 function VaultRows({ vault, now }) {
   if (!vault.length) return html`<div class="pv-empty">No recent vault writes.</div>`;
   return vault.map((v) => html`<div class="pv-row ${v.auto ? "ok" : "run"}" key=${v.hash}>
@@ -238,15 +262,35 @@ export function PipelineView() {
   const [logs, setLogs] = useState({});
   const [lastSync, setLastSync] = useState(0);      // epoch-s of the last successful poll
   const [clientNow, setClientNow] = useState(Date.now() / 1000);
+  const [held, setHeld] = useState([]);             // gate: drafts awaiting a human decision
 
   const loadModel = () => api.get("/api/pipeline").then(setModel).catch(() => {});
   const loadActivity = () => api.get("/api/activity")
     .then((d) => { setActivity({ runs: d.runs || [], now: d._now || 0 }); setLastSync(Date.now() / 1000); }).catch(() => {});
   const loadGit = () => api.get("/api/git")
     .then((d) => setGit({ worktrees: d.worktrees || [], prs: d.prs || { items: [], loading: false }, vault: d.vault || [] })).catch(() => {});
+  const loadHeld = () => api.get("/api/held").then((d) => setHeld(d.held || [])).catch(() => {});
 
-  useEffect(() => { loadModel(); loadActivity(); loadGit(); }, []);
-  useEffect(() => { const t = setInterval(() => { loadModel(); loadActivity(); }, 4000); return () => clearInterval(t); }, []);
+  // the gated verbs (same CLIs the Inbox fires). These write real state — economic/Paper-Governs
+  // items — so approve confirms and reject/dismiss require a reason; api.post is token-gated + toasts.
+  const gateAction = async (kind, item) => {
+    try {
+      if (kind === "approve") {
+        if (!window.confirm(`Ship "${item.title || item.id}"?\nThis fires the gated ship (records a revert pointer).`)) return;
+        await api.post("gate_ship", { id: item.id });
+      } else if (kind === "reject") {
+        const r = window.prompt("Reject reason:"); if (!r) return;
+        await api.post("gate_reject", { id: item.id, reason: r });
+      } else if (kind === "dismiss") {
+        const r = window.prompt("Dismiss reason:") || "below the worthiness bar";
+        await api.post("dismiss", { id: item.id, reason: r });
+      }
+      loadHeld(); loadActivity();
+    } catch (e) { /* api.post already toasted the failure */ }
+  };
+
+  useEffect(() => { loadModel(); loadActivity(); loadGit(); loadHeld(); }, []);
+  useEffect(() => { const t = setInterval(() => { loadModel(); loadActivity(); loadHeld(); }, 4000); return () => clearInterval(t); }, []);
   useEffect(() => { const t = setInterval(loadGit, 10000); return () => clearInterval(t); }, []);
   useEffect(() => { const t = setInterval(() => setClientNow(Date.now() / 1000), 1000); return () => clearInterval(t); }, []);
 
@@ -293,7 +337,8 @@ export function PipelineView() {
     <${Metrics} runs=${activity.runs} gate=${gate} fresh=${lastSync ? ago(clientNow - lastSync) : null} />
     <${FlowGraph} stages=${stages} flows=${model?.flows} scope=${scope} onPick=${pickStage} />
     <${Feed} mode=${mode} setMode=${switchMode} scope=${scope} scopeInfo=${scopeInfo} clearScope=${clearScope}
-             activity=${activity} git=${git} stageItems=${stageItems} runByItem=${runByItem}
+             activity=${activity} git=${git} held=${held} onGateAction=${gateAction}
+             stageItems=${stageItems} runByItem=${runByItem}
              expanded=${expanded} setExpanded=${setExpanded} logs=${logs} />
   </div>`;
 }
