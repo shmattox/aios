@@ -3,7 +3,7 @@
 // Presentation + local respond-box state only; the parent supplies onAction(act, params)
 // and owns every API call, so the card holds zero write logic.
 import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
-import { openInFiles } from "./filenav.js";
+import { openInFiles, linkifyPaths, onPathClick } from "./filenav.js";
 
 const KB_SILO = { familyoffice: "fo", personal: "per", gm: "gm", dev: "dev" };
 export const siloClass = (kb) => KB_SILO[String(kb || "").toLowerCase()] || "dev";
@@ -273,7 +273,9 @@ export function Card({ item, station, onAction, vaultRel }) {
           <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
           ${editing
             ? html`<textarea class="editarea" value=${editText} onInput=${(e) => setEditText(e.target.value)}></textarea>`
-            : html`<pre class="body">${draft == null ? "loading draft…" : (draft.markdown != null ? draft.markdown : "")}</pre>`}
+            : (draft == null
+                ? html`<pre class="body">loading draft…</pre>`
+                : html`<pre class="body" onClick=${onPathClick} dangerouslySetInnerHTML=${{ __html: linkifyPaths(draft.markdown != null ? draft.markdown : "", vaultRel) }}></pre>`)}
         `}
       </div>` : null}
 

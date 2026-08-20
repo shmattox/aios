@@ -6,19 +6,13 @@
 import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
 import { Card, siloClass } from "./card.js";
 import { FlowGraph, StageList } from "./pipeflow.js";
-import { openInFiles } from "./filenav.js";
+import { openInFiles, toEnvFile, linkifyPaths, onPathClick } from "./filenav.js";
+import { remember, recall } from "./viewstate.js";
 
 const REPLY = { respond: 1, append: 1, comment: 1 };
 const when = (s) => (s ? String(s).slice(0, 10) : "");
 const short = (p) => { const a = String(p || "").replace(/\\/g, "/").split("/"); return a.length > 4 ? "…/" + a.slice(-3).join("/") : a.join("/"); };
-
-// vault-relative KB paths (02_FamilyOffice/…) resolve under the vault's env dir; others are env-rel
-function toEnvPath(vaultRel, p) {
-  if (!p) return null;
-  p = String(p).replace(/\\/g, "/");
-  if (vaultRel && !p.startsWith(vaultRel + "/") && /^\d\d_/.test(p)) return vaultRel + "/" + p;
-  return p;
-}
+const toEnvPath = toEnvFile;
 
 function FileRef({ label, path }) {
   return html`<button class="fileref" title=${path} onClick=${() => openInFiles(path)}>
@@ -61,7 +55,9 @@ function InfoCard({ item, stage, vaultRel }) {
     ${files.length ? html`<div class="sect"><div class="label">Source files</div>
       <div class="refs">${files.map((f) => html`<${FileRef} label=${f.label} path=${f.path} key=${f.path} />`)}</div></div>` : null}
     ${src ? html`<div class="sect"><div class="label">${draft ? "Draft" : "Captured payload"}</div>
-      <pre class="body">${body == null ? "loading…" : (body.err ? `(${body.err})` : body.text)}</pre></div>` : null}
+      ${body == null ? html`<pre class="body">loading…</pre>`
+        : body.err ? html`<pre class="body">(${body.err})</pre>`
+        : html`<pre class="body" onClick=${onPathClick} dangerouslySetInnerHTML=${{ __html: linkifyPaths(body.text, vaultRel) }}></pre>`}</div>` : null}
     <div class="verbs">
       <span class="note">Pre-gate — nothing to decide yet. Open any source file in the editor with
         the links above; the gate stage is where drafts wait on you.</span>
@@ -76,21 +72,26 @@ const toRow = (it) => ({
 });
 
 export function AiosView() {
+  const saved = recall("aios") || {};
   const [content, setContent] = useState(null);
-  const [stage, setStage] = useState(null);
+  const [stage, setStage] = useState(saved.stage ?? null);
   const [detail, setDetail] = useState(null);
   const [sel, setSel] = useState(null);
   const gen = useRef(0);
+  const wantSel = useRef(saved.sel || null);   // item to restore on the first stage load (back-nav)
 
   const loadContent = () => api.get("/api/content").then(setContent).catch(() => {});
   useEffect(() => { loadContent(); const t = setInterval(loadContent, 5000); return () => clearInterval(t); }, []);
   useEffect(() => {
     if (stage == null && content?.nodes?.length) setStage((content.nodes.find((n) => n.count > 0) || content.nodes[0]).id);
   }, [content]);
+  useEffect(() => { if (stage != null) remember("aios", { stage, sel }); }, [stage, sel]);
 
   const loadStage = () => {
     const g = ++gen.current;
-    const done = (items) => { if (g !== gen.current) return; setDetail({ items }); setSel(items[0]?.id || null); };
+    const done = (items) => { if (g !== gen.current) return; setDetail({ items });
+      const r = wantSel.current; wantSel.current = null;
+      setSel(items.find((i) => i.id === r)?.id || items[0]?.id || null); };
     if (stage === "gate") {
       api.get("/api/held").then((d) => done((d.held || []).map((h, i) => ({ ...h, _kind: "held", draft_index: h.draft_index != null ? h.draft_index : i }))))
         .catch(() => { if (g === gen.current) { setDetail({ items: [] }); setSel(null); } });

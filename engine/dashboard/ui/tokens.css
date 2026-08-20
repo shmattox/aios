@@ -134,8 +134,10 @@ body.side-collapsed #collapse .ic { transform: rotate(180deg); }
 
 /* -- content -- */
 #content { margin-left: var(--side-w); transition: margin-left var(--motion); }
-main { width: 100%; padding: 18px 26px 80px; }   /* full width — the flow graphs want the room */
-@media (max-width: 860px) { main { padding: 58px 16px 80px; } }
+main { width: 100%; padding: 18px 26px 46px; }   /* full width — the flow graphs want the room */
+@media (max-width: 860px) { main { padding: 58px 16px 46px; } }
+/* full-height app pages fill down to the keys bar (no dead band, no page scroll) */
+body:has(.view.ai) main, body:has(.view.fmv) main { padding-bottom: 0; }
 .view[hidden] { display: none; }
 .viewhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 4px 2px 12px; }
 .viewhead h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
@@ -700,7 +702,7 @@ body.modal-open { overflow: hidden; }
 @keyframes aiflow { to { transform: translateX(320%); } }
 .ai-life { color: var(--text-2); font-size: var(--fs-xs); font-family: var(--mono); padding: 10px 2px 14px; }
 
-.view.ai { display: flex; flex-direction: column; height: calc(100vh - 116px); }
+.view.ai { display: flex; flex-direction: column; height: calc(100vh - 52px); }
 .ai-drill { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px 1fr; gap: 14px; align-items: stretch; }
 .ai-list { min-height: 0; overflow-y: auto; }
 .ai-detail { min-height: 0; overflow: hidden; }
@@ -741,6 +743,10 @@ body.narrow .ai-detail #detail { height: auto; }
 .fileref .frk { flex: none; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); font-size: 9px; }
 .fileref .frp { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileref .go { flex: none; color: var(--text-2); }
+/* inline file paths inside body/draft/payload text — click to open in the Files editor */
+.pathlink { color: var(--text-0); cursor: pointer; text-decoration: underline;
+  text-decoration-color: var(--text-2); text-underline-offset: 2px; border-radius: 2px; }
+.pathlink:hover { text-decoration-color: var(--text-0); background: var(--bg-2); }
 
 /* ── Usage view ──────────────────────────────────────────────────────────── */
 .uz-src { font: 500 10px/1 var(--mono); color: var(--text-2); text-transform: none; letter-spacing: 0; }
@@ -758,7 +764,7 @@ body.narrow .ai-detail #detail { height: auto; }
 .uz-note { color: var(--text-2); font-size: var(--fs-xs); max-width: 60ch; padding: 8px 2px 0; }
 
 /* ── Files view — full-bleed: toolbar, locked tree (left), tabbed editor (right) ──────── */
-.view.fmv { display: flex; flex-direction: column; height: calc(100vh - 96px); }
+.view.fmv { display: flex; flex-direction: column; height: calc(100vh - 52px); }
 .fm-top { display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; flex: none; }
 .fm-top h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .fm-search { display: flex; align-items: center; gap: 7px; flex: 1; max-width: 420px;

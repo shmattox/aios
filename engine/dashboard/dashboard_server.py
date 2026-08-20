@@ -362,6 +362,13 @@ class Handler(SimpleHTTPRequestHandler):
             if detail is None:
                 return self._deny(404, "unknown pipeline stage")
             return self._send_json(detail)
+        if route == "/api/pipeline/item":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            repo, iid = qs.get("repo", [""])[0], qs.get("id", [""])[0]
+            # repo + id are used to build a backlog path — allow only safe tokens (no traversal)
+            if not re.match(r"^[A-Za-z0-9._-]{1,64}$", repo) or not re.match(r"^[A-Za-z0-9._:-]{1,80}$", iid):
+                return self._deny(400, "bad repo or id")
+            return self._send_json(pipeline_state.item_detail(str(env), repo, iid))
         if route == "/api/git":
             return self._send_json(git_state.state(str(env)))
         if route == "/api/content":
