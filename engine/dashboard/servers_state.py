@@ -49,7 +49,7 @@ def servers(env_root):
         m = re.search(r"Projects[\\/]([^\\/ ]+)", cmd)
         if m:
             repo = m.group(1)
-        key = (c.get("name"), port)
+        key = (c.get("name"), str(port))   # str() so 5174 and "5174" dedupe as one
         if key in seen:
             continue
         seen.add(key)

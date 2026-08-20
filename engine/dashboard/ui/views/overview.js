@@ -1,9 +1,9 @@
 // Overview — the landing page: both pipelines at a glance, dev servers, and what's running.
-// Reads /api/pipeline (factory), /api/content (AIOS pipeline), /api/servers, /api/activity, /api/spend.
+// Reads /api/pipeline (factory), /api/content (AIOS pipeline), /api/servers, /api/activity.
+// (Spend is derived from the activity runs' cost_usd, not a separate endpoint.)
 import { html, api, useState, useEffect, toast } from "/lib.js";
 
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
-function fmtTok(n) { if (!n) return "0"; if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"; if (n >= 1e3) return (n / 1e3).toFixed(1) + "k"; return String(n); }
 const lastTs = (r) => Math.max(r.ended || 0, r.heartbeat || 0, r.started || 0);
 const startOfTodaySec = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
 const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
@@ -64,7 +64,7 @@ export function OverviewView() {
     </div>
 
     <h3 class="ov-sect">Dev servers</h3>
-    ${servers.length ? servers.map((s) => html`<div class="ov-srv" key=${s.repo + s.name}>
+    ${servers.length ? servers.map((s) => html`<div class="ov-srv" key=${s.repo + s.name + s.port}>
         <span class="ov-st ${s.up ? "up" : "down"}"></span>
         <div class="ov-si"><div class="nm">${s.name} <span class="repo">· ${s.repo}</span></div>
           <div class="url">${s.url || s.cmd}</div></div>

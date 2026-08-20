@@ -4,6 +4,7 @@
 import { html, render, useEffect, useState, useRef, api, toast } from "/lib.js";
 import { OverviewView } from "/views/overview.js";
 import { BoardView } from "/views/board.js";
+import { AiosView } from "/views/aios.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -40,7 +41,7 @@ const NAV = [
   { key: "files", label: "Files", view: stub("Files", "The file browser + editor over the whole environment.") },
   { key: "usage", label: "Usage", view: stub("Usage", "Where the spend actually goes — by day, surface, model, repo.") },
   { section: "pipelines" },
-  { key: "aios", label: "AIOS", view: stub("AIOS", "The content pipeline: capture → sort → ingest → gate → garden.") },
+  { key: "aios", label: "AIOS", view: AiosView },
   { key: "software", label: "Software", view: stub("Software", "The software factory: backlog → … → complete.") },
   { key: "marketing", label: "Marketing", soon: "soon" },
   { key: "ops", label: "Ops", soon: "soon" },
@@ -61,7 +62,6 @@ function Shell() {
   const [narrow, setNarrow] = useState(window.matchMedia("(max-width: 860px)").matches);
   const [ageTxt, setAgeTxt] = useState("");
   const [inboxCount, setInboxCount] = useState(0);
-  const [liveCount, setLiveCount] = useState(0);
   const chord = useRef(null);
 
   // hash routing
@@ -96,9 +96,7 @@ function Shell() {
         const newest = vals.length ? Math.max(...vals) : 0;
         setAgeTxt(newest ? `${Math.max(0, Math.round(Date.now() / 1000 - newest))}s` : "");
         const h = await api.get("/api/held");
-        setInboxCount((h.held || []).length);
-        const a = await api.get("/api/activity");
-        setLiveCount((a.runs || []).filter((r) => r.live).length);
+        setInboxCount((h.held || []).length);   // the gate badge on the AIOS nav item
       } catch (e) { /* server gone */ }
       timer = setTimeout(tick, 5000);
     };
@@ -114,6 +112,7 @@ function Shell() {
         chord.current = null;
         if (e.key === "o") { location.hash = "#/overview"; return; }
         if (e.key === "b") { location.hash = "#/board"; return; }
+        if (e.key === "a") { location.hash = "#/aios"; return; }
         if (e.key === "u") { location.hash = "#/usage"; return; }
       }
       if (e.key === "g") { chord.current = "g"; setTimeout(() => { chord.current = null; }, 900); return; }

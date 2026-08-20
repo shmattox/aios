@@ -365,6 +365,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send_json(git_state.state(str(env)))
         if route == "/api/content":
             return self._send_json(content_state.summary(str(env)))
+        if route.startswith("/api/content/stage/"):
+            # drill-in: uncapped item list for one content stage. The id is whitelisted against
+            # the fixed 5-stage set inside stage_detail (unknown -> None -> 404); used only as a
+            # dict key, so no traversal/injection surface.
+            detail = content_state.stage_detail(str(env), route[len("/api/content/stage/"):])
+            if detail is None:
+                return self._deny(404, "unknown content stage")
+            return self._send_json(detail)
         if route == "/api/servers":
             return self._send_json({"servers": servers_state.servers(str(env))})
         return self._deny(404, f"unknown GET {route}")
