@@ -29,6 +29,8 @@ import activity  # run-record contract (A119) — live-run observability
 import otel_runs  # Flow view: native-OTel traces (Jaeger store) → runs + graph + cost
 import pipeline_state  # master Flow view: backlog+factory+OTel -> pipeline stage model
 import git_state       # cockpit: active worktrees + open PRs (best-effort, PRs bg-cached)
+import content_state   # content pipeline (capture→sort→ingest→gate→garden) summary from the queue
+import servers_state   # dev servers from launch.json + up/down probe
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -361,6 +363,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send_json(detail)
         if route == "/api/git":
             return self._send_json(git_state.state(str(env)))
+        if route == "/api/content":
+            return self._send_json(content_state.summary(str(env)))
+        if route == "/api/servers":
+            return self._send_json({"servers": servers_state.servers(str(env))})
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
