@@ -268,7 +268,8 @@ export function Card({ item, station, onAction, vaultRel }) {
       <div class="sect">
         ${(draft && draft.diff && draft.diff.length && !editing) ? html`
           <div class="label">Proposed change${draft.target ? html` · ${shortPath(draft.target)}` : ""}</div>
-          <div class="diff">${draft.diff.map((r, i) => html`<div class="${r.op}" key=${i}>${r.text}</div>`)}</div>
+          <div class="diff" onClick=${onPathClick}>${draft.diff.map((r, i) => html`<div class="${r.op}" key=${i}
+            dangerouslySetInnerHTML=${{ __html: linkifyPaths(r.text, vaultRel) }}></div>`)}</div>
         ` : html`
           <div class="label">${editing ? "Editing draft" : "Staged draft"}${item.draft_path ? html` · ${shortPath(item.draft_path)}` : ""}</div>
           ${editing
