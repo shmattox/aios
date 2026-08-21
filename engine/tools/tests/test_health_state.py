@@ -23,15 +23,18 @@ RESULTS = {"generated_utc": "2026-08-21T10:56:16+00:00", "watching_clear": [], "
                {"id": "b", "kind": "standing", "cadence": "daily", "origin": "H2",
                 "on_violation": "", "last_run": "x", "first_red": None, "reason": None, "status": "green"},
                {"id": "c", "kind": "watch", "cadence": "daily", "origin": "H3",
-                "on_violation": "", "last_run": "x", "first_red": None, "reason": "expired", "status": "observed"},
+                "on_violation": "", "last_run": "x", "first_red": None, "reason": "expired past check_by", "status": "expired"},
+               {"id": "d", "kind": "watch", "cadence": "daily", "origin": "H4",
+                "on_violation": "", "last_run": "x", "first_red": None, "reason": None, "status": "observed"},
            ]}
 
 
 def test_summary_counts_and_checks(tmp_path):
     s = health_state.summary(_env(tmp_path, RESULTS))
     assert s["ok"] is True
-    assert s["standing"]["reds"] == 1 and s["standing"]["greens"] == 1
-    assert s["standing"]["watch_expired"] == 1
+    assert s["standing"]["reds"] == 1
+    assert s["standing"]["greens"] == 2  # green + observed (watch healthy)
+    assert s["standing"]["watch_expired"] == 1  # expired watch
     red = [c for c in s["standing"]["checks"] if c["status"] == "red"][0]
     assert red["id"] == "a" and red["on_violation"] == "fix a"
 
@@ -40,6 +43,7 @@ def test_fleet_and_sources(tmp_path):
     s = health_state.summary(_env(tmp_path, RESULTS))
     fleet = {f["task"]: f for f in s["fleet"]}
     assert "aios-ingest" in fleet and fleet["aios-ingest"]["age_s"] >= 0
+    assert "last_run_epoch" in fleet["aios-ingest"]  # holds raw epoch float, not UTC string
     names = {r["name"] for r in s["sources"]}
     assert {"brief-cache", "gate-metrics", "standing-checks"} <= names
     missing = [r for r in s["sources"] if r["name"] == "queue"][0]

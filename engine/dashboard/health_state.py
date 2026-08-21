@@ -29,7 +29,7 @@ def _mtime(p):
 
 
 def _age(m, now):
-    return max(0, int(now - m)) if m else None
+    return max(0, int(now - m)) if m is not None else None
 
 
 def summary(env_root):
@@ -50,8 +50,8 @@ def summary(env_root):
                        "first_red": None, "reason": "%s: %s" % (type(e).__name__, rp),
                        "status": "red"})
     reds = sum(1 for c in checks if c["status"] == "red")
-    greens = sum(1 for c in checks if c["status"] == "green")
-    watch_expired = sum(1 for c in checks if c["status"] == "observed")
+    greens = sum(1 for c in checks if c["status"] in ("green", "observed"))
+    watch_expired = sum(1 for c in checks if c["status"] == "expired")
 
     fleet = []
     logs = env / "state" / "task-logs"
@@ -59,7 +59,7 @@ def summary(env_root):
         for d in sorted(p for p in logs.iterdir() if p.is_dir()):
             m = max((x for x in (_mtime(d / "last-run.log"),
                                  _mtime(d / "last-result.txt")) if x), default=None)
-            fleet.append({"task": d.name, "last_run_utc": m, "age_s": _age(m, now)})
+            fleet.append({"task": d.name, "last_run_epoch": m, "age_s": _age(m, now)})
 
     sources = []
     for name, rel in _SOURCES:
