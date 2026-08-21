@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "items": [
+    {
+      "id": "A127",
+      "outcome": "shipped",
+      "note": "2026-08-21: deleted 5 dead A63 panels (cockpit/cost/gate/mirror/standup, zero imports), retired /api/standup+/api/brief routes and dead handlers, dropped matching dead CSS (.pv-*/.fg-*/.card-row), added claimant comments to /api/git+/api/otel/run/<id>+/api/domains*, refreshed dashboard SKILL.md to shipped surface. Suite green (788 passed); code-review zero findings."
+    }
+  ]
+}
