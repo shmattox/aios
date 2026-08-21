@@ -856,7 +856,7 @@ body.narrow .fm-tree { max-height: 260px; border-right: 0; border-bottom: 1px so
 .fm-node .fnm { overflow: hidden; text-overflow: ellipsis; }
 .fm-node .fnm.dim { color: var(--text-2); }
 .fm-node .fdir { margin-left: auto; padding-left: 8px; color: var(--text-2); font: 400 10px/1 var(--mono); overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
-/* right pane: one row of tabs + Save/Revert, then the editor filling the rest */
+/* right pane: one row of tabs + Open-in-Cursor, then the viewer filling the rest */
 .fm-pane { display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg-0); }
 .fm-tabbar { display: flex; align-items: stretch; flex: none; border-bottom: 1px solid var(--border); background: var(--bg-1); }
 .fm-tabs { display: flex; overflow-x: auto; min-width: 0; }
@@ -869,14 +869,13 @@ body.narrow .fm-tree { max-height: 260px; border-right: 0; border-bottom: 1px so
 .fm-acts { display: flex; align-items: center; gap: 7px; flex: none; margin-left: auto; padding: 6px 12px; }
 .verb:disabled { opacity: .38; cursor: default; }
 .fm-empty { display: grid; place-items: center; flex: 1; }
-/* editor: highlight layer behind a transparent textarea (same metrics), content WRAPS */
+/* read-only viewer: the highlighted <pre> fills the pane and scrolls, content WRAPS */
 .fm-code { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-0); }
-.fm-hl, .fm-ta { margin: 0; border: 0; padding: 14px 18px; box-sizing: border-box;
+.fm-hl { margin: 0; border: 0; padding: 14px 18px; box-sizing: border-box;
   position: absolute; inset: 0; width: 100%; height: 100%;
   font: 400 12.5px/1.7 var(--mono); tab-size: 2; letter-spacing: 0;
-  white-space: pre-wrap; word-break: break-word; overflow-y: auto; overflow-x: hidden; }
-.fm-hl { color: var(--text-1); pointer-events: none; overflow: hidden; }
-.fm-ta { color: transparent; caret-color: var(--text-0); background: transparent; resize: none; outline: none; }
+  white-space: pre-wrap; word-break: break-word; overflow-y: auto; overflow-x: hidden;
+  color: var(--text-1); }
 .fm-hl .h { color: var(--text-0); font-weight: 600; }
 .fm-hl .s { color: var(--ok); }
 

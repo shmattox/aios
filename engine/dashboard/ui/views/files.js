@@ -1,7 +1,7 @@
-// Files — a full-bleed editor: a locked file TREE on the left, a tabbed editor on the right.
-// Toolbar (search / new file / refresh / collapse) up top. Tabs and Save/Revert share one row.
-// Backend (files_state) keeps everything inside the env root and refuses secrets/binaries/oversize.
-import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
+// Files — read-only viewer: a locked file TREE on the left, tabbed highlighted views on the right.
+// Toolbar (search / refresh / collapse) up top. Edit intent hands off to Cursor via the tab bar's
+// "Open in Cursor" link. Backend (files_state) keeps everything inside the env root and refuses secrets/binaries/oversize.
+import { html, api, useState, useEffect, useRef } from "/lib.js";
 import { takePendingFile, subscribeOpenFile } from "./filenav.js";
 
 const base = (p) => (p || "").split("/").pop();
@@ -9,16 +9,9 @@ const ext = (p) => { const b = base(p); const i = b.lastIndexOf("."); return i >
 
 const IC = {
   search: html`<svg viewBox="0 0 16 16" class="ic"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>`,
-  add: html`<svg viewBox="0 0 16 16" class="ic"><path d="M8 3.5v9M3.5 8h9"/></svg>`,
   refresh: html`<svg viewBox="0 0 16 16" class="ic"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/></svg>`,
   collapse: html`<svg viewBox="0 0 16 16" class="ic"><path d="M4.5 9.5 8 6l3.5 3.5"/></svg>`,
 };
-
-async function post(path, body) {
-  const r = await fetch(path, { method: "POST", headers: { "X-Aios-Token": api.token, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const b = await r.json().catch(() => ({}));
-  return { ok: r.ok && b.ok, body: b };
-}
 
 // ---- safe syntax highlight (escape then wrap) --------------------------------------
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -51,15 +44,11 @@ function TreeNode({ node, depth, expanded, childrenOf, onToggle, onOpen, activeP
   </div>`;
 }
 
-function Editor({ tab, onChange }) {
-  const taRef = useRef(null), hlRef = useRef(null);
-  const sync = () => { if (hlRef.current && taRef.current) { hlRef.current.scrollTop = taRef.current.scrollTop; } };
-  if (!tab) return html`<div class="fm-empty"><p class="stub">Open a file from the tree to view or edit it.</p></div>`;
+function Editor({ tab }) {
+  if (!tab) return html`<div class="fm-empty"><p class="stub">Open a file from the tree to view it.</p></div>`;
   if (tab.error) return html`<div class="fm-empty"><p class="stub">${tab.error}${tab.size ? ` (${tab.size} bytes)` : ""}.</p></div>`;
   return html`<div class="fm-code">
-    <pre class="fm-hl" ref=${hlRef} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: highlight(tab.text, ext(tab.path)) + "\n" }}></pre>
-    <textarea class="fm-ta" ref=${taRef} spellcheck="false" value=${tab.text}
-      onInput=${(e) => onChange(e.target.value)} onScroll=${sync}></textarea>
+    <pre class="fm-hl" dangerouslySetInnerHTML=${{ __html: highlight(tab.text, ext(tab.path)) + "\n" }}></pre>
   </div>`;
 }
 
@@ -71,8 +60,11 @@ export function FilesView() {
   const [active, setActive] = useState(null);
   const [q, setQ] = useState("");
   const [results, setResults] = useState(null);
+  const [envRoot, setEnvRoot] = useState(null);
   const openRef = useRef(new Set());
   const searchTimer = useRef(null);
+
+  useEffect(() => { api.get("/api/health").then((h) => setEnvRoot(h.env_root)).catch(() => {}); }, []);
 
   const loadRoot = () => api.get("/api/files/tree?path=").then((d) => setRoots(d.entries || [])).catch(() => setRoots([]));
   const loadDir = (path) => api.get(`/api/files/tree?path=${encodeURIComponent(path)}`)
@@ -132,28 +124,10 @@ export function FilesView() {
     setTabs((ts) => { const i = ts.findIndex((t) => t.path === path); const n = ts.filter((t) => t.path !== path);
       if (active === path) setActive(n.length ? n[Math.min(i, n.length - 1)].path : null); return n; });
   };
-  const setText = (path, text) => setTabs((ts) => ts.map((t) => t.path === path ? { ...t, text } : t));
   const cur = tabs.find((t) => t.path === active) || null;
-  const dirty = cur && !cur.error && !cur.loading && cur.text !== cur.content;
 
-  const save = async () => {
-    if (!cur || !dirty) return;
-    const { ok, body } = await post("/api/files/write", { path: cur.path, content: cur.text });
-    if (!ok) { toast(`✗ save: ${body.error || "failed"}`); return; }
-    toast(`✓ saved ${base(cur.path)}`);
-    setTabs((ts) => ts.map((t) => t.path === cur.path ? { ...t, content: cur.text } : t));
-  };
-  const revert = () => cur && setText(cur.path, cur.content);
   const refresh = () => { setChildrenOf({}); loadRoot(); };
   const collapseAll = () => setExpanded(new Set());
-  const newFile = async () => {
-    const p = window.prompt("New file path (relative to the environment root):");
-    if (!p) return;
-    const { ok, body } = await post("/api/files/create", { path: p.trim() });
-    if (!ok) { toast(`✗ create: ${body.error || "failed"}`); return; }
-    toast(`✓ created ${base(body.path)}`);
-    refresh(); openPath(body.path);
-  };
 
   return html`<section class="view fmv">
     <div class="fm-top">
@@ -162,7 +136,6 @@ export function FilesView() {
         <input type="text" placeholder="Search files…" value=${q} onInput=${(e) => setQ(e.target.value)} />
       </label>
       <div class="fm-tools">
-        <button title="New file" onClick=${newFile}>${IC.add}</button>
         <button title="Refresh" onClick=${refresh}>${IC.refresh}</button>
         <button title="Collapse all" onClick=${collapseAll}>${IC.collapse}</button>
       </div>
@@ -185,16 +158,16 @@ export function FilesView() {
           <div class="fm-tabs">
             ${tabs.map((t) => html`<div class="fm-tab ${t.path === active ? "on" : ""}" key=${t.path}
                 onClick=${() => setActive(t.path)} title=${t.path}>
-              <span class="fm-tnm">${base(t.path)}${t.text !== t.content && !t.error && !t.loading ? " ●" : ""}</span>
+              <span class="fm-tnm">${base(t.path)}</span>
               <button class="fm-x" onClick=${(e) => closeTab(t.path, e)} aria-label="close">×</button>
             </div>`)}
           </div>
           <div class="fm-acts">
-            <button class="verb" disabled=${!dirty} onClick=${revert}>Revert</button>
-            <button class="verb ok" disabled=${!dirty} onClick=${save}>Save</button>
+            ${cur && envRoot ? html`<a class="verb ok" title="Open this file in Cursor"
+                href=${"cursor://file/" + String(envRoot).replace(/\\/g, "/") + "/" + cur.path}>Open in Cursor</a>` : null}
           </div>
         </div>
-        <${Editor} tab=${cur} onChange=${(v) => setText(active, v)} />
+        <${Editor} tab=${cur} />
       </div>
     </div>
   </section>`;
