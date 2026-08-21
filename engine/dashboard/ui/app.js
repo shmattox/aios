@@ -8,6 +8,7 @@ import { AiosView } from "/views/aios.js";
 import { SoftwareView } from "/views/software.js";
 import { UsageView } from "/views/usage.js";
 import { FilesView } from "/views/files.js";
+import { HealthView } from "/views/health.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -24,6 +25,7 @@ const ICONS = {
   board: html`<svg class="ic" viewBox="0 0 16 16"><rect x="1.8" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1"/><rect x="10.8" y="2.5" width="3.4" height="9.5" rx="1"/></svg>`,
   files: html`<svg class="ic" viewBox="0 0 16 16"><path d="M2 4.5a1 1 0 0 1 1-1h2.5l1.3 1.4H13a1 1 0 0 1 1 1v6.6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>`,
   usage: html`<svg class="ic" viewBox="0 0 16 16"><path d="M2.5 13.5V7M6.5 13.5V3M10.5 13.5V8.5M14 13.5H1.5"/></svg>`,
+  health: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8h3l1.5-4 2.5 8 1.5-4h4.5"/></svg>`,
   aios: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8h2.5l1.3-4 2.6 8 1.3-4H14"/></svg>`,
   software: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 13.5h13M3 13.5V6l2.6 1.8V6l2.6 1.8V6l2.8 1.8v5.7M5 13.5v-2M8.3 13.5v-2M11.3 13.5v-2"/></svg>`,
   marketing: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 13.5h13M3 13.5V6l2.6 1.8V6l2.6 1.8V6l2.8 1.8v5.7"/></svg>`,
@@ -43,6 +45,7 @@ const NAV = [
   { key: "board", label: "Board", view: BoardView },
   { key: "files", label: "Files", view: FilesView },
   { key: "usage", label: "Usage", view: UsageView },
+  { key: "health", label: "Health", view: HealthView },
   { section: "pipelines" },
   { key: "aios", label: "AIOS", view: AiosView },
   { key: "software", label: "Software", view: SoftwareView },
@@ -122,6 +125,7 @@ function Shell() {
         if (e.key === "a") { location.hash = "#/aios"; return; }
         if (e.key === "s") { location.hash = "#/software"; return; }
         if (e.key === "u") { location.hash = "#/usage"; return; }
+        if (e.key === "h") { location.hash = "#/health"; return; }
       }
       if (e.key === "g") { chord.current = "g"; setTimeout(() => { chord.current = null; }, 900); return; }
       if (e.key === "[") setCollapsed((c) => !c);

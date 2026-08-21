@@ -588,6 +588,20 @@ body.modal-open { overflow: hidden; }
 .ov-run .r .go { color: var(--text-2); }
 .ov-run:hover .r .go { color: var(--text-0); }
 
+/* ── Health view — standing-check / fleet / source rows ─────────────── */
+.hl-list { display: flex; flex-direction: column; margin-bottom: 4px; }
+.hl-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,.045); }
+.hl-list .hl-row:last-child { border-bottom: none; }
+.hl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex: none; }
+.hl-dot.hl-red, .hl-dot.hl-expired { background: var(--err); }
+.hl-dot.hl-observed, .hl-dot.hl-watching { background: var(--text-2); }
+.hl-dot.hl-green { background: var(--ok); }
+.hl-id { font: 500 12.5px/1.3 var(--mono); color: var(--text-0); flex: none; min-width: 140px; }
+.hl-meta { font: 500 11px/1.3 var(--mono); color: var(--text-2); }
+.hl-meta.num { font-variant-numeric: tabular-nums; margin-left: auto; }
+.hl-meta.warn { color: var(--warn); }
+.hl-why { flex-basis: 100%; color: var(--text-2); font-size: var(--fs-sm); padding-left: 18px; }
+
 /* live-thread viewer modal */
 .th-modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0,0,0,.58); }
 .th-card { width: min(920px, calc(100vw - 40px)); height: min(80vh, 760px); display: flex; flex-direction: column;

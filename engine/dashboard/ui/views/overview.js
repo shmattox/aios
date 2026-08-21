@@ -9,8 +9,8 @@ const lastTs = (r) => Math.max(r.ended || 0, r.heartbeat || 0, r.started || 0);
 const startOfTodaySec = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
 const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
 
-function Metric({ k, v, sub, cls }) {
-  return html`<div class="ov-cell"><div class="ov-k">${k}</div>
+function Metric({ k, v, sub, cls, onClick }) {
+  return html`<div class="ov-cell" style=${onClick ? "cursor:pointer" : ""} onClick=${onClick}><div class="ov-k">${k}</div>
     <div class="ov-v ${cls || ""}">${v}</div><div class="ov-s">${sub || ""}</div></div>`;
 }
 
@@ -72,11 +72,13 @@ export function OverviewView() {
   const [activity, setActivity] = useState({ runs: [], now: 0 });
   const [otel, setOtel] = useState(null);        // real cost/token telemetry (OpenTelemetry)
   const [thread, setThread] = useState(null);   // a running session opened for viewing
+  const [health, setHealth] = useState(null);   // standing-check reds (/api/health)
 
   const load = () => {
     api.get("/api/pipeline").then(setFactory).catch(() => {});
     api.get("/api/content").then(setContent).catch(() => {});
     api.get("/api/activity").then((d) => setActivity({ runs: d.runs || [], now: d._now || 0 })).catch(() => {});
+    api.get("/api/health").then(setHealth).catch(() => {});
   };
   const loadSlow = () => {
     api.get("/api/servers").then((d) => setServers(d.servers || [])).catch(() => {});
@@ -117,6 +119,8 @@ export function OverviewView() {
       <${Metric} k="running now" v=${live.length} sub=${`${live.length - drains} session${live.length - drains === 1 ? "" : "s"} · ${drains} drain${drains === 1 ? "" : "s"}`} />
       <${Metric} k="spend · today" v=${otel == null ? "…" : otelUp ? fmtUsd(spendToday) : "—"}
         sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs` : "telemetry store down"} />
+      <${Metric} k="standing reds" v=${health?.standing?.reds ?? "…"} cls=${health?.standing?.reds ? "warn" : ""}
+        sub="standing checks" onClick=${() => { location.hash = "#/health"; }} />
     </div>
 
     <div class="ov-two">
