@@ -4,6 +4,7 @@
 // replay its transcript. Cost is a derived estimate.
 import { html, api, useState, useEffect } from "/lib.js";
 import { ThreadModal } from "/thread.js";
+import { traceForRun, SpanTreeModal } from "/spantree.js";
 
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 const fmtTok = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); };
@@ -14,10 +15,18 @@ export function SessionsView() {
   const [runs, setRuns] = useState(null);
   const [q, setQ] = useState("");
   const [replay, setReplay] = useState(null);
+  const [otel, setOtel] = useState(null);
+  const [spans, setSpans] = useState(null);
 
   const load = () => api.get("/api/activity")
     .then((d) => setRuns(d.runs || [])).catch(() => setRuns([]));
-  useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, []);
+  const loadOtel = () => api.get("/api/otel/runs").then((d) => setOtel(d.runs || [])).catch(() => setOtel([]));
+  useEffect(() => {
+    load(); loadOtel();
+    const t = setInterval(load, 8000);
+    const to = setInterval(loadOtel, 8000);
+    return () => { clearInterval(t); clearInterval(to); };
+  }, []);
 
   if (runs == null) return html`<section class="view"><div class="viewhead"><h1>Sessions</h1></div><p class="stub">…</p></section>`;
 
@@ -40,17 +49,20 @@ export function SessionsView() {
       value=${q} onInput=${(e) => setQ(e.target.value)} aria-label="filter sessions" /></div>
 
     ${rows.length ? html`<div class="hl-list se-table">
-      ${rows.map((r) => html`<div class="hl-row se-row ${r.live ? "se-live" : ""}" key=${r.id}
+      ${rows.map((r) => { const tid = traceForRun(r, otel); return html`<div class="hl-row se-row ${r.live ? "se-live" : ""}" key=${r.id}
           tabindex="0" title="Replay this run's transcript" onClick=${() => setReplay(r)}
           onKeyDown=${(e) => { if (e.key === "Enter") setReplay(r); }}>
         <span class="badge">${(r.surface || "").slice(0, 4).toUpperCase()}</span>
         <span class="se-title">${r.title || r.id}</span>
         <span class="se-meta">${r.repo || ""}${(r.item_ids || []).length ? " · " + r.item_ids.join(",") : ""}</span>
         <span class="se-stat ${r.status === "failed" || r.status === "parked" ? "warn" : ""}">${r.live ? "running" : r.status}</span>
+        ${tid ? html`<button class="verb sp-open" title="Open the span waterfall"
+            onClick=${(e) => { e.stopPropagation(); setSpans({ tid, title: r.title || r.id }); }}>spans</button>` : null}
         <span class="se-nums num">${fmtDur(r)} · ${fmtTok(r.tokens)} · ${fmtUsd(r.cost_usd)} est. · ${fmtAge(r.age_s)}</span>
-      </div>`)}
+      </div>`; })}
     </div>` : html`<p class="stub">No runs match. (Terminal records are pruned after ~24h — this window is recent + live only.)</p>`}
 
     ${replay ? html`<${ThreadModal} run=${replay} onClose=${() => setReplay(null)} />` : null}
+    ${spans ? html`<${SpanTreeModal} traceId=${spans.tid} title=${spans.title} onClose=${() => setSpans(null)} />` : null}
   </section>`;
 }

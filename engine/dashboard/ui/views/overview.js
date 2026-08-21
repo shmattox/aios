@@ -3,6 +3,7 @@
 // (Spend is derived from the activity runs' cost_usd, not a separate endpoint.)
 import { html, api, useState, useEffect, toast } from "/lib.js";
 import { ThreadModal } from "/thread.js";
+import { traceForRun, SpanTreeModal } from "/spantree.js";
 
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 const fmtTok = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); };
@@ -22,6 +23,7 @@ export function OverviewView() {
   const [activity, setActivity] = useState({ runs: [], now: 0 });
   const [otel, setOtel] = useState(null);        // real cost/token telemetry (OpenTelemetry)
   const [thread, setThread] = useState(null);   // a running session opened for viewing
+  const [spans, setSpans] = useState(null);     // a run's span waterfall opened for viewing
   const [health, setHealth] = useState(null);   // standing-check reds (/api/health)
 
   const load = () => {
@@ -103,14 +105,17 @@ export function OverviewView() {
       </div>`) : html`<p class="stub">No dev servers declared.</p>`}
 
     <h3 class="ov-sect">Running now</h3>
-    ${live.length ? live.sort((a, b) => lastTs(b) - lastTs(a)).map((r) => html`<div class="ov-run" key=${r.id}
+    ${live.length ? live.sort((a, b) => lastTs(b) - lastTs(a)).map((r) => { const tid = traceForRun(r, otelRuns); return html`<div class="ov-run" key=${r.id}
         tabindex="0" title="View the live thread" onClick=${() => setThread(r)}>
         <span class="ov-dot ${r.surface === "session" ? "i" : "a"}"></span>
         <span class="badge">${(r.surface || "").slice(0, 4).toUpperCase()}</span>
         <span class="t">${r.title || r.id}</span>
         <span class="r">${r.repo || ""}${r.cost_usd ? " · " + fmtUsd(r.cost_usd) + " est." : ""}<span class="go">→</span></span>
-      </div>`) : html`<p class="stub">Nothing running right now.</p>`}
+        ${tid ? html`<button class="verb sp-open" title="Open the span waterfall"
+            onClick=${(e) => { e.stopPropagation(); setSpans({ tid, title: r.title || r.id }); }}>spans</button>` : null}
+      </div>`; }) : html`<p class="stub">Nothing running right now.</p>`}
 
     ${thread ? html`<${ThreadModal} run=${thread} onClose=${() => setThread(null)} />` : null}
+    ${spans ? html`<${SpanTreeModal} traceId=${spans.tid} title=${spans.title} onClose=${() => setSpans(null)} />` : null}
   </section>`;
 }
