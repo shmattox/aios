@@ -107,7 +107,7 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > lifted verbatim at render by `pipeline_health.py` / `brief_render.py factory-health` /
 > `standing_checks.py render` / `brainstorm_packets.py render`, then
 > **delta-gated** (A93 §4): the gather stores each line's verbatim text as `health_lines`
-> (`{pipeline, factory, standing, packets}`) AND its fingerprint via `brief_render.health_fingerprints`
+> (`{pipeline, factory, standing, packets, gate}`) AND its fingerprint via `brief_render.health_fingerprints`
 > as `health_fingerprints`, so the NEXT brief's `brief_render.py health-gate` can tell steady-state
 > (silence) from a real change. A fact rendered from a live query THIS run is tagged
 > `queried_live: true` (or `source: "live"`) so `render_citation` cites the run, not the cache (A93 §2c).
@@ -120,6 +120,17 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > sidecar also lists any `watching_clear` entries (`kind: watch` checks that just went green) — surface
 > them to the interactive session as "N Watching lines ready to delete"; the runner never edits
 > BACKLOG.md itself.
+>
+> **Gate metrics (A128).** Every gather (not just a dev-scope render) regenerates the acceptance-metrics
+> file so it never silently goes stale while everything beside it refreshes. **Check staleness BEFORE
+> overwriting** — checking after would just re-verify the timestamp this same step is about to stamp,
+> which can never catch a regeneration that has actually stopped firing: run `gate_metrics.py
+> staleness --path "<env_root>/state/factory/gate-metrics.json" --today <today>` against the file AS
+> IT SITS from the last run and, if it prints a line, fold it into `health_lines` alongside the
+> standing/pipeline/factory lines. Then regenerate: run `gate_metrics.py report --queue
+> "<env_root>/state/queue.json" --today <today> --out "<env_root>/state/factory/gate-metrics.json"`
+> (zero-LLM, deterministic — same `report --out` CLI the dev-scope render already lifts `render`
+> output from).
 >
 > **Brainstorm packets (A77).** Scan the configured packet directories once for pending decision
 > cards: `brainstorm_packets.py scan --dirs "<comma-joined brief.packet_dirs>" --out

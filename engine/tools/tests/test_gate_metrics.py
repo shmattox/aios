@@ -185,6 +185,56 @@ def test_cli_render_missing_queue_is_loud_not_zeros(tmp_path):
     assert "0%" not in r.stdout
 
 
+# --- A128: staleness guard — the nightly gather must regenerate this file, or the brief must red ---
+
+def test_staleness_line_empty_when_fresh():
+    assert gm.staleness_line({"generated": "2026-08-21"}, "2026-08-21") == ""
+
+def test_staleness_line_reds_past_48h():
+    line = gm.staleness_line({"generated": "2026-08-18"}, "2026-08-21")
+    assert line and "stale" in line.lower() and "2026-08-18" in line
+
+def test_staleness_line_reds_loud_not_silent_when_generated_missing():
+    # a real report() always has a well-formed `generated`; its absence is torn-write evidence,
+    # not a legitimate "nothing to check yet" case — must red, never silently pass as fresh.
+    line = gm.staleness_line({"generated": None}, "2026-08-21")
+    assert line and "stale" in line.lower()
+
+def test_staleness_line_reds_loud_on_unparseable_generated():
+    line = gm.staleness_line({"generated": "not-a-date"}, "2026-08-21")
+    assert line and "stale" in line.lower() and "not-a-date" in line
+
+def test_staleness_line_reds_loud_on_non_dict_report():
+    # must not crash (AttributeError on .get) when the on-disk JSON parses but isn't an object
+    assert gm.staleness_line([], "2026-08-21") != ""
+    assert gm.staleness_line(None, "2026-08-21") != ""
+
+def test_cli_staleness_reds_old_file(tmp_path):
+    p = tmp_path / "gate-metrics.json"
+    p.write_text(json.dumps({"generated": "2026-08-18"}), encoding="utf-8")
+    r = _run(["staleness", "--path", str(p), "--today", "2026-08-21"])
+    assert r.returncode == 0
+    assert "stale" in r.stdout.lower() and "2026-08-18" in r.stdout
+
+def test_cli_staleness_silent_when_fresh(tmp_path):
+    p = tmp_path / "gate-metrics.json"
+    p.write_text(json.dumps({"generated": "2026-08-21"}), encoding="utf-8")
+    r = _run(["staleness", "--path", str(p), "--today", "2026-08-21"])
+    assert r.returncode == 0 and r.stdout.strip() == ""
+
+def test_cli_staleness_missing_file_reds_loud(tmp_path):
+    r = _run(["staleness", "--path", str(tmp_path / "absent.json"), "--today", "2026-08-21"])
+    assert r.returncode == 0
+    assert "stale" in r.stdout.lower()
+
+def test_cli_staleness_non_dict_json_reds_not_crashes(tmp_path):
+    p = tmp_path / "gate-metrics.json"
+    p.write_text("[]", encoding="utf-8")
+    r = _run(["staleness", "--path", str(p), "--today", "2026-08-21"])
+    assert r.returncode == 0
+    assert "stale" in r.stdout.lower()
+    assert "Traceback" not in r.stderr
+
 def test_cli_report_missing_queue_exits_nonzero(tmp_path):
     r = _run(["report", "--queue", str(tmp_path / "absent.json"), "--today", "2026-07-15"])
     assert r.returncode == 1
