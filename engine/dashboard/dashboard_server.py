@@ -32,6 +32,7 @@ import git_state       # cockpit: active worktrees + open PRs (best-effort, PRs 
 import content_state   # content pipeline (capture→sort→ingest→gate→garden) summary from the queue
 import servers_state   # dev servers from launch.json + up/down probe
 import files_state     # guarded file browser + editor (contained to env root, secrets refused)
+import health_state     # /api/health aggregation: standing checks + task fleet + source staleness
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
 WATCHED = {
@@ -39,6 +40,7 @@ WATCHED = {
     "standup": "state/factory/standup.json",
     "gate_metrics": "state/factory/gate-metrics.json",
     "queue": "state/queue.json",
+    "standing": "state/standing-checks/results.json",
 }
 
 SSE_POLL_S = 1.0
@@ -314,7 +316,9 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_get(self, route):
         env = self.server.env_root
         if route == "/api/health":
-            return self._send_json({"ok": True, "env_root": str(env), "now": time.time()})
+            data = health_state.summary(str(env))
+            data.update({"env_root": str(env), "now": time.time()})
+            return self._send_json(data)
         if route == "/api/mtimes":
             out = {name: _mtime(env / rel) for name, rel in WATCHED.items()}
             spends = sorted((env / "state" / "factory").glob("spend-*.json"))
@@ -329,8 +333,9 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/spend":
             days = [d for d in (_read_json_file(p) for p in
                     sorted((env / "state" / "factory").glob("spend-*.json"))) if d]
-            return self._send_json({"days": days,
-                                    "gate_metrics": _read_json_file(env / WATCHED["gate_metrics"])})
+            return self._send_json({"days": days})
+        if route == "/api/gate-metrics":
+            return self._file_with_age(env / WATCHED["gate_metrics"])
         if route == "/api/held":
             brief = _read_json_file(env / WATCHED["brief"]) or {}
             return self._send_json({"held": brief.get("held", []),

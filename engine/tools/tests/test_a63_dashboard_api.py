@@ -34,6 +34,14 @@ def env_root(tmp_path):
         json.dumps({"generated": "2026-07-20", "windows": {}}), encoding="utf-8")
     (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}),
                                                   encoding="utf-8")
+    (tmp_path / "state" / "standing-checks").mkdir(parents=True)
+    (tmp_path / "state" / "standing-checks" / "results.json").write_text(json.dumps({
+        "generated_utc": "2026-08-21T10:00:00+00:00", "watching_clear": [], "findings": [],
+        "checks": [{"id": "x", "kind": "standing", "cadence": "daily", "origin": "t",
+                    "on_violation": "fix", "last_run": "y", "first_red": None,
+                    "reason": None, "status": "red"}]}), encoding="utf-8")
+    (tmp_path / "state" / "task-logs" / "aios-ingest").mkdir(parents=True)
+    (tmp_path / "state" / "task-logs" / "aios-ingest" / "last-run.log").write_text("ok", encoding="utf-8")
     return tmp_path
 
 
@@ -54,8 +62,27 @@ def _get_json(srv, path):
 
 def test_mtimes_lists_watched(server):
     m = _get_json(server, "/api/mtimes")
-    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue", "board"}
+    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue", "board", "standing"}
     assert m["brief"] is not None
+
+
+def test_health_aggregation(server):
+    h = _get_json(server, "/api/health")
+    assert h["ok"] is True and "now" in h and "env_root" in h
+    assert h["standing"]["reds"] == 1
+    assert any(f["task"] == "aios-ingest" for f in h["fleet"])
+    assert any(s["name"] == "gate-metrics" for s in h["sources"])
+
+
+def test_gate_metrics_route(server):
+    g = _get_json(server, "/api/gate-metrics")
+    assert g["generated"] == "2026-07-20"
+    assert g["_age_s"] >= 0
+
+
+def test_spend_no_longer_carries_gate_metrics(server):
+    s = _get_json(server, "/api/spend")
+    assert "gate_metrics" not in s
 
 
 def test_brief_carries_age(server):
@@ -72,7 +99,6 @@ def test_standup(server):
 def test_spend_aggregates(server):
     s = _get_json(server, "/api/spend")
     assert s["days"][0]["cost_usd"] == 2.5
-    assert s["gate_metrics"]["generated"] == "2026-07-20"
 
 
 def test_held_and_draft(server):

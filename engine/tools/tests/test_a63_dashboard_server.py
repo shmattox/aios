@@ -16,6 +16,11 @@ from dashboard_server import resolve_env_root, make_server  # noqa: E402
 def env_root(tmp_path):
     (tmp_path / "state").mkdir()
     (tmp_path / "profile").mkdir()
+    # /api/health (health_state.summary) reads this; keep it present + readable so "ok" stays
+    # True here — this file is about Host/token security, not health semantics (see task-3 tests).
+    (tmp_path / "state" / "standing-checks").mkdir()
+    (tmp_path / "state" / "standing-checks" / "results.json").write_text(
+        json.dumps({"generated_utc": "2026-08-21T10:00:00+00:00", "checks": []}), encoding="utf-8")
     return tmp_path
 
 
