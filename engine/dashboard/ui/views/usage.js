@@ -6,6 +6,7 @@ import { html, api, useState, useEffect } from "/lib.js";
 
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 function fmtTok(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+const fmtMs = (ms) => ms == null ? "—" : ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : ms + "ms";
 const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
 
 function Metric({ k, v, sub }) {
@@ -75,17 +76,22 @@ export function UsageView() {
 
     <div class="ov-strip">
       <${Metric} k="spend · today" v=${otel == null ? "…" : otelUp ? fmtUsd(spendToday) : "—"}
-        sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs` : "telemetry store down"} />
+        sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs · est.` : "telemetry store down"} />
       <${Metric} k="telemetry · window" v=${otelUp ? fmtUsd(agg.cost_usd) : "—"}
-        sub=${otelUp ? `${agg.runs || 0} runs · ${fmtTok(agg.tokens)} tok` : "store down"} />
-      <${Metric} k="factory drains" v=${fmtUsd(totalCost)} sub=${`${totalDrains} drains · ${days.length} days`} />
+        sub=${otelUp ? `${agg.runs || 0} runs · ${fmtTok(agg.tokens)} tok · est.` : "store down"} />
+      <${Metric} k="factory drains" v=${fmtUsd(totalCost)} sub=${`${totalDrains} drains · ${days.length} days · est.`} />
       <${Metric} k="errors" v=${otelUp ? (agg.errors || 0) : "—"} sub="telemetry window" cls=${agg.errors ? "warn" : ""} />
+      <${Metric} k="latency · p50/p95" v=${otelUp && agg.p50_ms != null ? `${fmtMs(agg.p50_ms)} / ${fmtMs(agg.p95_ms)}` : "—"}
+        sub="telemetry window" />
     </div>
 
-    <h3 class="ov-sect">Daily cost <span class="uz-src">· factory drains · /api/spend</span></h3>
+    ${agg.unpriced_models?.length ? html`<p class="uz-note warn">Unpriced model(s) charged at the
+      $5/$15 default — cost is a floor, not a quote: ${agg.unpriced_models.join(", ")}</p>` : null}
+
+    <h3 class="ov-sect">Daily cost <span class="uz-src">· factory drains · /api/spend · est.</span></h3>
     ${days.length ? html`<${CostBars} days=${days} />` : html`<p class="stub">No spend recorded yet.</p>`}
 
-    <h3 class="ov-sect">By surface <span class="uz-src">· run index · /api/activity</span></h3>
+    <h3 class="ov-sect">By surface <span class="uz-src">· run index · /api/activity · by volume, not dollars</span></h3>
     ${surfRows.length ? html`<div class="uz-bars-list">
       ${surfRows.map(([s, v]) => html`<${Bar} label=${s} n=${v.n} of=${runs.length}
         meta=${v.cost ? "· " + fmtUsd(v.cost) : ""} key=${s} />`)}
@@ -94,5 +100,11 @@ export function UsageView() {
       carries it (most sessions don't) — so the surface split is by volume, not dollars. The
       authoritative cost series is the daily chart above.</p>`
       : html`<p class="stub">No runs indexed yet.</p>`}
+
+    <h3 class="ov-sect">Errors by tool <span class="uz-src">· telemetry window · /api/otel/runs</span></h3>
+    ${Object.keys(agg.error_kinds || {}).length ? html`<div class="uz-bars-list">
+      ${Object.entries(agg.error_kinds).sort((a, b) => b[1] - a[1]).map(([tool, n]) => html`<${Bar}
+        label=${tool} n=${n} of=${agg.errors || 1} key=${tool} />`)}
+    </div>` : html`<p class="stub">No tool errors in the telemetry window.</p>`}
   </section>`;
 }

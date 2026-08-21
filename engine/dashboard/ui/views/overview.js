@@ -68,7 +68,7 @@ export function OverviewView() {
       <${Metric} k="Software · at gate" v=${gate} cls=${gate ? "warn" : ""} sub="[GATE: human]" />
       <${Metric} k="running now" v=${live.length} sub=${`${live.length - drains} session${live.length - drains === 1 ? "" : "s"} · ${drains} drain${drains === 1 ? "" : "s"}`} />
       <${Metric} k="spend · today" v=${otel == null ? "…" : otelUp ? fmtUsd(spendToday) : "—"}
-        sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs` : "telemetry store down"} />
+        sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs · est.` : "telemetry store down"} />
       <${Metric} k="standing reds" v=${health?.standing?.reds ?? "…"} cls=${health?.standing?.reds ? "warn" : ""}
         sub="standing checks" onClick=${() => { location.hash = "#/health"; }} />
     </div>

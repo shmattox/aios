@@ -822,6 +822,7 @@ body.narrow .ai-detail #detail { height: auto; }
 .uz-n { font-size: var(--fs-sm); color: var(--text-0); white-space: nowrap; }
 .uz-meta { color: var(--text-2); font-size: var(--fs-xs); }
 .uz-note { color: var(--text-2); font-size: var(--fs-xs); max-width: 60ch; padding: 8px 2px 0; }
+.uz-note.warn { color: var(--warn); }
 
 /* ── Files view — full-bleed: toolbar, locked tree (left), tabbed editor (right) ──────── */
 .view.fmv { display: flex; flex-direction: column; height: calc(100vh - 52px); }
