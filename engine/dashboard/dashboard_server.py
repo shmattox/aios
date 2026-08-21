@@ -299,7 +299,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     # --- handlers -----------------------------------------------------
     def _index(self):
-        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        try:
+            html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return self._deny(404, "not found")
         html = html.replace("{{TOKEN}}", self.server.token)
         body = html.encode("utf-8")
         self.send_response(200)

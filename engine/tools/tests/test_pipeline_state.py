@@ -71,6 +71,19 @@ def test_gather_reads_backlogs_and_specs_best_effort(tmp_path):
     by = {s["id"]: s for s in m["stages"]}
     assert by["backlog"]["count"] == 1 and by["spec"]["count"] == 1   # Z1 backlog, Z2 spec
 
+def test_gather_matches_backlog_parse_prefix_rule_for_5plus_letter_ids(tmp_path):
+    # _ID_RE must accept any prefix length backlog_parse accepts ([A-Za-z]+\d+), not cap at 4
+    # letters -- else a real 5+-letter-prefix id parses from BACKLOG.md but can never be
+    # extracted from a spec/plan filename/body, so it can never reach the spec/implement stages.
+    (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
+    (tmp_path / "BACKLOG.md").write_text(
+        "## Open\n- [ ] **ZORRO1** — has a spec with a long prefix.\n  - acceptance: x\n",
+        encoding="utf-8")
+    specs = tmp_path / "docs" / "superpowers" / "specs"; specs.mkdir(parents=True)
+    (specs / "2026-08-19-zorro1-thing-design.md").write_text("# ZORRO1 thing\nbody", encoding="utf-8")
+    items, ctx = p.gather(str(tmp_path))
+    assert "ZORRO1" in ctx["spec_ids"]
+
 def test_gather_missing_sources_never_raises(tmp_path):
     (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
     items, ctx = p.gather(str(tmp_path))          # no backlogs, no docs, no activity

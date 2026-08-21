@@ -83,6 +83,17 @@ def test_activity_view_registered_and_api_served(server):
     assert body["runs"] == [] and isinstance(body["_now"], (int, float))
 
 
+def test_index_unreadable_returns_clean_404(server, monkeypatch, tmp_path):
+    # A125: _index's body-read had no try/except, so an unreadable/racing index.html (OSError)
+    # tore the request thread instead of the file's "never crash the dashboard" convention.
+    import dashboard_server
+    missing_ui = tmp_path / "no-such-ui-dir"
+    monkeypatch.setattr(dashboard_server, "UI_DIR", missing_ui)
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _get(server, "/")
+    assert e.value.code == 404
+
+
 def test_head_bad_host_rejected(server):
     # HEAD inherits static serving from the base class — it must run the same Host gate (folded
     # from the task-1 review, before the action layer builds on this class).

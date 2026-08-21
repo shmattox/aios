@@ -19,7 +19,7 @@ except Exception:                                  # pragma: no cover - defensiv
     def parse_backlog(text):
         return []
 
-_ID_RE = re.compile(r"\b([A-Za-z]{1,4}\d+[a-z]?)\b")
+_ID_RE = re.compile(r"\b([A-Za-z]+\d+[a-z]?)\b")
 
 STAGES = [
     ("backlog", "Backlog"), ("brainstorm", "Brainstorm"), ("spec", "Spec"),
