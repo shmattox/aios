@@ -114,7 +114,7 @@ export function SoftwareView() {
     ${liveRuns.length ? html`<div class="ov-run-list">
       ${liveRuns.map((r) => {
         // factory run → its session twin, joined by worktree field equality (not string-matching)
-        const twin = (act || []).find((s) => s.surface === "session" && s.worktree && s.worktree === r.worktree);
+        const twin = (act || []).find((s) => s.surface === "session" && s.live && s.worktree && s.worktree === r.worktree);
         const tid = traceForRun(r, otel) || traceForRun(twin, otel);
         return html`<div class="ov-run" key=${r.id}>
           <span class="badge">${(r.surface || "").slice(0, 4).toUpperCase()}</span>

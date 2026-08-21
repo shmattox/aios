@@ -612,6 +612,7 @@ body.modal-open { overflow: hidden; }
 .se-input::placeholder { color: var(--text-2); }
 .se-input:focus { outline: 2px solid var(--accent-dim); outline-offset: -1px; border-color: var(--border-hi); }
 .se-row { display: grid; grid-template-columns: 48px 1fr auto auto auto; cursor: pointer; }
+.se-row:has(.sp-open) { grid-template-columns: 48px 1fr auto auto auto auto; }
 .se-row:hover { background: var(--bg-1); }
 .se-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .se-row .badge { font: 600 9px/1 var(--mono); color: var(--text-1); border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; min-width: 42px; text-align: center; flex: none; }
