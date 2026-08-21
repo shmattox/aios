@@ -331,10 +331,6 @@ class Handler(SimpleHTTPRequestHandler):
             out["activity"] = "%d:%s" % (len(act_files),
                                          max((m for m in (_mtime(p) for p in act_files) if m), default=0) or 0)
             return self._send_json(out)
-        if route == "/api/brief":
-            return self._brief()
-        if route == "/api/standup":
-            return self._file_with_age(env / WATCHED["standup"])
         if route == "/api/spend":
             days = [d for d in (_read_json_file(p) for p in
                     sorted((env / "state" / "factory").glob("spend-*.json"))) if d]
@@ -350,6 +346,8 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/board":
             return self._board()
         if route == "/api/domains" or route.startswith("/api/domains/"):
+            # claimed by the v3 spec for a future silo-aware Files/Board view — the
+            # Mirror view that consumed it was retired 2026-08-21 (A127)
             return self._domains(route)
         if route == "/api/activity":
             return self._send_json({"runs": activity.read_all(env), "_now": time.time()})
@@ -359,6 +357,7 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/otel/runs":
             return self._send_json(otel_runs.fetch_runs())
         if route.startswith("/api/otel/run/"):
+            # consumer: spantree.js (A130 slice 3 span drill-in from Overview/Sessions/Software)
             tid = route[len("/api/otel/run/"):]
             if not re.match(r"^[0-9a-fA-F]{1,40}$", tid):     # Jaeger trace ids are hex; never proxy junk
                 return self._deny(400, "bad trace id")
@@ -383,6 +382,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._deny(400, "bad repo or id")
             return self._send_json(pipeline_state.item_detail(str(env), repo, iid))
         if route == "/api/git":
+            # claimed by the v3 spec for Sessions/Board worktree+PR enrichment (not yet wired)
             return self._send_json(git_state.state(str(env)))
         if route == "/api/content":
             data = content_state.summary(str(env))
@@ -434,54 +434,6 @@ class Handler(SimpleHTTPRequestHandler):
         data["_mtime"] = mt
         data["_age_s"] = (time.time() - mt) if mt else None
         return self._send_json(data)
-
-    def _brief(self):
-        """The inbox feed: the cache (FO/personal act + gate held) PLUS the dev/GM/env
-        backlog items the factory flagged as needing Seth (`dev`) — so the inbox is a true
-        cross-silo needs-you front door, as the mockup shows (a dev card among the tasks)."""
-        path = self.server.env_root / WATCHED["brief"]
-        data = _read_json_file(path)
-        if data is None:
-            return self._deny(404, f"{path.name} missing or unreadable")
-        mt = _mtime(path)
-        data["_mtime"] = mt
-        data["_age_s"] = (time.time() - mt) if mt else None
-        data["dev"] = self._dev_needs_you(self.server.env_root)
-        return self._send_json(data)
-
-    def _dev_needs_you(self, env):
-        """The factory standup's needs-you (+ veto) backlog items, shaped as READ-ONLY inbox
-        cards. Matched by id against every repo BACKLOG.md (the same sources the board reads).
-        No gate verbs (not drafts) and no mark-done (worked in a native session) — a dev card is
-        a pointer that drills into its repo's backlog."""
-        standup = _read_json_file(env / WATCHED["standup"]) or {}
-        want = {}  # backlog id -> factory group
-        for group in ("needs_you", "veto"):
-            for r in (standup.get("groups") or {}).get(group, []):
-                if isinstance(r, dict) and r.get("id"):
-                    want.setdefault(r["id"], group)
-        if not want:
-            return []
-        out, seen = [], set()
-        for key, path in self._board_sources(env):
-            try:
-                items = parse_backlog(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):  # ValueError catches UnicodeDecodeError — never 500 /api/brief
-                continue
-            rel = str(path.relative_to(env)).replace("\\", "/")
-            for it in items:
-                grp = want.get(it["id"])
-                if not grp or it["id"] in seen:
-                    continue
-                seen.add(it["id"])
-                title, badge = clean_dev_title(it["headline"], grp)
-                out.append({
-                    "id": it["id"], "title": title, "_kind": "dev",
-                    "repo": key, "gate_human": it["gate_human"],
-                    "factory_group": grp, "state_badge": badge, "backlog_path": rel,
-                    "refs": [{"tag": "kb", "label": rel, "mock": f"opens {rel} — the {key} backlog"}],
-                })
-        return out
 
     def _draft(self):
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: Launch the AIOS operating dashboard — a local Linear-style web UI over the brief, gate queue, factory standup, state mirror, and cost ledgers. Use when the user says "open the dashboard", "dashboard", or wants a visual cockpit instead of the chat brief.
+description: Launch the AIOS operating dashboard — a local Linear-style web UI with Overview, Board, Files, Usage, and per-pipeline Health/Gate/Sessions/Inventory views over the gate queue and cost ledgers. Use when the user says "open the dashboard", "dashboard", or wants a visual cockpit instead of the chat brief.
 ---
 
 # aios:dashboard — launch the operating UI
@@ -20,5 +20,5 @@ description: Launch the AIOS operating dashboard — a local Linear-style web UI
 Notes: 127.0.0.1-only; POSTs carry a per-start token injected into the page.
 Writes go exclusively through allowlisted gated engine CLIs (ship/reject/walk
 decision/veto revert) — Paper-Governs holds hold, every ship keeps its revert
-pointer. Mirror browser is read-only until A64. Phase-2 phone access:
-`tailscale serve 8642` (env-side, H61).
+pointer. Files browser is read-only with "Open in Cursor" (no editor).
+Phase-2 phone access: `tailscale serve 8642` (env-side, H61).

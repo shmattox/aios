@@ -95,15 +95,14 @@ def test_spend_no_longer_carries_gate_metrics(server):
     assert "gate_metrics" not in s
 
 
-def test_brief_carries_age(server):
-    b = _get_json(server, "/api/brief")
-    assert b["act"][0]["id"] == "t1"
-    assert b["_age_s"] >= 0
-
-
-def test_standup(server):
-    s = _get_json(server, "/api/standup")
-    assert "groups" in s
+def test_brief_and_standup_routes_are_gone(server):
+    # A127: the only consumers (panels/cockpit.js, panels/standup.js) were deleted
+    # dead surface from the 08-20 IA rebuild — the routes retire with them.
+    port = server.server_address[1]
+    for route in ("/api/brief", "/api/standup"):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}{route}", timeout=5)
+        assert e.value.code == 404
 
 
 def test_spend_aggregates(server):
