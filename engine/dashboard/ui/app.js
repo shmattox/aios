@@ -11,6 +11,7 @@ import { FilesView } from "/views/files.js";
 import { HealthView } from "/views/health.js";
 import { GateView } from "/views/gate.js";
 import { SessionsView } from "/views/sessions.js";
+import { InventoryView } from "/views/inventory.js";
 
 const Logo = () => html`
   <svg class="logo" viewBox="0 0 1000 1000" aria-label="AIOS logo">
@@ -30,6 +31,7 @@ const ICONS = {
   health: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8h3l1.5-4 2.5 8 1.5-4h4.5"/></svg>`,
   gate: html`<svg class="ic" viewBox="0 0 16 16"><path d="M3 13.5V5.5a5 5 0 0 1 10 0v8M1.5 13.5h13M8 8.5v2"/></svg>`,
   sessions: html`<svg class="ic" viewBox="0 0 16 16"><path d="M2 3.5h12M2 8h12M2 12.5h8"/></svg>`,
+  inventory: html`<svg class="ic" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="4" rx="1"/><rect x="2.5" y="9.5" width="11" height="4" rx="1"/></svg>`,
   aios: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 8h2.5l1.3-4 2.6 8 1.3-4H14"/></svg>`,
   software: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 13.5h13M3 13.5V6l2.6 1.8V6l2.6 1.8V6l2.8 1.8v5.7M5 13.5v-2M8.3 13.5v-2M11.3 13.5v-2"/></svg>`,
   marketing: html`<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 13.5h13M3 13.5V6l2.6 1.8V6l2.6 1.8V6l2.8 1.8v5.7"/></svg>`,
@@ -52,6 +54,7 @@ const NAV = [
   { key: "health", label: "Health", view: HealthView },
   { key: "gate", label: "Gate", view: GateView },
   { key: "sessions", label: "Sessions", view: SessionsView },
+  { key: "inventory", label: "Inventory", view: InventoryView },
   { section: "pipelines" },
   { key: "aios", label: "AIOS", view: AiosView },
   { key: "software", label: "Software", view: SoftwareView },
@@ -134,6 +137,7 @@ function Shell() {
         if (e.key === "h") { location.hash = "#/health"; return; }
         if (e.key === "t") { location.hash = "#/gate"; return; }
         if (e.key === "e") { location.hash = "#/sessions"; return; }
+        if (e.key === "v") { location.hash = "#/inventory"; return; }
       }
       if (e.key === "g") { chord.current = "g"; setTimeout(() => { chord.current = null; }, 900); return; }
       if (e.key === "[") setCollapsed((c) => !c);
