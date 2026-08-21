@@ -42,3 +42,19 @@ def test_unreadable_sources_fail_open(tmp_path, monkeypatch):
     s = inventory_state.summary(str(tmp_path))
     assert s["plugin"]["version"] is None and s["skills"] == []
     assert s["mcp"]["servers"] == [] and s["mcp"]["note"]      # honest note, no exception
+
+
+def test_non_object_json_fails_open(tmp_path, monkeypatch):
+    # valid JSON but not an object (top-level array/string/number) — .get() would raise;
+    # must be treated the same as unreadable, never an uncaught exception.
+    proot = tmp_path / "plug"
+    (proot / ".claude-plugin").mkdir(parents=True)
+    (proot / ".claude-plugin" / "plugin.json").write_text("[]", encoding="utf-8")
+    cj = tmp_path / "claude.json"
+    cj.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(inventory_state, "PLUGIN_ROOT", proot)
+    monkeypatch.setattr(inventory_state, "USER_SKILLS_DIR", tmp_path / "nouser")
+    monkeypatch.setattr(inventory_state, "USER_CLAUDE_JSON", cj)
+    s = inventory_state.summary(str(tmp_path))
+    assert s["plugin"] == {"name": None, "version": None}
+    assert s["mcp"]["servers"] == [] and s["mcp"]["note"]      # honest note, no exception

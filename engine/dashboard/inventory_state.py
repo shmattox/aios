@@ -46,6 +46,9 @@ def _mcp_names(env_root):
         except (OSError, ValueError):
             note = "%s unreadable — MCP list may be incomplete" % label
             continue
+        if not isinstance(data, dict):
+            note = "%s unreadable — MCP list may be incomplete" % label
+            continue
         keys = data.get("mcpServers")
         if isinstance(keys, dict):
             servers.update(str(k) for k in keys)
@@ -59,7 +62,8 @@ def summary(env_root):
     plugin = {"name": None, "version": None}
     try:
         pj = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        plugin = {"name": pj.get("name"), "version": pj.get("version")}
+        if isinstance(pj, dict):
+            plugin = {"name": pj.get("name"), "version": pj.get("version")}
     except (OSError, ValueError):
         pass
     skills = _skill_rows(PLUGIN_ROOT / "skills", "plugin") + _skill_rows(USER_SKILLS_DIR, "user")
