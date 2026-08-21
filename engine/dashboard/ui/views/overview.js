@@ -108,7 +108,7 @@ export function OverviewView() {
         <span class="ov-dot ${r.surface === "session" ? "i" : "a"}"></span>
         <span class="badge">${(r.surface || "").slice(0, 4).toUpperCase()}</span>
         <span class="t">${r.title || r.id}</span>
-        <span class="r">${r.repo || ""}${r.cost_usd ? " · " + fmtUsd(r.cost_usd) : ""}<span class="go">→</span></span>
+        <span class="r">${r.repo || ""}${r.cost_usd ? " · " + fmtUsd(r.cost_usd) + " est." : ""}<span class="go">→</span></span>
       </div>`) : html`<p class="stub">Nothing running right now.</p>`}
 
     ${thread ? html`<${ThreadModal} run=${thread} onClose=${() => setThread(null)} />` : null}

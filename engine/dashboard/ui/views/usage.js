@@ -24,7 +24,7 @@ function CostBars({ days }) {
       ${show.map((d, i) => {
         const h = Math.max(1, Math.round(((d.cost_usd || 0) / max) * (H - PAD * 2)));
         return html`<rect key=${d.date} x=${i * 16 + 2} y=${H - PAD - h} width=${bw} height=${h} rx="1.5"
-          class="uz-bar"><title>${d.date} · ${fmtUsd(d.cost_usd)} · ${fmtTok(d.output_tokens)} tok · ${d.drains || 0} drains</title></rect>`;
+          class="uz-bar"><title>${d.date} · ${fmtUsd(d.cost_usd)} est. · ${fmtTok(d.output_tokens)} tok · ${d.drains || 0} drains</title></rect>`;
       })}
     </svg>
   </div>`;
@@ -94,7 +94,7 @@ export function UsageView() {
     <h3 class="ov-sect">By surface <span class="uz-src">· run index · /api/activity · by volume, not dollars</span></h3>
     ${surfRows.length ? html`<div class="uz-bars-list">
       ${surfRows.map(([s, v]) => html`<${Bar} label=${s} n=${v.n} of=${runs.length}
-        meta=${v.cost ? "· " + fmtUsd(v.cost) : ""} key=${s} />`)}
+        meta=${v.cost ? "· " + fmtUsd(v.cost) + " est." : ""} key=${s} />`)}
     </div>
     <p class="uz-note">Run counts are complete; per-run cost is only attributed where the run
       carries it (most sessions don't) — so the surface split is by volume, not dollars. The
