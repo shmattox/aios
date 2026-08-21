@@ -22,7 +22,7 @@ export function HealthView() {
   if (h.error) return html`<section class="view"><div class="viewhead"><h1>Health</h1></div>
     <p class="stub">The dashboard server did not answer /api/health — it is itself the red.</p></section>`;
 
-  const st = h.standing || { checks: [] };
+  const st = h.standing || { reds: 0, greens: 0, watch_expired: 0, checks: [] };
   const order = { red: 0, expired: 1, observed: 2, watching: 3, green: 4 };
   const checks = [...st.checks].sort((a, b) => (order[a.status] ?? 5) - (order[b.status] ?? 5) || String(a.id).localeCompare(String(b.id)));
   const fleet = [...(h.fleet || [])].sort((a, b) => (b.age_s ?? Infinity) - (a.age_s ?? Infinity));
@@ -40,10 +40,10 @@ export function HealthView() {
 
     <h3 class="ov-sect">Standing checks <span class="uz-src">· state/standing-checks/results.json · ${h.generated_utc || "?"}</span></h3>
     <div class="hl-list">
-      ${checks.map((c) => html`<div class="hl-row hl-row-${c.status}" key=${c.id}>
+      ${checks.map((c) => html`<div class="hl-row" key=${c.id}>
         <${Dot} status=${c.status} />
         <span class="hl-id">${c.id}</span>
-        <span class="hl-meta">${c.kind}${c.cadence ? " · " + c.cadence : ""}${c.first_red ? " · red since " + c.first_red : ""}</span>
+        <span class="hl-meta">${c.kind}${c.cadence ? " · " + c.cadence : ""}${c.origin ? " · " + c.origin : ""}${c.first_red ? " · red since " + c.first_red : ""}</span>
         ${c.status !== "green" ? html`<div class="hl-why">${c.reason ? c.reason + " — " : ""}${c.on_violation || ""}</div>` : null}
       </div>`)}
     </div>

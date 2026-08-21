@@ -3,7 +3,7 @@
 // or the one you last had open). Each item shows its real backlog block plus any linked plan / spec
 // / finding docs — all clickable into the Files editor. Reads /api/pipeline,
 // /api/pipeline/stage/<id>, /api/pipeline/item.
-import { html, api, useState, useEffect, useRef } from "/lib.js";
+import { html, api, useState, useEffect, useRef, useLive } from "/lib.js";
 import { FlowGraph, StageList } from "./pipeflow.js";
 import { openInFiles, linkifyPaths, onPathClick } from "./filenav.js";
 import { remember, recall } from "./viewstate.js";
@@ -68,13 +68,16 @@ export function SoftwareView() {
   const [spans, setSpans] = useState(null);
   const gen = useRef(0);
   const wantSel = useRef(saved.sel || null);
+  const stageRef = useRef(stage);
+  useEffect(() => { stageRef.current = stage; }, [stage]);
 
   const load = () => api.get("/api/pipeline").then(setModel).catch(() => {});
   const loadLive = () => {
     api.get("/api/activity").then((d) => setAct(d.runs || [])).catch(() => setAct([]));
     api.get("/api/otel/runs").then((d) => setOtel(d.runs || [])).catch(() => setOtel([]));
   };
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+  useEffect(() => { load(); }, []);
+  useLive(["board", "activity", "brief"], () => { load(); if (stageRef.current != null) loadStage(); });
   useEffect(() => { loadLive(); const t = setInterval(loadLive, 12000); return () => clearInterval(t); }, []);
   useEffect(() => {
     if (stage == null && model?.stages?.length) setStage((model.stages.find((s) => s.count > 0) || model.stages[0]).id);
@@ -83,7 +86,7 @@ export function SoftwareView() {
 
   const loadStage = () => {
     const g = ++gen.current;
-    api.get(`/api/pipeline/stage/${stage}`).then((data) => {
+    api.get(`/api/pipeline/stage/${stageRef.current}`).then((data) => {
       if (g !== gen.current) return;
       const items = data.items || []; setDetail({ items });
       const r = wantSel.current; wantSel.current = null;

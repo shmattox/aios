@@ -182,7 +182,7 @@ def _aggregate(runs, jaeger_up):
     for r in runs:
         for k, c in (r.get("error_kinds") or {}).items():
             error_kinds[k] = error_kinds.get(k, 0) + c
-    durs = [r["duration_ms"] for r in runs if r.get("duration_ms")]
+    durs = [r["duration_ms"] for r in runs if (r.get("duration_ms") or 0) > 0]  # 0/missing = no duration data, excluded from percentiles
     return {
         "runs": len(runs),
         "tokens": sum(r["total_tokens"] for r in runs),

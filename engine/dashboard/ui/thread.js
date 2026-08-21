@@ -45,10 +45,13 @@ export function ThreadModal({ run, onClose }) {
               ${m.text ? html`<div class="th-text">${m.text}</div>` : null}
               ${m.tools.length ? html`<div class="th-tools">${m.tools.map((t, j) => html`<span class="th-tool" key=${j}>→ ${t}</span>`)}</div>` : null}
             </div>`)
-          : html`<p class="stub">No readable messages in this transcript yet.</p>`}
+          : html`<p class="stub">${run.live
+              ? "No readable messages in this transcript yet."
+              : "No readable messages — this log isn't a transcript (factory drains tee stdout; the drain's session record carries the full transcript)."}</p>`}
       </div>
-      <div class="th-foot"><span class="note">Live transcript (read-only, refreshing). Sending
-        input into a running session isn't wired up.</span></div>
+      <div class="th-foot"><span class="note">${run.live
+        ? "Live transcript (read-only, refreshing). Sending input into a running session isn't wired up."
+        : "Transcript (read-only)."}</span></div>
     </div>
   </div>`;
 }

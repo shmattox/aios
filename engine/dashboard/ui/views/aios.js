@@ -3,7 +3,7 @@
 // rich card (Ship / Reject / preview); pre-gate stages open a detail card that pulls the item's
 // real source file and links every path to the Files page. Reads /api/content,
 // /api/content/stage/<id>, /api/held, /api/files/read.
-import { html, api, useState, useEffect, useRef, toast } from "/lib.js";
+import { html, api, useState, useEffect, useRef, useLive, toast } from "/lib.js";
 import { Card, siloClass } from "./card.js";
 import { FlowGraph, StageList } from "./pipeflow.js";
 import { openInFiles, toEnvFile, linkifyPaths, onPathClick } from "./filenav.js";
@@ -81,7 +81,8 @@ export function AiosView() {
   const wantSel = useRef(saved.sel || null);   // item to restore on the first stage load (back-nav)
 
   const loadContent = () => api.get("/api/content").then(setContent).catch(() => {});
-  useEffect(() => { loadContent(); const t = setInterval(loadContent, 5000); return () => clearInterval(t); }, []);
+  useEffect(() => { loadContent(); }, []);
+  useLive(["queue", "brief"], loadContent);
   useEffect(() => {
     if (stage == null && content?.nodes?.length) setStage((content.nodes.find((n) => n.count > 0) || content.nodes[0]).id);
   }, [content]);

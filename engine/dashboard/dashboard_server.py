@@ -328,7 +328,7 @@ class Handler(SimpleHTTPRequestHandler):
             act_dir = activity.ACTIVITY_DIR(env)
             act_files = sorted(act_dir.glob("*.json")) if act_dir.exists() else []
             out["activity"] = "%d:%s" % (len(act_files),
-                                         max((_mtime(p) for p in act_files), default=0) or 0)
+                                         max((m for m in (_mtime(p) for p in act_files) if m), default=0) or 0)
             return self._send_json(out)
         if route == "/api/brief":
             return self._brief()
@@ -633,7 +633,7 @@ class Handler(SimpleHTTPRequestHandler):
             act_dir = activity.ACTIVITY_DIR(env)
             act_files = sorted(act_dir.glob("*.json")) if act_dir.exists() else []
             fp["activity"] = (len(act_files),
-                              max((_mtime(p) for p in act_files), default=None))
+                              max((m for m in (_mtime(p) for p in act_files) if m), default=None))
             return fp
 
         self.send_response(200)

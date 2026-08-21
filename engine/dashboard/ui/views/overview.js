@@ -1,7 +1,7 @@
 // Overview — the landing page: both pipelines at a glance, dev servers, and what's running.
 // Reads /api/pipeline (factory), /api/content (AIOS pipeline), /api/servers, /api/activity.
 // (Spend is derived from the activity runs' cost_usd, not a separate endpoint.)
-import { html, api, useState, useEffect, toast } from "/lib.js";
+import { html, api, useState, useEffect, useLive, toast } from "/lib.js";
 import { ThreadModal } from "/thread.js";
 import { traceForRun, SpanTreeModal } from "/spantree.js";
 
@@ -12,7 +12,9 @@ const startOfTodaySec = () => { const d = new Date(); d.setHours(0, 0, 0, 0); re
 const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
 
 function Metric({ k, v, sub, cls, onClick }) {
-  return html`<div class="ov-cell" style=${onClick ? "cursor:pointer" : ""} onClick=${onClick}><div class="ov-k">${k}</div>
+  const onKeyDown = onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined;
+  return html`<div class="ov-cell" style=${onClick ? "cursor:pointer" : ""} tabindex=${onClick ? "0" : undefined}
+    onClick=${onClick} onKeyDown=${onKeyDown}><div class="ov-k">${k}</div>
     <div class="ov-v ${cls || ""}">${v}</div><div class="ov-s">${sub || ""}</div></div>`;
 }
 
@@ -37,7 +39,7 @@ export function OverviewView() {
     api.get("/api/otel/runs").then(setOtel).catch(() => setOtel({ runs: [], agg: { jaeger_up: false } }));
   };
   useEffect(() => { load(); loadSlow(); }, []);
-  useEffect(() => { const t = setInterval(load, 4000); return () => clearInterval(t); }, []);
+  useLive(["board", "activity", "brief", "queue", "standing"], load);
   useEffect(() => { const t = setInterval(loadSlow, 12000); return () => clearInterval(t); }, []);
 
   const runs = activity.runs, now = activity.now;
@@ -72,7 +74,8 @@ export function OverviewView() {
       <${Metric} k="spend · today" v=${otel == null ? "…" : otelUp ? fmtUsd(spendToday) : "—"}
         sub=${otel == null ? "" : otelUp ? `${fmtTok(tokToday)} tok · ${otelToday.length} runs · est.` : "telemetry store down"} />
       <${Metric} k="standing reds" v=${health?.standing?.reds ?? "…"} cls=${health?.standing?.reds ? "warn" : ""}
-        sub="standing checks" onClick=${() => { location.hash = "#/health"; }} />
+        sub=${(health?.standing?.watch_expired || 0) > 0 ? `${health.standing.watch_expired} watch expired` : "standing checks"}
+        onClick=${() => { location.hash = "#/health"; }} />
     </div>
 
     <div class="ov-two">
