@@ -51,7 +51,7 @@ export function SessionsView() {
     ${rows.length ? html`<div class="hl-list se-table">
       ${rows.map((r) => { const tid = traceForRun(r, otel); return html`<div class="hl-row se-row ${r.live ? "se-live" : ""}" key=${r.id}
           tabindex="0" title="Replay this run's transcript" onClick=${() => setReplay(r)}
-          onKeyDown=${(e) => { if (e.key === "Enter") setReplay(r); }}>
+          onKeyDown=${(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter") setReplay(r); }}>
         <span class="badge">${(r.surface || "").slice(0, 4).toUpperCase()}</span>
         <span class="se-title">${r.title || r.id}</span>
         <span class="se-meta">${r.repo || ""}${(r.item_ids || []).length ? " · " + r.item_ids.join(",") : ""}</span>
