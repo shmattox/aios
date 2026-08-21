@@ -32,6 +32,7 @@ import git_state       # cockpit: active worktrees + open PRs (best-effort, PRs 
 import content_state   # content pipeline (capture→sort→ingest→gate→garden) summary from the queue
 import servers_state   # dev servers from launch.json + up/down probe
 import files_state     # guarded file browser + editor (contained to env root, secrets refused)
+import inventory_state  # read-only install inventory: plugin/user skills + MCP server names
 import health_state     # /api/health aggregation: standing checks + task fleet + source staleness
 
 # state files the UI polls for mtime changes; spend-*.json is globbed separately.
@@ -421,6 +422,8 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/files/search":
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
             return self._send_json(files_state.search(str(env), q))
+        if route == "/api/inventory":
+            return self._send_json(inventory_state.summary(str(env)))
         return self._deny(404, f"unknown GET {route}")
 
     def _file_with_age(self, path):
@@ -725,27 +728,6 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_post(self, route):
         env = self.server.env_root
         tools = getattr(self.server, "tools_dir", HERE.parent / "tools")
-        if route == "/api/files/write":
-            # guarded editor save. do_POST already enforced Host + X-Aios-Token; files_state
-            # enforces containment, secret/symlink refusal, edit-only, and the size cap.
-            try:
-                params = json.loads(self._body or b"{}")
-            except ValueError:
-                return self._deny(400, "invalid JSON body")
-            if not isinstance(params, dict) or not isinstance(params.get("path"), str) \
-                    or not isinstance(params.get("content"), str):
-                return self._deny(400, "path and content (strings) required")
-            res = files_state.write(str(env), params["path"], params["content"])
-            return self._send_json(res, code=200 if res.get("ok") else 400)
-        if route == "/api/files/create":
-            try:
-                params = json.loads(self._body or b"{}")
-            except ValueError:
-                return self._deny(400, "invalid JSON body")
-            if not isinstance(params, dict) or not isinstance(params.get("path"), str):
-                return self._deny(400, "path (string) required")
-            res = files_state.create(str(env), params["path"])
-            return self._send_json(res, code=200 if res.get("ok") else 400)
         if not route.startswith("/api/action/"):
             return self._deny(404, f"unknown POST {route}")
         action_id = route[len("/api/action/"):]

@@ -1,16 +1,15 @@
-"""File browser + guarded editor backend for the dashboard.
+"""Read-only file browser backend for the dashboard.
 
-Reads and (over)writes text files anywhere under the env root, with hard guards:
+Lists and reads text files anywhere under the env root, with hard guards:
   - the resolved realpath must stay INSIDE the env root (symlink- and ..-safe);
-  - noise/danger dirs (.git, node_modules, __pycache__, …) are never listed/opened/written;
-  - secret files (.env*, private keys, certs, credentials) are never listed/opened/written;
-  - binaries / non-utf-8 are refused (never shown or edited as text);
-  - reads over 512 KB are refused (too big to edit sanely);
-  - writes only OVERWRITE an existing regular file — never create, never follow a symlink.
+  - noise/danger dirs (.git, node_modules, __pycache__, …) are never listed/opened;
+  - secret files (.env*, private keys, certs, credentials) are never listed/opened;
+  - binaries / non-utf-8 are refused (never shown as text);
+  - reads over 512 KB are refused (too big to view sanely).
 
-Reads are best-effort (return an {"error": …} dict, never raise). Writes return
-{"ok": bool, …}. Path containment is enforced by realpath comparison, not string prefixing
-of the raw input, so encoded traversal and symlink escapes both fail closed."""
+Reads are best-effort (return an {"error": …} dict, never raise). Path containment is
+enforced by realpath comparison, not string prefixing of the raw input, so encoded
+traversal and symlink escapes both fail closed."""
 
 import io
 import os
@@ -29,7 +28,6 @@ _SECRET_NAMES = {"credentials", "credentials.json", "credentials.yaml", "credent
 _SECRET_SUFFIXES = (".key", ".pem", ".pfx", ".p12", ".keystore", ".crt", ".cer", ".jks")
 
 _READ_MAX = 512 * 1024        # 512 KB — refuse to open bigger as editable text
-_WRITE_MAX = 1024 * 1024      # 1 MB — also bounded by the POST body cap
 
 
 def _is_secret(name):
@@ -144,43 +142,3 @@ def search(env_root, q, limit=250):
             if len(out) >= limit:
                 return {"query": q, "results": out, "truncated": True}
     return {"query": q, "results": out}
-
-
-def create(env_root, rel):
-    """Create a new empty file. Refuses to overwrite, escape the root, touch a secret, or write
-    into a missing/secret directory."""
-    f = _resolve(env_root, rel)
-    if f is None:
-        return {"ok": False, "error": "path not allowed"}
-    if os.path.exists(f):
-        return {"ok": False, "error": "already exists"}
-    if not os.path.isdir(os.path.dirname(f)):
-        return {"ok": False, "error": "parent directory does not exist"}
-    try:
-        with io.open(f, "x", encoding="utf-8"):
-            pass
-    except OSError as e:
-        return {"ok": False, "error": str(e)}
-    return {"ok": True, "path": _rel(_root(env_root), f)}
-
-
-def write(env_root, rel, content):
-    """Overwrite an existing text file. Returns {"ok": bool, …}. Edit-only: refuses to create a
-    new file, write through a symlink, or exceed the size cap."""
-    if not isinstance(content, str):
-        return {"ok": False, "error": "content must be a string"}
-    if len(content.encode("utf-8")) > _WRITE_MAX:
-        return {"ok": False, "error": "content too large"}
-    f = _resolve(env_root, rel)
-    if f is None:
-        return {"ok": False, "error": "path not allowed"}
-    if os.path.islink(f):
-        return {"ok": False, "error": "refusing to write through a symlink"}
-    if not os.path.isfile(f):
-        return {"ok": False, "error": "can only edit an existing file"}
-    try:
-        with io.open(f, "w", encoding="utf-8", newline="") as fh:   # preserve the file's own newlines
-            fh.write(content)
-    except OSError as e:
-        return {"ok": False, "error": str(e)}
-    return {"ok": True, "path": _rel(_root(env_root), f), "bytes": len(content.encode("utf-8"))}

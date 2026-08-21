@@ -292,6 +292,25 @@ def test_make_server_prunes_terminal_activity_past_retention(env_root):
     assert "old" not in ids
 
 
+def test_files_write_routes_are_gone(server):
+    port = server.server_address[1]
+    for route in ("/api/files/write", "/api/files/create"):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{route}", method="POST",
+                                     data=b"{}", headers={"Content-Type": "application/json",
+                                                          "X-Aios-Token": server.token})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                assert False, f"{route} should 404, got {r.status}"
+        except urllib.error.HTTPError as e:
+            assert e.code == 404
+
+
+def test_inventory_route_shape(server):
+    inv = _get_json(server, "/api/inventory")
+    assert set(inv) == {"plugin", "skills", "mcp"}
+    assert isinstance(inv["skills"], list) and isinstance(inv["mcp"]["servers"], list)
+
+
 def test_events_fingerprint_reacts_to_activity(server, env_root):
     port = server.server_address[1]
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/events",

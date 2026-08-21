@@ -71,23 +71,9 @@ def test_read_too_large_refused(tmp_path):
     assert f.read(env, "big.txt").get("too_large") is True
 
 
-# ---- write --------------------------------------------------------------
-def test_write_overwrites_existing(tmp_path):
-    env = _env(tmp_path)
-    r = f.write(env, "notes.txt", "changed\n")
-    assert r["ok"] is True
-    assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "changed\n"
-
-
-def test_write_refuses_create_secret_escape_and_oversize(tmp_path):
-    env = _env(tmp_path)
-    assert f.write(env, "brand-new.md", "x").get("ok") is False   # edit-only, no create
-    assert not (tmp_path / "brand-new.md").exists()
-    assert f.write(env, ".env", "PWNED=1").get("ok") is False     # secret
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=1\n"   # untouched
-    assert f.write(env, ".git/config", "x").get("ok") is False    # skip dir
-    assert f.write(env, "../escape.md", "x").get("ok") is False   # traversal
-    assert f.write(env, "notes.txt", "y" * (2 * 1024 * 1024)).get("ok") is False  # oversize
+# ---- read-only contract --------------------------------------------------
+def test_module_is_read_only():
+    assert not hasattr(f, "write") and not hasattr(f, "create")
 
 
 def test_search_finds_files_and_skips_secrets(tmp_path):
@@ -99,26 +85,3 @@ def test_search_finds_files_and_skips_secrets(tmp_path):
     assert f.search(env, "a")["results"] == []   # <2 chars → no-op
 
 
-def test_create_new_file_then_refuses_dupe_and_secret(tmp_path):
-    env = _env(tmp_path)
-    r = f.create(env, "sub/fresh.md")
-    assert r["ok"] is True and (tmp_path / "sub" / "fresh.md").is_file()
-    assert f.create(env, "sub/fresh.md").get("ok") is False       # already exists
-    assert f.create(env, ".env.new").get("ok") is False           # secret name
-    assert f.create(env, "nope/deep.md").get("ok") is False       # missing parent dir
-    assert f.create(env, "../escape.md").get("ok") is False       # traversal
-    assert not (tmp_path.parent / "escape.md").exists()
-
-
-def test_write_refuses_symlink_escape(tmp_path):
-    env = _env(tmp_path)
-    outside = tmp_path.parent / "outside.txt"
-    outside.write_text("outside\n", encoding="utf-8")
-    link = tmp_path / "link.txt"
-    try:
-        os.symlink(outside, link)
-    except (OSError, NotImplementedError):
-        return   # no symlink privilege (Windows without dev mode) — nothing to test
-    assert f.write(env, "link.txt", "PWNED").get("ok") is False
-    assert outside.read_text(encoding="utf-8") == "outside\n"     # target untouched
-    assert f.read(env, "link.txt").get("error")                  # read through symlink refused too
