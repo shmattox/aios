@@ -2,6 +2,7 @@
 // Reads /api/pipeline (factory), /api/content (AIOS pipeline), /api/servers, /api/activity.
 // (Spend is derived from the activity runs' cost_usd, not a separate endpoint.)
 import { html, api, useState, useEffect, toast } from "/lib.js";
+import { ThreadModal } from "/thread.js";
 
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 const fmtTok = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); };
@@ -12,57 +13,6 @@ const sum = (a, f) => a.reduce((s, r) => s + (Number(f(r)) || 0), 0);
 function Metric({ k, v, sub, cls, onClick }) {
   return html`<div class="ov-cell" style=${onClick ? "cursor:pointer" : ""} onClick=${onClick}><div class="ov-k">${k}</div>
     <div class="ov-v ${cls || ""}">${v}</div><div class="ov-s">${sub || ""}</div></div>`;
-}
-
-// parse a Claude Code transcript (JSONL) into readable user/assistant turns
-function parseThread(lines) {
-  const out = [];
-  for (const ln of lines) {
-    let d; try { d = JSON.parse(ln); } catch (e) { continue; }
-    const m = d.message;
-    if (!m || !m.role) continue;
-    const content = Array.isArray(m.content) ? m.content : (m.content != null ? [{ type: "text", text: m.content }] : []);
-    let text = "", tools = [];
-    for (const c of content) {
-      if (c.type === "text" && c.text) text += c.text;
-      else if (c.type === "tool_use" && c.name) tools.push(c.name);
-    }
-    text = text.trim();
-    if (text || tools.length) out.push({ role: m.role, text: text.slice(0, 1600), tools });
-  }
-  return out;
-}
-
-// read-only viewer of a running session's live transcript
-function ThreadModal({ run, onClose }) {
-  const [msgs, setMsgs] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    const pull = () => api.get(`/api/activity/${encodeURIComponent(run.id)}/log?tail=500`)
-      .then((d) => { if (alive) setMsgs(parseThread(d.lines || [])); }).catch(() => { if (alive) setMsgs([]); });
-    pull();
-    const t = setInterval(pull, 5000);   // live-tail
-    return () => { alive = false; clearInterval(t); };
-  }, [run.id]);
-  const shown = (msgs || []).slice(-40);
-  return html`<div class="th-modal" onClick=${onClose}>
-    <div class="th-card" onClick=${(e) => e.stopPropagation()}>
-      <div class="th-head"><span class="th-title">${run.title || run.id}</span>
-        ${run.repo ? html`<span class="th-repo">${run.repo}</span>` : null}
-        <button class="th-x" onClick=${onClose} aria-label="close">×</button></div>
-      <div class="th-body">
-        ${msgs == null ? html`<p class="stub">Loading thread…</p>`
-          : shown.length ? shown.map((m, i) => html`<div class="th-msg ${m.role}" key=${i}>
-              <span class="th-role">${m.role === "user" ? "Seth" : "Claude"}</span>
-              ${m.text ? html`<div class="th-text">${m.text}</div>` : null}
-              ${m.tools.length ? html`<div class="th-tools">${m.tools.map((t, j) => html`<span class="th-tool" key=${j}>→ ${t}</span>`)}</div>` : null}
-            </div>`)
-          : html`<p class="stub">No readable messages in this transcript yet.</p>`}
-      </div>
-      <div class="th-foot"><span class="note">Live transcript (read-only, refreshing). Sending
-        input into a running session isn't wired up.</span></div>
-    </div>
-  </div>`;
 }
 
 export function OverviewView() {
