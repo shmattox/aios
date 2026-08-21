@@ -41,8 +41,30 @@ def test_summarize_tokens_cost_agents_errors():
 
 
 def test_partial_trace_without_interaction_is_skipped():
-    assert o.summarize_trace(PARTIAL) is None      # the quirk fix — no interaction root => not a run
+    # a lone blocked_on_user span (no llm, no tool) is still a partial husk, not a run
+    assert o.summarize_trace(PARTIAL) is None
     assert o.summarize_trace({"traceID": "e", "spans": []}) is None
+
+
+def test_interactionless_trace_summarizes_from_spans():
+    # Current Claude Code exports no `interaction` wrapper span — the summary derives from the
+    # llm/tool spans: session.id from any span, duration from the span envelope, synthetic title.
+    t = {"traceID": "modern1", "spans": [
+        _span("l1", "claude_code.llm_request",
+              {"span.type": "llm_request", "model": "claude-opus-5", "session.id": "sess-42",
+               "input_tokens": 10, "output_tokens": 20,
+               "cache_creation_tokens": 0, "cache_read_tokens": 5}, start=1_000_000, dur=2_000_000),
+        _span("t1", "claude_code.tool",
+              {"span.type": "tool", "tool_name": "Bash", "session.id": "sess-42"},
+              parent="l1", start=1_500_000, dur=500_000),
+    ]}
+    r = o.summarize_trace(t)
+    assert r is not None
+    assert r["session_id"] == "sess-42"
+    assert r["model"] == "claude-opus-5" and r["total_tokens"] == 35
+    assert r["duration_ms"] == 2000                 # envelope: 1_000_000..3_000_000 µs
+    assert r["title"] == "turn · 1 llm · 1 tool"
+    assert r["prompt_len"] == 0 and r["status"] == "ok"
 
 
 def test_build_graph_nodes_edges_and_depth():
@@ -102,3 +124,39 @@ def test_aggregate_empty_is_safe():
     agg = o._aggregate([], jaeger_up=False)
     assert agg["p50_ms"] is None and agg["p95_ms"] is None
     assert agg["error_kinds"] == {} and agg["unpriced_models"] == [] and agg["jaeger_up"] is False
+
+
+def test_fetch_runs_discovers_prefixed_services_and_dedupes(monkeypatch):
+    # Claude Code registers surface-specific service names (claude-code, claude-code-desktop);
+    # fetch_runs must query every claude-code* service and dedupe traces seen under two names.
+    calls = []
+
+    def fake_get(path):
+        calls.append(path)
+        if path.startswith("/api/services"):
+            return {"data": ["claude-code-desktop", "claude-code", "jaeger", "other"]}
+        if "service=claude-code-desktop" in path:
+            return {"data": [TRACE]}
+        if "service=claude-code" in path:
+            return {"data": [TRACE]}          # same trace under both -> deduped by trace_id
+        return None
+
+    monkeypatch.setattr(o, "_get", fake_get)
+    out = o.fetch_runs()
+    assert [r["trace_id"] for r in out["runs"]] == ["abc123"]
+    assert out["agg"]["jaeger_up"] is True and out["agg"]["runs"] == 1
+    svc_queries = [c for c in calls if c.startswith("/api/traces?")]
+    assert len(svc_queries) == 2 and not any("service=jaeger" in c or "service=other" in c for c in svc_queries)
+
+
+def test_fetch_runs_falls_back_to_configured_service(monkeypatch):
+    # discovery unavailable (old Jaeger / transient error) -> query the configured SERVICE name
+    def fake_get(path):
+        if path.startswith("/api/services"):
+            return None
+        assert "service=claude-code" in path
+        return {"data": []}
+
+    monkeypatch.setattr(o, "_get", fake_get)
+    out = o.fetch_runs()
+    assert out["runs"] == [] and out["agg"]["jaeger_up"] is True

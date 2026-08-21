@@ -63,12 +63,16 @@ def summarize_trace(trace):
     spans = trace.get("spans", []) or []
     if not spans:
         return None
+    # Current Claude Code exports no `interaction` wrapper span (schema moved toward the OTel
+    # GenAI conventions); when one exists (older exports) it still supplies title/duration/session,
+    # otherwise the summary is derived from the llm/tool spans themselves. A trace with NEITHER an
+    # llm_request nor a tool span (e.g. a lone tool.blocked_on_user) is still skipped as partial.
     interactions = _spans_of_type(spans, "interaction")
-    if not interactions:
-        return None      # partial / in-progress trace (interaction span not exported yet) — skip it
-    inter = interactions[0]
-    root = _root(spans) or inter
+    inter = interactions[0] if interactions else None
     llm = _spans_of_type(spans, "llm_request")
+    if inter is None and not llm and not _spans_of_type(spans, "tool"):
+        return None
+    root = _root(spans) or (inter or spans[0])
     tin = sum(_num(_tag(s, "input_tokens")) for s in llm)
     tout = sum(_num(_tag(s, "output_tokens")) for s in llm)
     tcw = sum(_num(_tag(s, "cache_creation_tokens")) for s in llm)
@@ -94,7 +98,7 @@ def summarize_trace(trace):
             error_kinds[name] = error_kinds.get(name, 0) + 1
     real_unknown_model = model not in PRICES and model not in ("—", "", None)
     start_us = min((s.get("startTime", 0) for s in spans), default=0)
-    dur_ms = _num(_tag(inter, "interaction.duration_ms"))
+    dur_ms = _num(_tag(inter, "interaction.duration_ms")) if inter is not None else 0.0
     if not dur_ms:
         end_us = max((s.get("startTime", 0) + s.get("duration", 0) for s in spans), default=start_us)
         dur_ms = (end_us - start_us) / 1000.0
@@ -103,11 +107,16 @@ def summarize_trace(trace):
     for name, _ in tools:
         tool_names[name] = tool_names.get(name, 0) + 1
     top_tools = sorted(tool_names.items(), key=lambda kv: -kv[1])
+    # session.id rides every span in the current schema; the interaction span (when present) wins
+    session_id = (_tag(inter, "session.id") if inter is not None else None) or \
+        next((_tag(s, "session.id") for s in spans if _tag(s, "session.id")), None)
+    title = (inter.get("operationName", "run") if inter is not None
+             else "turn · %d llm · %d tool%s" % (len(llm), len(tools), "" if len(tools) == 1 else "s"))
     return {
         "trace_id": trace.get("traceID"),
-        "title": inter.get("operationName", "run"),   # always the interaction span's op → a clean title
-        "prompt_len": int(_num(_tag(inter, "user_prompt_length"))),
-        "session_id": _tag(inter, "session.id"),
+        "title": title,
+        "prompt_len": int(_num(_tag(inter, "user_prompt_length"))) if inter is not None else 0,
+        "session_id": session_id,
         "model": model,
         "started": start_us / 1_000_000.0,
         "duration_ms": int(round(dur_ms)),
@@ -206,13 +215,35 @@ def _get(path):
         return None
 
 
+def _services():
+    """Every Jaeger service this dashboard should read. Claude Code registers under
+    surface-specific names (`claude-code` from the CLI, `claude-code-desktop` from the
+    desktop app), so we discover by prefix instead of assuming one name; the configured
+    SERVICE is the fallback when discovery is unavailable."""
+    data = _get("/api/services")
+    names = [s for s in ((data or {}).get("data") or []) if isinstance(s, str)]
+    matched = sorted(n for n in names if n.startswith(SERVICE))
+    return matched or [SERVICE]
+
+
 def fetch_runs(lookback="3h", limit=60):
-    q = urllib.parse.urlencode({"service": SERVICE, "lookback": lookback, "limit": limit})
-    data = _get("/api/traces?" + q)
-    traces = (data or {}).get("data") or []
-    runs = [r for r in (summarize_trace(t) for t in traces) if r]
+    jaeger_up = False
+    traces = []
+    for svc in _services():
+        q = urllib.parse.urlencode({"service": svc, "lookback": lookback, "limit": limit})
+        data = _get("/api/traces?" + q)
+        if data is not None:
+            jaeger_up = True
+            traces.extend(data.get("data") or [])
+    seen = set()   # a trace could appear under two services; keep the first
+    runs = []
+    for t in traces:
+        r = summarize_trace(t)
+        if r and r["trace_id"] not in seen:
+            seen.add(r["trace_id"])
+            runs.append(r)
     runs.sort(key=lambda r: -(r.get("started") or 0))
-    agg = _aggregate(runs, data is not None)
+    agg = _aggregate(runs, jaeger_up)
     return {"runs": runs, "agg": agg}
 
 
