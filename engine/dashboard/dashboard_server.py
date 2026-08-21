@@ -325,6 +325,10 @@ class Handler(SimpleHTTPRequestHandler):
             out["spend"] = _mtime(spends[-1]) if spends else None
             out["board"] = max((m for m in (_mtime(p) for _, p in self._board_sources(env))
                                 if m), default=None)
+            act_dir = activity.ACTIVITY_DIR(env)
+            act_files = sorted(act_dir.glob("*.json")) if act_dir.exists() else []
+            out["activity"] = "%d:%s" % (len(act_files),
+                                         max((_mtime(p) for p in act_files), default=0) or 0)
             return self._send_json(out)
         if route == "/api/brief":
             return self._brief()

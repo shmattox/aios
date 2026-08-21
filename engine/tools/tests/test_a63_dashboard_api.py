@@ -62,8 +62,18 @@ def _get_json(srv, path):
 
 def test_mtimes_lists_watched(server):
     m = _get_json(server, "/api/mtimes")
-    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue", "board", "standing"}
+    assert set(m) == {"brief", "standup", "gate_metrics", "spend", "queue", "board", "standing", "activity"}
     assert m["brief"] is not None
+
+
+def test_mtimes_activity_scalar_reacts(server, env_root):
+    m1 = _get_json(server, "/api/mtimes")
+    assert isinstance(m1["activity"], str) and ":" in m1["activity"]
+    d = env_root / "state" / "activity"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "session-x-1.json").write_text(json.dumps({"id": "session-x-1"}), encoding="utf-8")
+    m2 = _get_json(server, "/api/mtimes")
+    assert m2["activity"] != m1["activity"]
 
 
 def test_health_aggregation(server):
