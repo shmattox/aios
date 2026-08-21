@@ -57,3 +57,48 @@ def test_build_graph_nodes_edges_and_depth():
 def test_cost_zero_and_unknown_model_falls_back():
     assert o.summarize_trace({"traceID": "z", "spans": [
         _span("i", "claude_code.interaction", {"span.type": "interaction"})]})["cost_usd"] == 0.0
+
+
+def test_error_kinds_groups_by_parent_tool():
+    r = o.summarize_trace(TRACE)
+    assert r["error_kinds"] == {"Agent": 1}      # s4 exec failed; its CHILD_OF parent s3 is tool "Agent"
+    assert r["priced"] is True                    # claude-opus-5 is in PRICES
+
+
+def test_priced_flag_true_for_no_model_sentinel():
+    # a run with no llm span → model "—" → NOT an unpriced real model
+    r = o.summarize_trace({"traceID": "n", "spans": [
+        _span("i", "claude_code.interaction", {"span.type": "interaction"})]})
+    assert r["priced"] is True and r["error_kinds"] == {}
+
+
+def test_priced_flag_false_for_unknown_real_model():
+    t = {"traceID": "u", "spans": [
+        _span("i", "claude_code.interaction", {"span.type": "interaction"}),
+        _span("l", "claude_code.llm_request",
+              {"span.type": "llm_request", "model": "claude-future-9",
+               "input_tokens": 10, "output_tokens": 5}, parent="i")]}
+    r = o.summarize_trace(t)
+    assert r["priced"] is False and r["model"] == "claude-future-9"
+
+
+def test_aggregate_merges_kinds_unpriced_and_percentiles():
+    runs = [
+        {"total_tokens": 100, "cost_usd": 0.01, "errors": 1, "duration_ms": 1000,
+         "error_kinds": {"Agent": 1}, "model": "claude-opus-5", "priced": True},
+        {"total_tokens": 200, "cost_usd": 0.02, "errors": 2, "duration_ms": 3000,
+         "error_kinds": {"Agent": 1, "Bash": 2}, "model": "claude-future-9", "priced": False},
+        {"total_tokens": 50, "cost_usd": 0.0, "errors": 0, "duration_ms": 2000,
+         "error_kinds": {}, "model": "—", "priced": True},
+    ]
+    agg = o._aggregate(runs, jaeger_up=True)
+    assert agg["error_kinds"] == {"Agent": 2, "Bash": 2}
+    assert agg["unpriced_models"] == ["claude-future-9"]
+    assert agg["p50_ms"] == 2000 and agg["p95_ms"] == 3000
+    assert agg["runs"] == 3 and agg["errors"] == 3
+
+
+def test_aggregate_empty_is_safe():
+    agg = o._aggregate([], jaeger_up=False)
+    assert agg["p50_ms"] is None and agg["p95_ms"] is None
+    assert agg["error_kinds"] == {} and agg["unpriced_models"] == [] and agg["jaeger_up"] is False

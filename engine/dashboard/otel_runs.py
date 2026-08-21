@@ -77,6 +77,22 @@ def summarize_trace(trace):
     tools = [(_tag(s, "tool_name") or "?", _tag(s, "agent_id")) for s in _spans_of_type(spans, "tool")]
     execs = _spans_of_type(spans, "tool.execution")
     errors = sum(1 for s in execs if str(_tag(s, "success")).lower() not in ("true", "1"))
+    by_id = {s.get("spanID"): s for s in spans}
+
+    def _parent_tool_name(sp):
+        for ref in sp.get("references", []) or []:
+            if ref.get("refType") == "CHILD_OF":
+                p = by_id.get(ref.get("spanID"))
+                if p is not None:
+                    return _tag(p, "tool_name")
+        return None
+
+    error_kinds = {}
+    for s in execs:
+        if str(_tag(s, "success")).lower() not in ("true", "1"):
+            name = _parent_tool_name(s) or _tag(s, "tool_name") or "unknown"
+            error_kinds[name] = error_kinds.get(name, 0) + 1
+    real_unknown_model = model not in PRICES and model not in ("—", "", None)
     start_us = min((s.get("startTime", 0) for s in spans), default=0)
     dur_ms = _num(_tag(inter, "interaction.duration_ms"))
     if not dur_ms:
@@ -102,6 +118,8 @@ def summarize_trace(trace):
         "span_count": len(spans), "tool_count": len(tools), "agent_count": len(agents),
         "top_tools": [{"name": n, "n": c} for n, c in top_tools[:6]],
         "errors": errors,
+        "error_kinds": error_kinds,
+        "priced": not real_unknown_model,
         "status": "error" if errors else "ok",
     }
 
@@ -147,6 +165,37 @@ def build_graph(trace):
     return {"nodes": nodes, "edges": edges, "summary": summarize_trace(trace)}
 
 
+# ── Aggregation and helpers ──
+
+def _pct(vals, q):
+    """Nearest-rank percentile over a list (returns None on empty)."""
+    if not vals:
+        return None
+    xs = sorted(vals)
+    i = max(0, min(len(xs) - 1, int(round(q * (len(xs) - 1)))))
+    return xs[i]
+
+
+def _aggregate(runs, jaeger_up):
+    """Pure roll-up over run summaries → the /api/otel/runs agg strip (unit-testable)."""
+    error_kinds = {}
+    for r in runs:
+        for k, c in (r.get("error_kinds") or {}).items():
+            error_kinds[k] = error_kinds.get(k, 0) + c
+    durs = [r["duration_ms"] for r in runs if r.get("duration_ms")]
+    return {
+        "runs": len(runs),
+        "tokens": sum(r["total_tokens"] for r in runs),
+        "cost_usd": round(sum(r["cost_usd"] for r in runs), 2),
+        "errors": sum(r["errors"] for r in runs),
+        "error_kinds": error_kinds,
+        "unpriced_models": sorted({r["model"] for r in runs if not r.get("priced", True)}),
+        "p50_ms": _pct(durs, 0.5),
+        "p95_ms": _pct(durs, 0.95),
+        "jaeger_up": jaeger_up,
+    }
+
+
 # ── Jaeger HTTP (best-effort; a down/absent Jaeger degrades to empty, never raises) ──
 
 def _get(path):
@@ -163,14 +212,7 @@ def fetch_runs(lookback="3h", limit=60):
     traces = (data or {}).get("data") or []
     runs = [r for r in (summarize_trace(t) for t in traces) if r]
     runs.sort(key=lambda r: -(r.get("started") or 0))
-    # aggregate strip
-    agg = {
-        "runs": len(runs),
-        "tokens": sum(r["total_tokens"] for r in runs),
-        "cost_usd": round(sum(r["cost_usd"] for r in runs), 2),
-        "errors": sum(r["errors"] for r in runs),
-        "jaeger_up": data is not None,
-    }
+    agg = _aggregate(runs, data is not None)
     return {"runs": runs, "agg": agg}
 
 
