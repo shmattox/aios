@@ -30,7 +30,13 @@ function orderTree(nodes, edges) {
   for (const e of edges) (kids[e.source] = kids[e.source] || []).push(e.target);
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
   const out = [];
-  const walk = (id) => { const n = byId[id]; if (!n) return; out.push(n); (kids[id] || []).forEach(walk); };
+  const seen = new Set();
+  const walk = (id) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const n = byId[id]; if (!n) return;
+    out.push(n); (kids[id] || []).forEach(walk);
+  };
   nodes.filter((n) => !hasParent.has(n.id)).forEach((n) => walk(n.id));
   for (const n of nodes) if (!out.includes(n)) out.push(n);   // orphans still render (fail-open)
   return out;
