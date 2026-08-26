@@ -30,6 +30,14 @@ try:
     dm.coerce("bogus", "x", url_to_slug={}, link_tmpl=None); check("unknown_kind_raises", False)
 except ValueError: check("unknown_kind_raises", True)
 
+# --- Plan 2b Task 1: json_multi_select (projects.key_members) ---
+_jms = lambda v: dm.coerce("json_multi_select", v, url_to_slug={}, link_tmpl=None)
+check("jms_decodes_json_array_string", _jms('["alpha","bravo"]') == ["alpha", "bravo"])
+check("jms_none_stays_none",           _jms(None) is None)
+check("jms_empty_string_is_none",      _jms("") is None)
+check("jms_already_a_list_passthru",   _jms(["alpha"]) == ["alpha"])
+check("jms_multi_select_still_charsplits_str", dm.coerce("multi_select", "ab", url_to_slug={}, link_tmpl=None) == ["a", "b"])  # unchanged: old kind untouched
+
 # emitter: deterministic order, null, quoting of wikilinks + numeric-looking strings
 fm = dm.emit_frontmatter({"type": "state-entity", "name": "Example Legacy Trust",
                           "status": None, "articles_filed": False,
@@ -516,7 +524,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _CURATED = {"owner_entity", "asset"}             # still golden-only: A80 covers `wiki`, and
                                                      # these two are REPRODUCIBLE (a ruleset / a
                                                      # decode) so they are Plan 2b's, not A80's.
-    _mism, _bad_extra, _counts = [], [], {}
+    _mism, _bad_extra, _counts, _fm_by_key = [], [], {}, {}
     for _gen in _written:
         # The table is the record's parent dir relative to _out, as a posix string — this yields
         # "logs/change-log" for a nested source_db and still "tasks" for a flat one. Using parts[0]
@@ -529,6 +537,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
             _mism.append((_tbl, _gen.name, "no golden file")); continue
         _g = _norm(_load_fm(_gen.read_text(encoding="utf-8")))
         _s = _norm(_load_fm(_gold.read_text(encoding="utf-8")))
+        _fm_by_key[(_tbl, _gen.name)] = _g            # used by the body-passthrough check below
         _diffs = {k: (_g.get(k), _s.get(k)) for k in _g if _g.get(k) != _s.get(k)}
         _unexpected = (set(_s) - set(_g)) - _CURATED  # a golden field we forgot to map
         if _unexpected:
@@ -557,7 +566,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
                 if not ln.startswith("# ") and not _BOILER.match(ln.strip())]
         return "\n".join(keep).strip()
 
-    _body_ok, _body_bad, _body_skipped = 0, [], 0
+    _body_ok, _body_bad, _body_skipped, _body_enriched = 0, [], 0, 0
     for _gen in _written:
         # Same fix as the frontmatter loop above: the table is the record's PARENT DIR relative to
         # _out (not just its first path segment), so a nested source_db like "logs/change-log"
@@ -570,21 +579,36 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         if _VIEW_MARK in _gold_text:
             _body_skipped += 1
             continue
-        if _body(_gen.read_text(encoding="utf-8")).strip() == _strip_derived(_body(_gold_text)):
+        _gen_body = _body(_gen.read_text(encoding="utf-8")).strip()
+        _gold_stripped = _strip_derived(_body(_gold_text))
+        if _gen_body == _gold_stripped:
             _body_ok += 1
-        else:
-            _body_bad.append((_tbl, _gen.name))
-    # HONEST SCOPE: this is a TRIPWIRE, not a positive proof of body composition. Every compared
-    # record is empty-body on BOTH sides today — no mapped export carries a `Description` property,
-    # so build_record's body path is never actually exercised here. What it DOES guard is the real
-    # risk: a body the retired migrators rendered and the engine drops, changing without a signal.
-    # (Proven to fail when broken.) It does NOT prove `Description` passthrough — the first mapped
-    # table that has that property will be the first to exercise it. Note also that the skipped set
-    # is currently 100% of `entities` (all 11 carry generated view blocks), so that table has no
-    # body coverage at all.
+            continue
+        # Plan 2b Task 1 (projects): the first mapped table whose export actually carries a
+        # `Description` property, exercising the passthrough this check could previously only
+        # predict. The retired migrators' `render_note` NEVER wrote `Description` into the body
+        # (only the `# {Title}` heading + boilerplate — see migrate_projects.py:render_note), so
+        # the golden is empty here after stripping; build_record correctly composes the body from
+        # the same `Description` value already proven equal by the frontmatter-equivalence loop
+        # above. That is an ENRICHMENT the retired migrator discarded, not a regression — accept it
+        # ONLY when golden had nothing (never overwrites a real golden body) and the generated body
+        # matches the record's own already-verified `description` field exactly (never a
+        # rubber-stamp for arbitrary generated text).
+        _fm_desc = (_fm_by_key.get((_tbl, _gen.name), {}).get("description") or "")
+        if _gold_stripped == "" and _gen_body != "" and _gen_body == str(_fm_desc).strip():
+            _body_enriched += 1
+            continue
+        _body_bad.append((_tbl, _gen.name))
+    # HONEST SCOPE: this is a TRIPWIRE, not a positive proof of body composition for every table.
+    # What it DOES guard is the real risk: a body the retired migrators rendered and the engine
+    # drops, changing without a signal (proven to fail when broken) — and, since Plan 2b Task 1, a
+    # genuine proof of `Description` passthrough for `projects` (the enrichment branch above still
+    # requires the generated body equal the independently-verified frontmatter `description`, so a
+    # corrupted or wrong-property body still fails). Note the skipped set is currently 100% of
+    # `entities` (all 11 carry generated view blocks), so that table has no body coverage at all.
     check("fo_body_substance_preserved", not _body_bad)
-    print(f"FO body contract: {_body_ok} substance-equal, {len(_body_bad)} divergent, "
-          f"{_body_skipped} skipped (generated view blocks)")
+    print(f"FO body contract: {_body_ok} substance-equal, {_body_enriched} description-enriched, "
+          f"{len(_body_bad)} divergent, {_body_skipped} skipped (generated view blocks)")
     if _body_bad:
         print("FO body divergences (first 6):", _body_bad[:6])
 

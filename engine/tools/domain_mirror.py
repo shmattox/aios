@@ -29,6 +29,14 @@ def coerce(kind, value, *, url_to_slug, link_tmpl):
         return None if value in (None, "") else str(value)
     if kind == "multi_select":
         return None if not value else [str(v) for v in value]
+    if kind == "json_multi_select":
+        # Notion returns a multi_select as a JSON-array STRING; decode BEFORE listing so a
+        # str is not iterated character-by-character (the silent-corruption bug this fixes).
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        return None if not value else [str(v) for v in value]
     if kind == "number":
         return None if value is None else value
     if kind == "date":
