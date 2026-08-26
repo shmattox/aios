@@ -38,6 +38,11 @@ check("jms_empty_string_is_none",      _jms("") is None)
 check("jms_already_a_list_passthru",   _jms(["alpha"]) == ["alpha"])
 check("jms_multi_select_still_charsplits_str", dm.coerce("multi_select", "ab", url_to_slug={}, link_tmpl=None) == ["a", "b"])  # unchanged: old kind untouched
 
+# --- Plan 2b Task 2: sync_date computed rule (prices.as_of) ---
+check("sync_date_emits_run_last_synced", dm.compute_field({"rule": "sync_date"}, {}, last_synced="2026-06-30") == "2026-06-30")
+check("sync_date_none_when_absent",      dm.compute_field({"rule": "sync_date"}, {}, last_synced=None) is None)
+check("lookup_rule_still_works",         dm.compute_field({"rule": "lookup", "from": "x", "table": {"a": "b"}}, {"x": "a"}) == "b")  # regression: existing rule intact
+
 # emitter: deterministic order, null, quoting of wikilinks + numeric-looking strings
 fm = dm.emit_frontmatter({"type": "state-entity", "name": "Example Legacy Trust",
                           "status": None, "articles_filed": False,
@@ -556,6 +561,15 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # not Notion-derived. Plan 3 must re-run that generator after a sync or it strips them.
     _VIEW_MARK = "generated relational views"
     _BOILER = re.compile(r"^State-engine mirror of the Notion .* row\.$")
+    # Plan 2b Task 2: migrate_prices.py used its OWN custom boilerplate sentence (not the generic
+    # "...mirror of the Notion X row." shared by the 5 originally-shipped tables) — same DERIVED,
+    # unread-by-the-engine status (state/domains is not in the vault), just different wording. A
+    # second literal pattern here, not an engine change (YAGNI: the engine composes bodies from
+    # `Description` alone regardless of table; this only teaches the TEST which retired-migrator
+    # phrasings to treat as filler when diffing against the golden).
+    _PRICES_BOILER = re.compile(
+        r"^State-engine price note \(Market Prices mirror\)\. `spot` is the last-known Notion "
+        r"mark; live feed deferred\.$")
 
     def _body(text):
         parts = text.split("---", 2)
@@ -563,7 +577,8 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
 
     def _strip_derived(b):
         keep = [ln for ln in b.split("\n")
-                if not ln.startswith("# ") and not _BOILER.match(ln.strip())]
+                if not ln.startswith("# ") and not _BOILER.match(ln.strip())
+                and not _PRICES_BOILER.match(ln.strip())]
         return "\n".join(keep).strip()
 
     _body_ok, _body_bad, _body_skipped, _body_enriched = 0, [], 0, 0
