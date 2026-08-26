@@ -43,6 +43,14 @@ check("sync_date_emits_run_last_synced", dm.compute_field({"rule": "sync_date"},
 check("sync_date_none_when_absent",      dm.compute_field({"rule": "sync_date"}, {}, last_synced=None) is None)
 check("lookup_rule_still_works",         dm.compute_field({"rule": "lookup", "from": "x", "table": {"a": "b"}}, {"x": "a"}) == "b")  # regression: existing rule intact
 
+# --- Plan 2b Task 3: json_relation (assets.asset -> prices, single scalar, tolerant) ---
+_u2s = {"https://www.notion.so/abc123def": "usd"}   # prices export url_to_slug: row url -> slug
+_jr = lambda v: dm.coerce("json_relation", v, url_to_slug=_u2s, link_tmpl="prices/{slug}")
+check("jr_json_string_single_scalar", _jr('["https://www.notion.so/abc123def"]') == "[[prices/usd]]")
+check("jr_none_stays_none",           _jr(None) is None)
+check("jr_empty_list_is_none",        _jr("[]") is None)
+check("jr_unmapped_target_is_none",   _jr('["https://www.notion.so/zzz"]') is None)   # tolerant: no such price -> null
+
 # emitter: deterministic order, null, quoting of wikilinks + numeric-looking strings
 fm = dm.emit_frontmatter({"type": "state-entity", "name": "Example Legacy Trust",
                           "status": None, "articles_filed": False,
@@ -570,6 +578,11 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _PRICES_BOILER = re.compile(
         r"^State-engine price note \(Market Prices mirror\)\. `spot` is the last-known Notion "
         r"mark; live feed deferred\.$")
+    # Plan 2b Task 3: migrate_assets.py also used its OWN boilerplate wording ("operational mirror",
+    # not the generic "State-engine mirror of the Notion X row." shared by the 5 originally-shipped
+    # tables) — same DERIVED, unread-by-the-engine status, just different phrasing. Same precedent as
+    # _PRICES_BOILER: a third literal pattern here, not an engine change.
+    _ASSETS_BOILER = re.compile(r"^State-engine operational mirror of the Notion A&L row\.$")
 
     def _body(text):
         parts = text.split("---", 2)
@@ -578,7 +591,8 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     def _strip_derived(b):
         keep = [ln for ln in b.split("\n")
                 if not ln.startswith("# ") and not _BOILER.match(ln.strip())
-                and not _PRICES_BOILER.match(ln.strip())]
+                and not _PRICES_BOILER.match(ln.strip())
+                and not _ASSETS_BOILER.match(ln.strip())]
         return "\n".join(keep).strip()
 
     _body_ok, _body_bad, _body_skipped, _body_enriched = 0, [], 0, 0
@@ -639,6 +653,22 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _wiki_n = sum(1 for _g in _written if "wiki" in _load_fm(_g.read_text(encoding="utf-8")))
     check("a80_wiki_carried_on_real_data", _wiki_n == 18)
     print(f"A80 state_native: wiki carried forward on {_wiki_n} real records (entities 11 + people 7)")
+    # Plan 2b Task 3 — PAPER-GOVERNS: explicit, standalone proof that every asset's `owner_entity`
+    # (STATE-NATIVE, A80) is BYTE-PRESERVED from the golden — not just implied by the generic
+    # frontmatter-equivalence loop above. Compares generated vs golden per-record, both non-null
+    # values (Seth's owner_for() assignment) AND null-stays-null (the 13 personal-by-nature assets).
+    _owner_gen = {_g.name: _load_fm(_g.read_text(encoding="utf-8")).get("owner_entity")
+                  for _g in _written if _g.parent.relative_to(_out).as_posix() == "assets"}
+    _owner_gold = {_p.name: _load_fm(_p.read_text(encoding="utf-8")).get("owner_entity")
+                   for _p in (_GOLDEN / "assets").glob("*.md")}
+    _owner_mism = [k for k in _owner_gold if _owner_gen.get(k) != _owner_gold[k]]
+    _owner_set_n = sum(1 for v in _owner_gold.values() if v is not None)
+    check("assets_owner_entity_byte_preserved", not _owner_mism)
+    check("assets_owner_entity_27_set", _owner_set_n == 27)
+    print(f"PAPER-GOVERNS: owner_entity byte-preserved on {len(_owner_gold) - len(_owner_mism)}/"
+          f"{len(_owner_gold)} assets ({_owner_set_n} non-null, Seth's owner_for() ruleset)")
+    if _owner_mism:
+        print("owner_entity MISMATCHES (silent-deletion class — STOP):", _owner_mism[:10])
     if _mism:
         print("FO mismatches (first 6):", _mism[:6])
     if _bad_extra:

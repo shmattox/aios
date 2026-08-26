@@ -53,6 +53,20 @@ def coerce(kind, value, *, url_to_slug, link_tmpl):
         if isinstance(value, list):
             return [_link(u, url_to_slug, link_tmpl) for u in value]
         return _link(value, url_to_slug, link_tmpl)
+    if kind == "json_relation":
+        # A single-valued cross-export relation stored as a JSON-array string (Notion always wraps
+        # a relation in an array). Decode, resolve the sole element to one wikilink scalar,
+        # reproducing migrate_assets.py:price_slug_for (urls[0]). TOLERANT by design: an unmapped
+        # target -> None (asset: null), matching price_slug_for's `.get` — NOT _link's fail-loud [url].
+        if not value:
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        urls = value if isinstance(value, list) else [value]
+        if not urls:
+            return None
+        slug = url_to_slug.get(urls[0])
+        return None if slug is None else "[[" + link_tmpl.format(slug=slug) + "]]"
     raise ValueError(f"unknown kind: {kind!r}")
 
 
