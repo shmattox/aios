@@ -669,6 +669,28 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
           f"{len(_owner_gold)} assets ({_owner_set_n} non-null, Seth's owner_for() ruleset)")
     if _owner_mism:
         print("owner_entity MISMATCHES (silent-deletion class — STOP):", _owner_mism[:10])
+    # Plan 2b final-review minor #3 — HARDENING: lock in the final reviewer's empirical proof that
+    # owner_entity is NEVER auto-derived. Re-run import_silo against the SAME hermetic snapshot but
+    # into a FRESH, EMPTY out_dir (unseeded — no prior records, so _read_state_native has nothing to
+    # carry forward). Assert every asset record comes back with NO owner_entity key at all, while a
+    # genuine non-state-native field (`balance`) still populates on at least one record — proving the
+    # import genuinely ran and this isn't a vacuous pass on an empty result.
+    _out_unseeded = Path(tempfile.mkdtemp()) / "tables"
+    _written_unseeded = dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out_unseeded,
+                                       last_synced="2026-06-30")
+    _assets_unseeded = [_p for _p in _written_unseeded
+                        if _p.parent.relative_to(_out_unseeded).as_posix() == "assets"]
+    _unseeded_fms = [_load_fm(_p.read_text(encoding="utf-8")) for _p in _assets_unseeded]
+    _unseeded_owner_leak = [n for n, fm in zip((_p.name for _p in _assets_unseeded), _unseeded_fms)
+                            if "owner_entity" in fm]
+    _unseeded_balance_set = sum(1 for fm in _unseeded_fms if fm.get("balance") is not None)
+    check("assets_unseeded_import_ran", len(_assets_unseeded) > 0 and _unseeded_balance_set > 0)
+    check("assets_unseeded_owner_entity_never_derived", not _unseeded_owner_leak)
+    print(f"PAPER-GOVERNS unseeded: {len(_assets_unseeded)} asset records, "
+          f"{_unseeded_balance_set} with balance populated, 0 with owner_entity key "
+          f"(no carry-forward source -> no derivation)")
+    if _unseeded_owner_leak:
+        print("owner_entity DERIVED without carry-forward (regression — STOP):", _unseeded_owner_leak[:10])
     if _mism:
         print("FO mismatches (first 6):", _mism[:6])
     if _bad_extra:
