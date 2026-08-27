@@ -310,6 +310,150 @@ else:
     print("FO golden absent — skipping Step 5 round-trip proof (fixture + unit proofs above stand)")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# reap_orphans — Task 3, the ONLY destructive step (S10, A49, A84). Synthetic
+# fixture silo only (fresh tmp state_dir per guard) — never the real
+# state/domains tree. Fake notion_ids are 32-char all-zero-padded hex-looking
+# strings, matching Task 2's fixture convention above; fake names are
+# widget/gadget/gizmo. Zero real FO tokens.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _reap_state_dir():
+    root = Path(tempfile.mkdtemp())
+    return root / "state" / "domains" / "widgetco"
+
+
+def _write_record(dir_, filename, notion_id, name="Widget"):
+    dir_.mkdir(parents=True, exist_ok=True)
+    (dir_ / filename).write_text(
+        "---\n"
+        "type: state-widget\n"
+        f'name: "{name}"\n'
+        f'notion_id: "{notion_id}"\n'
+        f'notion_url: "https://www.notion.so/{notion_id}"\n'
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+
+
+_ID1 = "00000000000000000000000000000001"
+_ID2 = "00000000000000000000000000000002"
+_ID3 = "00000000000000000000000000000003"
+
+# ---- (a) archive-not-delete: an orphan is MOVED to _retired/<date>/, never removed ----
+_sd_a = _reap_state_dir()
+_write_record(_sd_a / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")
+_write_record(_sd_a / "tables" / "insurance", "widget-b.md", _ID2, "Widget B")
+_rep_a = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1}}, _sd_a,
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_a_not_skipped", _rep_a.skipped is False)
+check("reap_a_kept_still_at_original_path", (_sd_a / "tables" / "insurance" / "widget-a.md").is_file())
+check("reap_a_orphan_gone_from_original_path", not (_sd_a / "tables" / "insurance" / "widget-b.md").exists())
+check("reap_a_orphan_archived_not_deleted",
+      (_sd_a / "_retired" / "2026-08-27" / "insurance" / "widget-b.md").is_file())
+check("reap_a_report_orphans_list", _rep_a.by_table["insurance"].orphans == ["widget-b.md"])
+check("reap_a_report_moved_list_populated", len(_rep_a.by_table["insurance"].moved) == 1)
+
+# ---- (b) mapped-tables-only (S10): an UNMAPPED table's records are never touched,
+# even if they'd otherwise look orphaned ----
+_sd_b = _reap_state_dir()
+_write_record(_sd_b / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")
+_write_record(_sd_b / "tables" / "secret", "gadget.md", _ID2, "Gadget")  # NOT in mapped_tables
+_rep_b = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1}}, _sd_b,   # "secret" absent — must not degrade
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_b_not_skipped", _rep_b.skipped is False)
+check("reap_b_unmapped_table_untouched", (_sd_b / "tables" / "secret" / "gadget.md").is_file())
+check("reap_b_unmapped_table_not_in_report", "secret" not in _rep_b.by_table)
+check("reap_b_no_retired_dir_for_unmapped", not (_sd_b / "_retired" / "2026-08-27" / "secret").exists())
+
+# ---- (c) skip-on-degraded: a mapped table missing from fetched_ids_by_table skips
+# the WHOLE silo's reap, even tables that WOULD have had a clean fetch ----
+_sd_c = _reap_state_dir()
+_write_record(_sd_c / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")
+_write_record(_sd_c / "tables" / "insurance", "widget-b.md", _ID2, "Widget B")  # would-be orphan
+_write_record(_sd_c / "tables" / "notes", "note.md", _ID3, "Note")
+_rep_c = dsync.reap_orphans(
+    "widgetco", ["insurance", "notes"], {"insurance": {_ID1}}, _sd_c,  # "notes" fetch missing
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_c_skipped", _rep_c.skipped is True)
+check("reap_c_reason_names_degraded_table", "notes" in _rep_c.reason)
+check("reap_c_by_table_empty", _rep_c.by_table == {})
+check("reap_c_wouldbe_orphan_untouched", (_sd_c / "tables" / "insurance" / "widget-b.md").is_file())
+check("reap_c_no_retired_dir_at_all", not (_sd_c / "_retired").exists())
+# explicit None (caller's degraded signal) behaves identically to a missing key
+_sd_c2 = _reap_state_dir()
+_write_record(_sd_c2 / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")
+_rep_c2 = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": None}, _sd_c2,
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_c2_none_signal_skips", _rep_c2.skipped is True)
+
+# ---- (d) volume brake: reaping > volume_brake fraction of a table fails loud and
+# moves NOTHING (not even under-threshold tables in the same run) ----
+_sd_d = _reap_state_dir()
+_write_record(_sd_d / "tables" / "insurance", "widget-a.md", _ID1)
+_write_record(_sd_d / "tables" / "insurance", "widget-b.md", _ID2)  # orphan
+_write_record(_sd_d / "tables" / "insurance", "widget-c.md", _ID3)  # orphan (2/3 = 67% > 20%)
+_write_record(_sd_d / "tables" / "notes", "note.md", "00000000000000000000000000000004")  # kept, under brake
+_brake_raised = False
+_brake_msg = ""
+try:
+    dsync.reap_orphans(
+        "widgetco", ["insurance", "notes"],
+        {"insurance": {_ID1}, "notes": {"00000000000000000000000000000004"}}, _sd_d,
+        dry_run=False, volume_brake=0.2, date="2026-08-27",
+    )
+except dsync.VolumeBrakeExceeded as _e:
+    _brake_raised = True
+    _brake_msg = str(_e)
+check("reap_d_brake_raises", _brake_raised)
+check("reap_d_brake_message_names_table", "insurance" in _brake_msg)
+check("reap_d_brake_moved_nothing_over_threshold_table",
+      (_sd_d / "tables" / "insurance" / "widget-b.md").is_file()
+      and (_sd_d / "tables" / "insurance" / "widget-c.md").is_file())
+check("reap_d_brake_moved_nothing_even_under_threshold_table",
+      not (_sd_d / "_retired").exists())
+
+# ---- (e) dry_run: reports the full plan, moves NOTHING, never creates _retired/ ----
+_sd_e = _reap_state_dir()
+_write_record(_sd_e / "tables" / "insurance", "widget-a.md", _ID1)
+_write_record(_sd_e / "tables" / "insurance", "widget-b.md", _ID2)  # orphan
+_write_record(_sd_e / "tables" / "insurance", "widget-c.md", _ID3)
+_rep_e = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1, _ID3}}, _sd_e,
+    dry_run=True, volume_brake=0.5, date="2026-08-27",
+)
+check("reap_e_not_skipped", _rep_e.skipped is False)
+check("reap_e_plan_reports_orphan", _rep_e.by_table["insurance"].orphans == ["widget-b.md"])
+check("reap_e_plan_moved_list_empty_under_dry_run", _rep_e.by_table["insurance"].moved == [])
+check("reap_e_dry_run_touches_nothing",
+      (_sd_e / "tables" / "insurance" / "widget-b.md").is_file())
+check("reap_e_dry_run_never_creates_retired_dir", not (_sd_e / "_retired").exists())
+
+# ---- (f) A84 identity, not path: a record whose notion_id IS still fetched but
+# whose slug/filename changed (title edit) is NOT reaped ----
+_sd_f = _reap_state_dir()
+# filename deliberately does NOT match any slug derivable from "name" below —
+# stands in for a post-rename file (old slug on disk, new title in Notion).
+_write_record(_sd_f / "tables" / "insurance", "some-completely-different-old-slug.md", _ID1,
+              name="Renamed Widget Title")
+_rep_f = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1}}, _sd_f,   # id still fetched
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_f_renamed_record_kept",
+      (_sd_f / "tables" / "insurance" / "some-completely-different-old-slug.md").is_file())
+check("reap_f_no_orphans_reported", _rep_f.by_table["insurance"].orphans == [])
+check("reap_f_no_retired_dir_created", not (_sd_f / "_retired").exists())
+
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
