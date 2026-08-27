@@ -1,6 +1,10 @@
 param([Parameter(Mandatory)][string]$TaskId,
       [Parameter(Mandatory)][string]$EnvRoot,
       [Parameter(Mandatory)][string]$PluginRoot,
+      # Optional silo scope for a per-silo script task (e.g. aios-domain-sync): when set,
+      # `--silo <Silo>` is appended so an instance can register a silo-scoped nightly
+      # (Personal only) rather than the manifest's generic all-silos default.
+      [string]$Silo,
       [switch]$ReportOnly)
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
@@ -74,7 +78,9 @@ if ($manifest.type -eq 'script') {
   if (-not (Test-Path $script)) { Add-Content $log "$stamp  ERROR: script not found at $script"; exit 1 }
   Set-Location $EnvRoot
   Start-Activity
-  $result = & $py $script --env-root $EnvRoot
+  $scriptArgs = @('--env-root', $EnvRoot)
+  if ($Silo) { $scriptArgs += @('--silo', $Silo) }   # silo-scoped nightly (else the script's own default)
+  $result = & $py $script @scriptArgs
   $code = $LASTEXITCODE
   Stop-Activity $code
   Complete-Run ($result | Out-String)
