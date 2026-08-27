@@ -42,7 +42,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import notion_gather  # noqa: E402  (reuse, don't reimplement — token resolution + _query_source)
-from state_validate import _extract_frontmatter  # noqa: E402  (reuse — same reader domain_mirror uses)
+import domain_mirror as dm  # noqa: E402  (reuse — load_silo_config/import_silo/notion_id_from_url/find_env_root)
+from stable_slugs import load_slugmap, save_slugmap, stable_slugs  # noqa: E402  (Task 1, reused verbatim)
+from state_validate import _extract_frontmatter, validate_file  # noqa: E402  (reuse — same reader domain_mirror uses)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -390,3 +392,324 @@ def reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir, *,
 
     return ReapReport(silo=silo, dry_run=dry_run, skipped=False, reason="",
                        date=reap_date, by_table=by_table)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# sync_silo — Task 4: the orchestration. Walks a silo's mapped tables end to
+# end: gather -> stable_slugs -> write_snapshot -> import_silo -> reap_orphans
+# -> state_validate -> sync-status.json. Every piece it calls is REUSED
+# (Tasks 1-3 + the existing engine); this function is only the seam.
+#
+# Paper-Governs: sync_silo NEVER commits (that stays the deploy-task/Seth
+# step — the first FO commit is Seth-gated, plan §Paper-Governs gate 2). GM is
+# EXCLUDED entirely (S9 — local-SSOT, publish-out): calling this on "gm"
+# touches nothing, not even its schema.yaml.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GM_EXCLUDED_REASON = ("GM excluded from domain-sync — local-SSOT with publish-OUT (S9); "
+                        "applying the sync would destroy its factory-authored records. "
+                        "Never gathered, never touched.")
+
+
+@dataclass
+class TableSyncResult:
+    """One mapped table's gather/import outcome for this run.
+
+    `gather_error` is `""` on a clean fetch; non-empty marks this table (and,
+    via `SyncReport.degraded`, the whole silo) degraded for this run — the
+    caller-contract `reap_orphans` already expects (Task 3: a mapped table
+    absent from `fetched_ids_by_table`, or mapped to `None`, skips the ENTIRE
+    silo's reap — never partial)."""
+    source_db: str
+    row_count: int    # rows gather returned (0 on a degraded table)
+    imported: int      # records import_silo actually wrote for this table this run
+    gather_error: str   # "" clean; else the exception text, verbatim
+
+
+@dataclass
+class SyncReport:
+    """Full-silo sync outcome. `skipped=True` means the GM exclusion fired —
+    every other field is a placeholder/empty and nothing was read or
+    written. `reap` is `None` under `dry_run` (reap never runs) or when the
+    caller passed `no_reap=True`; `validate_pass`/`validate_errors` are
+    `None`/`[]` under `dry_run` (nothing was written to validate) and
+    populated otherwise, degraded or not (state_validate always runs after an
+    import, per the plan). `status_path` is `None` whenever nothing was
+    written (`dry_run`, or the GM skip)."""
+    silo: str
+    dry_run: bool
+    skipped: bool
+    reason: str
+    degraded: bool
+    degraded_tables: list
+    tables: dict          # source_db -> TableSyncResult
+    reap: object            # ReapReport | None
+    validate_pass: object    # bool | None
+    validate_errors: list
+    status_path: object       # Path | None
+
+
+def _validate_silo(state_dir, schema):
+    """Validate every mapped record on disk against the silo's schema —
+    `state_validate`'s own `--all` convention (skip `README.md` + any
+    `_views/` path component; `main()` above), reused here rather than
+    shelled out to, so this function can return the pass/fail + error list
+    `sync_silo` needs for the status sidecar instead of stdout text. A single
+    malformed record's validation error is caught and reported like any other
+    schema violation — never allowed to abort the batch."""
+    tables_dir = Path(state_dir) / "tables"
+    if not tables_dir.is_dir():
+        return True, []
+    targets = [p for p in sorted(tables_dir.rglob("*.md"))
+               if p.name != "README.md" and "_views" not in p.parts]
+    errors = []
+    for p in targets:
+        try:
+            errs = validate_file(p, schema)
+        except Exception as exc:  # noqa: BLE001 - one malformed record must never abort validation
+            errs = [f"could not validate ({type(exc).__name__}: {exc})"]
+        errors.extend(f"{p}: {e}" for e in errs)
+    return (not errors), errors
+
+
+# ── sync-status.json — reuses A60's exact sweep-status.json PATTERN (atomic
+# tmp+os.replace write; last_attempt_utc/last_good_utc/consecutive_degraded
+# persisted run-over-run so a permanently-degraded silo can't hide behind a
+# fresh-looking last_attempt_utc). Source: engine/tools/resolve_sweep_task.py
+# STATUS_FILE/_read_status/_write_status + its run()'s degraded-vs-good
+# branches (git show 7f2a720^:engine/tools/resolve_sweep_task.py — the whole
+# resolve/dossier surface was later retired wholesale as moat-free, A91, but
+# THIS sidecar pattern is what H51 says to reuse rather than invent a sixth
+# observability surface). The literal field NAMES that were specific to the
+# resolve sweep's own content (candidates_fingerprint/candidates_unchanged_
+# days/last_source) have no sync analog and are not reproduced; the freshness/
+# degraded-streak fields + the atomic-write mechanics are reused verbatim. ──
+SYNC_STATUS_FILE = "sync-status.json"
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_sync_status(state_dir):
+    try:
+        with open(Path(state_dir) / SYNC_STATUS_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_status_file(state_dir, status):
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    tmp = state_dir / (SYNC_STATUS_FILE + ".tmp")
+    tmp.write_text(json.dumps(status, indent=2, ensure_ascii=False), encoding="utf-8")
+    dest = state_dir / SYNC_STATUS_FILE
+    tmp.replace(dest)                        # atomic — a crash mid-write can't corrupt the sidecar
+    return dest
+
+
+def _write_sync_status(state_dir, silo, *, degraded, degraded_tables, tables, reap, no_reap,
+                        validate_pass, validate_errors) -> Path:
+    prior = _read_sync_status(state_dir)
+    now = _utcnow()
+    consecutive_degraded = (int(prior.get("consecutive_degraded") or 0) + 1) if degraded else 0
+    reap_skipped = reap.skipped if reap is not None else True
+    if reap is not None and reap.skipped:
+        reap_skip_reason = reap.reason
+    elif reap is None and no_reap:
+        reap_skip_reason = "no_reap flag"
+    else:
+        reap_skip_reason = ""
+    reap_by_table = reap.by_table if (reap is not None and not reap.skipped) else {}
+    tables_status = {}
+    for db, tr in tables.items():
+        rr = reap_by_table.get(db)
+        tables_status[db] = {
+            "row_count": tr.row_count,
+            "imported": tr.imported,
+            "gather_error": tr.gather_error,
+            "reaped": len(rr.moved) if rr else 0,
+            "skipped_no_id": rr.skipped_no_id if rr else 0,
+            # "malformed-skipped" (brief): files reap considered but could not read an identity
+            # from at all (unparseable frontmatter) — total minus the two readable buckets.
+            "malformed_skipped": (rr.total - rr.eligible - rr.skipped_no_id) if rr else 0,
+        }
+    status = {
+        "last_attempt_utc": now,
+        "last_good_utc": (prior.get("last_good_utc") if degraded else now),
+        "consecutive_degraded": consecutive_degraded,
+        "silo": silo,
+        "status": "degraded" if degraded else "written",
+        "degraded_tables": sorted(degraded_tables),
+        "reap_skipped": reap_skipped,
+        "reap_skip_reason": reap_skip_reason,
+        "validate": {"pass": validate_pass, "error_count": len(validate_errors),
+                     "errors": validate_errors[:20]},
+        "tables": tables_status,
+    }
+    return _write_status_file(state_dir, status)
+
+
+def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
+              _gather=None) -> SyncReport:
+    """The orchestration: gather -> stable_slugs -> write_snapshot -> import_silo
+    -> reap_orphans -> state_validate -> sync-status.json.
+
+    `_gather` is the hermetic test seam ("monkeypatch or inject gather_table",
+    the plan's Task 4 Step 1) — a callable `(silo, table_cfg) -> rows`
+    standing in for the live `gather_table`. Defaults to the real
+    `gather_table`, so an unmodified CLI call gathers for real; every OTHER
+    step (stable_slugs/write_snapshot/import_silo/reap_orphans/
+    state_validate) is always the REAL engine call — hermetic tests are
+    hermetic only because `_gather` never reaches Notion.
+
+    GM is EXCLUDED entirely (S9): `silo == "gm"` returns a `skipped` report
+    immediately, before even reading its schema.yaml — never gathered, never
+    imported, never reaped.
+
+    `dry_run=True` short-circuits BEFORE any write: gathers each table (so
+    the report reflects a real plan) and runs `stable_slugs` in memory only,
+    but writes NOTHING — no snapshot, no persisted `_slugmap.json`, no
+    import, no reap, no status file (plan Task 4 Step 1/2-4 acceptance).
+
+    A per-table gather failure marks that table (and the whole silo)
+    `degraded` rather than raising — `fetched_ids_by_table[db] = None` is
+    `reap_orphans`'s own degraded-skip signal (Task 3), so passing it through
+    unmodified makes reap skip the ENTIRE silo whenever any mapped table
+    failed to gather, exactly as Task 3 already guards. A degraded table with
+    no PRIOR snapshot on disk (a first-ever sync) would otherwise make
+    `import_silo` raise `FileNotFoundError` for the whole silo (it always
+    expects one export per mapped table, reused unmodified here) — so a
+    degraded table without a stale snapshot to fall back on gets an empty
+    (0-row) stub written instead, letting its unaffected siblings still
+    import normally (spec "Hard part 3": per-table all-or-nothing, never a
+    partial write) while it contributes zero new/changed records itself.
+    """
+    if silo == "gm":
+        return SyncReport(silo=silo, dry_run=dry_run, skipped=True, reason=_GM_EXCLUDED_REASON,
+                           degraded=False, degraded_tables=[], tables={}, reap=None,
+                           validate_pass=None, validate_errors=[], status_path=None)
+
+    gather_fn = _gather or gather_table
+    env_root = Path(env_root)
+    cfg = dm.load_silo_config(env_root, silo)
+    state_dir = cfg["state_dir"]
+    snapshot_dir = state_dir / "_snapshots"     # Personal's already-working flat pattern (no date subdir)
+    slugmap_path = state_dir / "_slugmap.json"
+    slugmap = load_slugmap(slugmap_path)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mapped_tables = [t["source_db"] for t in cfg["tables"]]
+
+    tables_result = {}
+    fetched_ids_by_table = {}
+    degraded_tables = []
+
+    for table in cfg["tables"]:
+        db = table["source_db"]
+        try:
+            rows = gather_fn(silo, table)
+        except Exception as exc:  # noqa: BLE001 - a gather failure degrades THIS table, never crashes the silo
+            degraded_tables.append(db)
+            fetched_ids_by_table[db] = None      # reap_orphans' own degraded-skip signal (Task 3)
+            tables_result[db] = TableSyncResult(source_db=db, row_count=0, imported=0,
+                                                 gather_error=str(exc))
+            continue
+        u2s = stable_slugs(db, rows, slugmap)    # mutates slugmap in place (first-seen-wins, A84)
+        fetched_ids_by_table[db] = {dm.notion_id_from_url(r["url"]) for r in rows}
+        tables_result[db] = TableSyncResult(source_db=db, row_count=len(rows), imported=0, gather_error="")
+        if not dry_run:
+            write_snapshot(silo, table, rows, u2s, snapshot_dir, exported=today)
+
+    degraded = bool(degraded_tables)
+
+    if dry_run:
+        return SyncReport(silo=silo, dry_run=True, skipped=False, reason="",
+                           degraded=degraded, degraded_tables=degraded_tables, tables=tables_result,
+                           reap=None, validate_pass=None, validate_errors=[], status_path=None)
+
+    save_slugmap(slugmap_path, slugmap)
+
+    for db in degraded_tables:
+        stub_path = snapshot_dir / f"{db}-export.json"
+        if not stub_path.is_file():
+            table = next(t for t in cfg["tables"] if t["source_db"] == db)
+            write_snapshot(silo, table, [], {}, snapshot_dir, exported=today)
+
+    written = dm.import_silo(env_root, silo, snapshot_dir, last_synced=today)
+    tables_root = state_dir / "tables"
+    for p in written:
+        db_key = p.parent.relative_to(tables_root).as_posix()
+        if db_key in tables_result:
+            tables_result[db_key].imported += 1
+
+    reap_report = None
+    if not no_reap:
+        reap_report = reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir,
+                                    dry_run=False, volume_brake=volume_brake, date=today)
+
+    validate_pass, validate_errors = _validate_silo(state_dir, cfg["schema"])
+
+    status_path = _write_sync_status(
+        state_dir, silo, degraded=degraded, degraded_tables=degraded_tables, tables=tables_result,
+        reap=reap_report, no_reap=no_reap, validate_pass=validate_pass, validate_errors=validate_errors,
+    )
+
+    return SyncReport(silo=silo, dry_run=False, skipped=False, reason="",
+                       degraded=degraded, degraded_tables=degraded_tables, tables=tables_result,
+                       reap=reap_report, validate_pass=validate_pass, validate_errors=validate_errors,
+                       status_path=status_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI — `python domain_sync.py --silo <silo> [--dry-run] [--no-reap]`. `--all`
+# loops every non-GM mapped silo (any `state/domains/<silo>/schema.yaml`),
+# for the nightly scheduled task (`deploy/tasks/domain-sync.md`), which
+# invokes this file directly (`type: "script"` in tasks.manifest.json).
+# Notion token resolution only happens inside `gather_table`, reached only
+# when this actually gathers — never on `--dry-run`... no, `--dry-run` DOES
+# gather (Task 4 Step 1: a dry-run still reports a real plan); only a
+# process with no configured token never reaches this file at all outside a
+# live run, so this CLI path is exercised by the controller's live smoke,
+# never by the hermetic test suite (plan brief).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _discover_silos(env_root):
+    domains_dir = Path(env_root) / "state" / "domains"
+    if not domains_dir.is_dir():
+        return []
+    return sorted(p.parent.name for p in domains_dir.glob("*/schema.yaml") if p.parent.name != "gm")
+
+
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="domain_sync.py")
+    ap.add_argument("--env-root", help="defaults to the first ancestor with profile/domains.yaml")
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument("--silo", help="run one silo (GM is refused - S9)")
+    group.add_argument("--all", action="store_true", help="run every non-GM mapped silo")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-reap", action="store_true")
+    args = ap.parse_args(argv)
+
+    env_root = Path(args.env_root) if args.env_root else dm.find_env_root(Path(__file__))
+    silos = _discover_silos(env_root) if args.all else [args.silo]
+
+    any_degraded = False
+    for silo in silos:
+        report = sync_silo(env_root, silo, dry_run=args.dry_run, no_reap=args.no_reap)
+        if report.skipped:
+            print(f"[{silo}] skipped — {report.reason}")
+            continue
+        tag = "DEGRADED" if report.degraded else ("dry-run" if report.dry_run else "written")
+        any_degraded = any_degraded or report.degraded
+        row_counts = {db: tr.row_count for db, tr in report.tables.items()}
+        print(f"[{silo}] {tag} — rows={row_counts} "
+              f"reap_skipped={report.reap.skipped if report.reap else (not report.dry_run)} "
+              f"validate_pass={report.validate_pass} status={report.status_path}")
+    return 1 if any_degraded else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

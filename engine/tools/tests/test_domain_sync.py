@@ -543,6 +543,165 @@ check("reap_i_no_id_records_untouched",
       all((_sd_i / "tables" / "insurance" / f"no-id-{_n}.md").is_file() for _n in range(4)))
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# sync_silo — Task 4, the orchestration walker (gather -> stable_slugs ->
+# write_snapshot -> import_silo -> reap_orphans -> state_validate ->
+# sync-status.json). Hermetic: gather is FAKED via the `_gather` injection
+# seam ("monkeypatch or inject gather_table", plan Task 4 Step 1) — every
+# OTHER step is the REAL engine call, on a fresh `_fixture_silo()` per
+# scenario (never the real state/domains tree). Zero real FO tokens.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _fake_gather_ok(rows_by_table):
+    def _gather(silo, table_cfg):
+        return rows_by_table[table_cfg["source_db"]]
+    return _gather
+
+
+# ---- (1) full pipeline end-to-end: expected records + a sync-status.json in A60 shape ----
+_root4a, _sd4a = _fixture_silo()
+_rows4a = {
+    "insurance": [
+        {"url": "https://app.notion.com/00000000000000000000000000000101",
+         "Name": "Alpha Widget", "Active": "__YES__"},
+    ],
+    "logs/notes": [
+        {"url": "https://app.notion.com/00000000000000000000000000000102", "Note": "A pipeline note"},
+    ],
+}
+_rep4a = dsync.sync_silo(_root4a, "widgetco", _gather=_fake_gather_ok(_rows4a))
+check("sync_pipeline_not_skipped", _rep4a.skipped is False)
+check("sync_pipeline_not_degraded", _rep4a.degraded is False)
+check("sync_pipeline_insurance_record_written",
+      (_sd4a / "tables" / "insurance" / "alpha-widget.md").is_file())
+check("sync_pipeline_notes_record_written",
+      (_sd4a / "tables" / "logs" / "notes" / "a-pipeline-note.md").is_file())
+check("sync_pipeline_slugmap_persisted", (_sd4a / "_slugmap.json").is_file())
+_slugmap4a = json.loads((_sd4a / "_slugmap.json").read_text(encoding="utf-8"))
+check("sync_pipeline_slugmap_has_both_ids",
+      "00000000000000000000000000000101" in _slugmap4a
+      and "00000000000000000000000000000102" in _slugmap4a)
+check("sync_pipeline_status_path_matches", _rep4a.status_path == _sd4a / "sync-status.json")
+check("sync_pipeline_status_file_exists", _rep4a.status_path.is_file())
+_status4a = json.loads(_rep4a.status_path.read_text(encoding="utf-8"))
+# A60-shape sidecar: freshness + degraded-streak fields, atomic tmp+replace write (no .tmp left behind)
+check("sync_pipeline_status_has_a60_fields",
+      {"last_attempt_utc", "last_good_utc", "consecutive_degraded"} <= set(_status4a))
+check("sync_pipeline_status_no_tmp_file_left", not (_sd4a / "sync-status.json.tmp").exists())
+check("sync_pipeline_status_value", _status4a["status"] == "written")
+check("sync_pipeline_status_consecutive_degraded_zero", _status4a["consecutive_degraded"] == 0)
+check("sync_pipeline_status_tables_present",
+      "insurance" in _status4a["tables"] and "logs/notes" in _status4a["tables"])
+check("sync_pipeline_status_insurance_imported", _status4a["tables"]["insurance"]["imported"] == 1)
+check("sync_pipeline_status_notes_imported", _status4a["tables"]["logs/notes"]["imported"] == 1)
+check("sync_pipeline_validate_pass", _rep4a.validate_pass is True)
+check("sync_pipeline_validate_status_pass", _status4a["validate"]["pass"] is True)
+check("sync_pipeline_reap_ran_not_skipped", _rep4a.reap is not None and _rep4a.reap.skipped is False)
+check("sync_pipeline_status_reap_not_skipped", _status4a["reap_skipped"] is False)
+
+
+# ---- (2) GM is EXCLUDED entirely (S9) — refused before even reading its schema.yaml;
+# a deliberately-nonexistent env_root proves it, since sync_silo would raise trying to
+# resolve anything under it if it looked at all. ----
+_rep4b = dsync.sync_silo(Path(tempfile.mkdtemp()) / "does-not-exist-at-all", "gm")
+check("sync_gm_skipped", _rep4b.skipped is True)
+check("sync_gm_reason_names_exclusion", "S9" in _rep4b.reason or "local-SSOT" in _rep4b.reason)
+check("sync_gm_no_status_path", _rep4b.status_path is None)
+check("sync_gm_no_tables_touched", _rep4b.tables == {})
+check("sync_gm_no_reap", _rep4b.reap is None)
+
+
+# ---- (3) a degraded gather (one mapped table's fetch fails) -> status degraded, reap
+# SKIPPED for the WHOLE silo (Task 3's own guard, forwarded through unmodified) — a
+# pre-existing on-disk record that WOULD be an orphan under a clean run must survive
+# untouched, and the sibling (healthy) table must still import normally (per-table
+# all-or-nothing, spec Hard part 3). ----
+_root4c, _sd4c = _fixture_silo()
+_write_record(_sd4c / "tables" / "insurance", "stale-widget.md",
+              "00000000000000000000000000000199", "Stale Widget")
+_rows4c = {
+    "insurance": [
+        {"url": "https://app.notion.com/00000000000000000000000000000103",
+         "Name": "Beta Widget", "Active": "__NO__"},
+    ],
+}
+
+
+def _gather4c(silo, table_cfg):
+    if table_cfg["source_db"] == "logs/notes":
+        raise RuntimeError("simulated Notion query failure")
+    return _rows4c[table_cfg["source_db"]]
+
+
+_rep4c = dsync.sync_silo(_root4c, "widgetco", _gather=_gather4c)
+check("sync_degraded_flag_set", _rep4c.degraded is True)
+check("sync_degraded_table_named", _rep4c.degraded_tables == ["logs/notes"])
+check("sync_degraded_reap_present_but_skipped",
+      _rep4c.reap is not None and _rep4c.reap.skipped is True)
+check("sync_degraded_stale_record_untouched_no_records_moved",
+      (_sd4c / "tables" / "insurance" / "stale-widget.md").is_file())
+check("sync_degraded_no_retired_dir_created", not (_sd4c / "_retired").exists())
+check("sync_degraded_sibling_table_still_imported",
+      (_sd4c / "tables" / "insurance" / "beta-widget.md").is_file())
+_status4c = json.loads(_rep4c.status_path.read_text(encoding="utf-8"))
+check("sync_degraded_status_value", _status4c["status"] == "degraded")
+check("sync_degraded_status_names_table", "logs/notes" in _status4c["degraded_tables"])
+check("sync_degraded_status_reap_skipped", _status4c["reap_skipped"] is True)
+check("sync_degraded_status_consecutive_degraded_one", _status4c["consecutive_degraded"] == 1)
+
+
+# ---- (4) dry_run writes/commits NOTHING — gathers (a real plan) but no snapshot, no
+# persisted slugmap, no import, no reap, no status file. ----
+_root4d, _sd4d = _fixture_silo()
+_rows4d = {
+    "insurance": [{"url": "https://app.notion.com/00000000000000000000000000000104",
+                   "Name": "Gamma Widget", "Active": "__YES__"}],
+    "logs/notes": [{"url": "https://app.notion.com/00000000000000000000000000000105", "Note": "Dry run note"}],
+}
+_rep4d = dsync.sync_silo(_root4d, "widgetco", dry_run=True, _gather=_fake_gather_ok(_rows4d))
+check("sync_dryrun_not_skipped", _rep4d.skipped is False)
+check("sync_dryrun_flag_set", _rep4d.dry_run is True)
+check("sync_dryrun_no_status_path", _rep4d.status_path is None)
+check("sync_dryrun_no_snapshot_dir_created", not (_sd4d / "_snapshots").exists())
+check("sync_dryrun_no_slugmap_persisted", not (_sd4d / "_slugmap.json").exists())
+check("sync_dryrun_no_records_written", not any((_sd4d / "tables").rglob("*.md")))
+check("sync_dryrun_no_status_file", not (_sd4d / "sync-status.json").exists())
+check("sync_dryrun_reports_real_plan_row_counts",
+      _rep4d.tables["insurance"].row_count == 1 and _rep4d.tables["logs/notes"].row_count == 1)
+check("sync_dryrun_no_reap", _rep4d.reap is None)
+check("sync_dryrun_no_validate", _rep4d.validate_pass is None)
+
+
+# ---- (5) fetched-id normalization — the ids handed to reap_orphans are notion_id_from_url
+# of the gathered rows' urls (the SAME normalization the mirror's own records' notion_id
+# frontmatter is built from), so reap's identity comparison can never mismatch. ----
+_root4e, _sd4e = _fixture_silo()
+_rows4e = {
+    "insurance": [{"url": "https://app.notion.com/00000000000000000000000000000106",
+                   "Name": "Delta Widget", "Active": "__YES__"}],
+    "logs/notes": [{"url": "https://app.notion.com/00000000000000000000000000000107", "Note": "Norm note"}],
+}
+_captured4e = {}
+_orig_reap4e = dsync.reap_orphans
+
+
+def _spy_reap4e(silo, mapped_tables, fetched_ids_by_table, state_dir, **kw):
+    _captured4e["fetched"] = dict(fetched_ids_by_table)
+    return _orig_reap4e(silo, mapped_tables, fetched_ids_by_table, state_dir, **kw)
+
+
+dsync.reap_orphans = _spy_reap4e
+try:
+    dsync.sync_silo(_root4e, "widgetco", _gather=_fake_gather_ok(_rows4e))
+finally:
+    dsync.reap_orphans = _orig_reap4e
+
+check("sync_norm_insurance_ids_match",
+      _captured4e["fetched"]["insurance"] == {dm.notion_id_from_url(r["url"]) for r in _rows4e["insurance"]})
+check("sync_norm_notes_ids_match",
+      _captured4e["fetched"]["logs/notes"] == {dm.notion_id_from_url(r["url"]) for r in _rows4e["logs/notes"]})
+
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
