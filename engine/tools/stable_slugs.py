@@ -167,19 +167,29 @@ def _sessions_slug(row: dict, notion_id: str, seen: set) -> str:
     return slug
 
 
-def _new_slug_for(table_key: str, row: dict, notion_id: str, seen: set) -> str:
-    """Dispatch a NEW notion_id (not yet in the slugmap) to its table's bespoke rule."""
+def _new_slug_for(table_key: str, row: dict, notion_id: str, seen: set, title_field=None) -> str:
+    """Dispatch a NEW notion_id (not yet in the slugmap) to its table's bespoke rule.
+
+    `title_field` (Task 2, S14/A84 Plan-4) is the caller's schema-derived title
+    property name — when given it WINS over the `_GENERIC_RULES` dict's name
+    field, generalizing slug assignment past the FamilyOffice-only hardcoded dict to any
+    silo. The dict remains the fallback (so an omitted `title_field` reproduces
+    the exact FO golden path byte-for-byte) and the source of the empty-name
+    default word when the dict has an entry for this table.
+    """
     if table_key == "prices":
         return _prices_slug(row)
     if table_key == "sessions":
         return _sessions_slug(row, notion_id, seen)
-    if table_key in _GENERIC_RULES:
-        name_field, default = _GENERIC_RULES[table_key]
-        return _unique_slug(row.get(name_field), notion_id, default, seen)
-    raise ValueError(f"stable_slugs: no slug rule recovered for table {table_key!r}")
+    dict_field, dict_default = _GENERIC_RULES.get(table_key, (None, None))
+    name_field = title_field or dict_field
+    default = dict_default or (table_key.rstrip("s") or table_key)  # deterministic fallback word
+    if name_field is None:
+        raise ValueError(f"stable_slugs: no title_field and no rule for table {table_key!r}")
+    return _unique_slug(row.get(name_field), notion_id, default, seen)
 
 
-def stable_slugs(table_name: str, rows: list[dict], slugmap: dict) -> dict:
+def stable_slugs(table_name: str, rows: list[dict], slugmap: dict, *, title_field=None) -> dict:
     """First-seen-wins slug assignment for one table's export rows.
 
     `slugmap` is the persistent `{notion_id: slug}` map (mutated in place AND
@@ -192,6 +202,14 @@ def stable_slugs(table_name: str, rows: list[dict], slugmap: dict) -> dict:
     `table_name` may be a bare table key ("sessions") or a nested
     `source_db` ("logs/sessions") — dispatch normalizes on the basename so
     either form from a caller works.
+
+    `title_field` (keyword-only, Task 2 Plan-4) is the schema-derived Notion
+    title property name for this table (the `notion_fields` entry whose spec
+    is `[<Prop>, "title"]`). When given, it wins over the FO `_GENERIC_RULES`
+    dict for the generic (non-prices/non-sessions) dispatch, so any silo's
+    table slugs correctly from its own schema. `title_field=None` (the
+    default) reproduces the existing dict-only behavior exactly — this is
+    what keeps the FO golden reproduction byte-exact.
     """
     table_key = Path(table_name).name
     seen = set(slugmap.values())  # global uniqueness, not just this batch (A84 incremental sync)
@@ -201,7 +219,7 @@ def stable_slugs(table_name: str, rows: list[dict], slugmap: dict) -> dict:
         if notion_id in slugmap:
             slug = slugmap[notion_id]
         else:
-            slug = _new_slug_for(table_key, row, notion_id, seen)
+            slug = _new_slug_for(table_key, row, notion_id, seen, title_field=title_field)
             slugmap[notion_id] = slug
         url_to_slug[row["url"]] = slug
     return url_to_slug

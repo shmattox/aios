@@ -48,6 +48,54 @@ from state_validate import _extract_frontmatter, validate_file  # noqa: E402  (r
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# seed_slugmap — Task 1: bootstrap `_slugmap.json` from the EXISTING on-disk
+# mirror, so a silo's FIRST sync re-uses every record's current slug (A84
+# first-seen-wins) instead of re-slugging from scratch. Reuses the same
+# frontmatter reader reap_orphans/domain_mirror already use
+# (state_validate._extract_frontmatter) — no new parser.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _frontmatter_notion_id(path):
+    """One record's frontmatter `notion_id`, or `None` if the file's frontmatter
+    is unparseable or the key is missing/empty. Never guesses — a record with
+    no readable identity is simply skipped by the caller."""
+    try:
+        fm = _extract_frontmatter(Path(path).read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    return fm.get("notion_id") or None
+
+
+def seed_slugmap(state_dir, *, dry_run=False) -> dict:
+    """Bootstrap {notion_id: slug} from the EXISTING on-disk mirror so a first
+    sync re-uses every record's current slug (A84 first-seen-wins) instead of
+    re-slugging from scratch. slug = filename stem; notion_id = frontmatter
+    `notion_id`. A record with no notion_id is skipped (can't key it) — never
+    guessed. Idempotent; deterministic key order (save_slugmap).
+
+    NON-DESTRUCTIVE: seeds into (never replaces) any existing `_slugmap.json` —
+    an entry already present WINS (A84 first-seen-wins), so re-seeding never
+    re-slugs a record on disk-title drift, and an id this `.md`-only scan cannot
+    see (e.g. an FO `.ndjson`-row id already in the map) is preserved, not
+    clobbered. Only `*.md` records are read (Personal is all flat `*.md`, no
+    nested `.ndjson`; a silo with an `.ndjson` table would need its rows seeded
+    separately — those rows' existing map entries are left intact here)."""
+    state_dir = Path(state_dir)
+    tables_root = state_dir / "tables"
+    out = dict(load_slugmap(state_dir / "_slugmap.json"))  # merge, don't overwrite
+    skipped = 0
+    for md in sorted(tables_root.rglob("*.md")):
+        nid = _frontmatter_notion_id(md)   # reuses domain_mirror's reader (state_validate._extract_frontmatter)
+        if not nid:
+            skipped += 1
+            continue
+        out.setdefault(nid, md.stem)       # existing slugmap entry wins (A84); never re-slug on drift
+    if not dry_run:
+        save_slugmap(state_dir / "_slugmap.json", out)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # The snapshot writer
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -583,6 +631,20 @@ def _write_sync_status(state_dir, silo, *, degraded, degraded_tables, tables, re
     return _write_status_file(state_dir, status)
 
 
+def _title_field_of(table_cfg):
+    """The Notion title property for one `load_silo_config` table entry (Task 2,
+    S14/A84 Plan-4): the `notion_fields` entry whose spec is `[<Prop>, "title"]`,
+    already carried on `table_cfg["fields"]` as `(field, kind, link_tmpl, prop,
+    rel_source)`. `None` when a table declares no title field (falls back to
+    `stable_slugs`'s FO `_GENERIC_RULES` dict, or raises if that table has no
+    rule either) — never a live Notion lookup, fact-free (schema-derived only).
+    """
+    for _field, kind, _link_tmpl, prop, _rel_source in table_cfg["fields"]:
+        if kind == "title":
+            return prop
+    return None
+
+
 def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
               _gather=None) -> SyncReport:
     """The orchestration: gather -> stable_slugs -> write_snapshot -> import_silo
@@ -654,7 +716,8 @@ def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
             tables_result[db] = TableSyncResult(source_db=db, row_count=0, imported=0,
                                                  gather_error=str(exc))
             continue
-        u2s = stable_slugs(db, rows, slugmap)    # mutates slugmap in place (first-seen-wins, A84)
+        u2s = stable_slugs(db, rows, slugmap,    # mutates slugmap in place (first-seen-wins, A84)
+                           title_field=_title_field_of(table))
         fetched_ids_by_table[db] = {dm.notion_id_from_url(r["url"]) for r in rows}
         tables_result[db] = TableSyncResult(source_db=db, row_count=len(rows), imported=0, gather_error="")
         if not dry_run:
@@ -753,9 +816,25 @@ def main(argv=None):
     group.add_argument("--all", action="store_true", help="run every non-GM mapped silo")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-reap", action="store_true")
+    ap.add_argument("--seed", action="store_true",
+                     help="bootstrap _slugmap.json from the existing on-disk mirror (Task 1) "
+                          "instead of syncing; requires --silo")
     args = ap.parse_args(argv)
 
     env_root = Path(args.env_root) if args.env_root else dm.find_env_root(Path(__file__))
+
+    if args.seed:
+        if not args.silo:
+            ap.error("--seed requires --silo (not --all)")
+        if args.silo == "gm":
+            ap.error("GM is refused - S9 (local-SSOT, never a Notion-derived mirror); "
+                     "--seed refuses gm the same as sync_silo does")
+        cfg = dm.load_silo_config(env_root, args.silo)
+        got = seed_slugmap(cfg["state_dir"], dry_run=args.dry_run)
+        tag = " (dry-run)" if args.dry_run else ""
+        print(f"[{args.silo}] seeded {len(got)} slug(s) from on-disk mirror{tag}")
+        return 0
+
     silos = _discover_silos(env_root) if args.all else [args.silo]
 
     any_bad = False
