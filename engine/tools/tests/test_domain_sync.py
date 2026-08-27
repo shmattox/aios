@@ -702,6 +702,95 @@ check("sync_norm_notes_ids_match",
       _captured4e["fetched"]["logs/notes"] == {dm.notion_id_from_url(r["url"]) for r in _rows4e["logs/notes"]})
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Fix-loop round 1 (Task 4 review, IMPORTANT — no CRITICAL).
+# ══════════════════════════════════════════════════════════════════════════
+
+# ---- IMPORTANT-1: dm.import_silo writes as it iterates (no rollback) — an exception
+# mid-loop (e.g. a fail-loud `relation` coerce KeyError on a dangling cross-export url)
+# is a PARTIAL WRITE across tables. sync_silo must catch it, mark the silo `failed`
+# (distinct from `degraded`), record the reason, and NEVER run reap against that partial
+# import — a pre-existing on-disk record that would otherwise look orphaned must survive
+# untouched, and no _retired/ dir may appear at all. ----
+_root4f, _sd4f = _fixture_silo()
+_write_record(_sd4f / "tables" / "insurance", "orphan-before-failure.md",
+              "00000000000000000000000000000198", "Orphan Before Failure")
+_rows4f = {
+    "insurance": [{"url": "https://app.notion.com/00000000000000000000000000000108",
+                   "Name": "Epsilon Widget", "Active": "__YES__"}],
+    "logs/notes": [{"url": "https://app.notion.com/00000000000000000000000000000109",
+                    "Note": "Import-fail note"}],
+}
+
+
+def _boom_import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, last_synced=None):
+    raise KeyError("simulated cross-export relation KeyError (fail-loud _link)")
+
+
+_orig_import_silo4f = dm.import_silo
+dm.import_silo = _boom_import_silo
+try:
+    _rep4f = dsync.sync_silo(_root4f, "widgetco", _gather=_fake_gather_ok(_rows4f))
+finally:
+    dm.import_silo = _orig_import_silo4f
+
+check("sync_import_fail_flag_set", _rep4f.failed is True)
+check("sync_import_fail_reason_recorded", bool(_rep4f.failure_reason))
+check("sync_import_fail_not_reported_degraded", _rep4f.degraded is False)
+check("sync_import_fail_reap_never_ran", _rep4f.reap is None)
+check("sync_import_fail_no_reap_moves_pre_existing_record_untouched",
+      (_sd4f / "tables" / "insurance" / "orphan-before-failure.md").is_file())
+check("sync_import_fail_no_retired_dir_created", not (_sd4f / "_retired").exists())
+_status4f = json.loads(_rep4f.status_path.read_text(encoding="utf-8"))
+check("sync_import_fail_status_value", _status4f["status"] == "failed")
+check("sync_import_fail_status_distinct_from_degraded", "failed" != "degraded" and _status4f["status"] != "degraded")
+check("sync_import_fail_status_reap_skipped", _status4f["reap_skipped"] is True)
+check("sync_import_fail_status_failure_reason_present", bool(_status4f["failure_reason"]))
+check("sync_import_fail_status_consecutive_degraded_counts_it", _status4f["consecutive_degraded"] == 1)
+
+# a SECOND failed run must not treat the prior failed run as "good" (last_good_utc must not
+# advance, and the streak must keep climbing) — proves `failed` feeds the same freshness
+# tracking `degraded` does, not a silent side channel.
+dm.import_silo = _boom_import_silo
+try:
+    _rep4f2 = dsync.sync_silo(_root4f, "widgetco", _gather=_fake_gather_ok(_rows4f))
+finally:
+    dm.import_silo = _orig_import_silo4f
+_status4f2 = json.loads(_rep4f2.status_path.read_text(encoding="utf-8"))
+check("sync_import_fail_streak_climbs_on_repeat_failure", _status4f2["consecutive_degraded"] == 2)
+check("sync_import_fail_last_good_utc_not_advanced",
+      _status4f2["last_good_utc"] == _status4f["last_good_utc"])
+
+
+# ---- IMPORTANT-2: _validate_silo must also see *.ndjson tables (state_validate's own
+# --all convention validates BOTH .md and .ndjson, state_validate.py) — a broken ndjson
+# table must flip validate.pass to False, not be silently excluded by an .md-only glob. ----
+_root4g, _sd4g = _fixture_silo()
+_write_record(_sd4g / "tables" / "insurance", "clean-widget.md",
+              "00000000000000000000000000000197", "Clean Widget")
+(_sd4g / "tables" / "budget").mkdir(parents=True, exist_ok=True)
+# missing the schema's required `notion_id` -> a genuine schema violation, not just a
+# glob-discovery proof — confirms the ndjson content is actually being VALIDATED, not
+# merely found.
+(_sd4g / "tables" / "budget" / "rows.ndjson").write_text(
+    '{"type": "state-widget", "name": "Broken Row"}\n', encoding="utf-8")
+_schema4g = dm.load_silo_config(_root4g, "widgetco")["schema"]
+_ok4g, _errs4g = dsync._validate_silo(_sd4g, _schema4g)
+check("validate_silo_ndjson_not_silently_excluded", _ok4g is False)
+check("validate_silo_ndjson_error_names_the_file", any("rows.ndjson" in e for e in _errs4g))
+check("validate_silo_ndjson_error_names_missing_notion_id",
+      any("notion_id" in e for e in _errs4g))
+
+# positive control: the same tree WITHOUT the broken ndjson still passes (the fix didn't
+# just make everything fail) — proves the .md-only path is untouched.
+_root4h, _sd4h = _fixture_silo()
+_write_record(_sd4h / "tables" / "insurance", "clean-widget.md",
+              "00000000000000000000000000000196", "Clean Widget")
+_schema4h = dm.load_silo_config(_root4h, "widgetco")["schema"]
+_ok4h, _errs4h = dsync._validate_silo(_sd4h, _schema4h)
+check("validate_silo_clean_tree_still_passes", _ok4h is True and _errs4h == [])
+
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)

@@ -435,7 +435,13 @@ class SyncReport:
     `None`/`[]` under `dry_run` (nothing was written to validate) and
     populated otherwise, degraded or not (state_validate always runs after an
     import, per the plan). `status_path` is `None` whenever nothing was
-    written (`dry_run`, or the GM skip)."""
+    written (`dry_run`, or the GM skip). `failed=True` (fix-loop IMPORTANT-1)
+    means `dm.import_silo` itself raised — DISTINCT from `degraded` (which
+    means "some table's gather couldn't reach Notion," not "the write broke
+    mid-loop"): `import_silo` has no rollback, so any exception it raises
+    happened after SOME records were already written to disk — a partial
+    write. `reap` is always `None` in that case (reap must never run against
+    a partial import) and `failure_reason` carries the exception text."""
     silo: str
     dry_run: bool
     skipped: bool
@@ -447,21 +453,30 @@ class SyncReport:
     validate_pass: object    # bool | None
     validate_errors: list
     status_path: object       # Path | None
+    failed: bool = False       # dm.import_silo raised (fix-loop IMPORTANT-1) — a partial write
+    failure_reason: str = ""    # the exception text, verbatim; "" unless failed
 
 
 def _validate_silo(state_dir, schema):
     """Validate every mapped record on disk against the silo's schema —
     `state_validate`'s own `--all` convention (skip `README.md` + any
-    `_views/` path component; `main()` above), reused here rather than
-    shelled out to, so this function can return the pass/fail + error list
-    `sync_silo` needs for the status sidecar instead of stdout text. A single
-    malformed record's validation error is caught and reported like any other
-    schema violation — never allowed to abort the batch."""
+    `_views/` path component, and validate BOTH `*.md` records AND
+    `*.ndjson` tables — `main()` above, `state_validate.py`'s own `--all`
+    branch globs both), reused here rather than shelled out to, so this
+    function can return the pass/fail + error list `sync_silo` needs for the
+    status sidecar instead of stdout text. Fix-loop IMPORTANT-2: the `.md`-
+    only glob silently excluded `.ndjson` tables (e.g. FO's `tables/budget/`,
+    H83's finance-feed) while this function's own docstring claimed to
+    reproduce `--all` — `sync-status.json`'s `validate.pass` could read
+    `true` with a broken ndjson table sitting right next to it. A single
+    malformed record's validation error is caught and reported like any
+    other schema violation — never allowed to abort the batch."""
     tables_dir = Path(state_dir) / "tables"
     if not tables_dir.is_dir():
         return True, []
     targets = [p for p in sorted(tables_dir.rglob("*.md"))
                if p.name != "README.md" and "_views" not in p.parts]
+    targets += [p for p in sorted(tables_dir.rglob("*.ndjson")) if "_views" not in p.parts]
     errors = []
     for p in targets:
         try:
@@ -511,16 +526,28 @@ def _write_status_file(state_dir, status):
 
 
 def _write_sync_status(state_dir, silo, *, degraded, degraded_tables, tables, reap, no_reap,
-                        validate_pass, validate_errors) -> Path:
+                        validate_pass, validate_errors, failed=False, failure_reason="") -> Path:
     prior = _read_sync_status(state_dir)
     now = _utcnow()
-    consecutive_degraded = (int(prior.get("consecutive_degraded") or 0) + 1) if degraded else 0
-    reap_skipped = reap.skipped if reap is not None else True
-    if reap is not None and reap.skipped:
+    # `failed` (fix-loop IMPORTANT-1) is a WORSE outcome than `degraded` — a mid-loop
+    # import_silo exception, not just an unreachable source — so it must count toward the
+    # streak too, and must NOT be reported as a good run (last_good_utc must not advance).
+    is_bad = degraded or failed
+    consecutive_degraded = (int(prior.get("consecutive_degraded") or 0) + 1) if is_bad else 0
+    if failed:
+        # Louder+distinct from the ordinary reasons below: the reap wasn't skipped because a
+        # source was unreachable, it was skipped because the WRITE itself broke mid-loop and
+        # reaping against a partial import would compare against a half-written tree.
+        reap_skipped = True
+        reap_skip_reason = f"import_silo failed — never reap against a partial import: {failure_reason}"
+    elif reap is None:
+        reap_skipped = True
+        reap_skip_reason = "no_reap flag" if no_reap else ""
+    elif reap.skipped:
+        reap_skipped = True
         reap_skip_reason = reap.reason
-    elif reap is None and no_reap:
-        reap_skip_reason = "no_reap flag"
     else:
+        reap_skipped = False
         reap_skip_reason = ""
     reap_by_table = reap.by_table if (reap is not None and not reap.skipped) else {}
     tables_status = {}
@@ -538,10 +565,14 @@ def _write_sync_status(state_dir, silo, *, degraded, degraded_tables, tables, re
         }
     status = {
         "last_attempt_utc": now,
-        "last_good_utc": (prior.get("last_good_utc") if degraded else now),
+        "last_good_utc": (prior.get("last_good_utc") if is_bad else now),
         "consecutive_degraded": consecutive_degraded,
         "silo": silo,
-        "status": "degraded" if degraded else "written",
+        # tri-state, worst-first: "failed" (the write itself broke, partial) outranks
+        # "degraded" (a source was unreachable, nothing written for that table) outranks
+        # "written" (clean). Never conflate failed with degraded — they need different responses.
+        "status": "failed" if failed else ("degraded" if degraded else "written"),
+        "failure_reason": failure_reason,
         "degraded_tables": sorted(degraded_tables),
         "reap_skipped": reap_skipped,
         "reap_skip_reason": reap_skip_reason,
@@ -573,6 +604,13 @@ def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
     the report reflects a real plan) and runs `stable_slugs` in memory only,
     but writes NOTHING — no snapshot, no persisted `_slugmap.json`, no
     import, no reap, no status file (plan Task 4 Step 1/2-4 acceptance).
+
+    An `import_silo` exception (fix-loop IMPORTANT-1 — it writes as it
+    iterates, no rollback, so a mid-loop failure like a fail-loud `relation`
+    coerce on a dangling cross-export url leaves a PARTIAL write across
+    tables) is caught here and reported as `failed=True` — distinct from
+    `degraded` — with the reap NEVER run (reaping against a half-written
+    tree would be comparing identities to a tree in an unknown state).
 
     A per-table gather failure marks that table (and the whole silo)
     `degraded` rather than raising — `fetched_ids_by_table[db] = None` is
@@ -637,7 +675,31 @@ def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
             table = next(t for t in cfg["tables"] if t["source_db"] == db)
             write_snapshot(silo, table, [], {}, snapshot_dir, exported=today)
 
-    written = dm.import_silo(env_root, silo, snapshot_dir, last_synced=today)
+    # Fix-loop IMPORTANT-1: `import_silo` writes records to disk AS IT ITERATES its tables —
+    # no transaction, no rollback. A plain `relation` coerce is fail-loud (`_link` KeyError,
+    # domain_mirror.py) on an url not in that field's slug map; a future mapped field using
+    # it (today's one live cross-export field, FO's `asset`, uses the TOLERANT
+    # `json_relation` instead) or any other mid-loop exception would leave SOME tables'
+    # records written and others not — a partial write across tables (violates the Global
+    # Constraint "never partial", and these are economic records for FO). Never reap
+    # against that: catch here, mark the silo FAILED (louder + distinct from `degraded` —
+    # this is a write-time break, not an unreachable source) and stop before reap ever runs.
+    try:
+        written = dm.import_silo(env_root, silo, snapshot_dir, last_synced=today)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad: ANY import_silo failure means a
+        # possible partial write, and the response (fail loud, skip reap, never swallow) is the
+        # same regardless of which exception type raised it.
+        validate_pass, validate_errors = _validate_silo(state_dir, cfg["schema"])
+        status_path = _write_sync_status(
+            state_dir, silo, degraded=degraded, degraded_tables=degraded_tables, tables=tables_result,
+            reap=None, no_reap=no_reap, validate_pass=validate_pass, validate_errors=validate_errors,
+            failed=True, failure_reason=str(exc),
+        )
+        return SyncReport(silo=silo, dry_run=False, skipped=False, reason="",
+                           degraded=degraded, degraded_tables=degraded_tables, tables=tables_result,
+                           reap=None, validate_pass=validate_pass, validate_errors=validate_errors,
+                           status_path=status_path, failed=True, failure_reason=str(exc))
+
     tables_root = state_dir / "tables"
     for p in written:
         db_key = p.parent.relative_to(tables_root).as_posix()
@@ -696,19 +758,23 @@ def main(argv=None):
     env_root = Path(args.env_root) if args.env_root else dm.find_env_root(Path(__file__))
     silos = _discover_silos(env_root) if args.all else [args.silo]
 
-    any_degraded = False
+    any_bad = False
     for silo in silos:
         report = sync_silo(env_root, silo, dry_run=args.dry_run, no_reap=args.no_reap)
         if report.skipped:
             print(f"[{silo}] skipped — {report.reason}")
             continue
+        if report.failed:
+            any_bad = True
+            print(f"[{silo}] FAILED — {report.failure_reason} status={report.status_path}")
+            continue
         tag = "DEGRADED" if report.degraded else ("dry-run" if report.dry_run else "written")
-        any_degraded = any_degraded or report.degraded
+        any_bad = any_bad or report.degraded
         row_counts = {db: tr.row_count for db, tr in report.tables.items()}
         print(f"[{silo}] {tag} — rows={row_counts} "
               f"reap_skipped={report.reap.skipped if report.reap else (not report.dry_run)} "
               f"validate_pass={report.validate_pass} status={report.status_path}")
-    return 1 if any_degraded else 0
+    return 1 if any_bad else 0
 
 
 if __name__ == "__main__":
