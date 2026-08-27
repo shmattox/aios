@@ -112,6 +112,26 @@ except ValueError:
     check("unknown_table_raises", True)
 
 
+# ── schema-derived title_field (Task 2, S14/A84 Plan-4) ────────────────────
+# (a) a Personal-only table with no _GENERIC_RULES entry now slugs via title_field
+check("schema_derived_new_table",
+      ss.stable_slugs("conditions",
+                      [{"url": "https://n/c1", "Condition": "Hypertension Stage 1"}], {},
+                      title_field="Condition") == {"https://n/c1": "hypertension-stage-1"})
+# (b) a table whose name collides with the FO dict but whose Personal title field differs:
+#     title_field MUST win over the (wrong-for-Personal) dict field "Item"
+check("schema_derived_overrides_dict_field",
+      ss.stable_slugs("tasks",
+                      [{"url": "https://n/t1", "Task": "Book annual physical"}], {},
+                      title_field="Task") == {"https://n/t1": "book-annual-physical"})
+# (c) empty-title still falls back to a deterministic default (no crash)
+_r = ss.stable_slugs("conditions", [{"url": "https://n/c2", "Condition": None}], {}, title_field="Condition")
+check("schema_derived_empty_default", list(_r.values())[0] != "")
+# (d) BACKWARD COMPAT: no title_field → FO dict field still used (golden path)
+check("dict_fallback_when_no_title_field",
+      ss.stable_slugs("notes", [{"url": "https://n/n1", "Note": "A note"}], {}) == {"https://n/n1": "a-note"})
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # ── Step 5 correctness gate: reproduce the FO golden notion_id -> slug map ──
 # Hermetic: both sides frozen (the dated FO exports + the golden/ records
