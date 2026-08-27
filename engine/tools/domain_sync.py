@@ -202,10 +202,20 @@ class VolumeBrakeExceeded(RuntimeError):
 class TableReapResult:
     """One mapped table's reap outcome. `orphans` is always populated (the plan);
     `moved` is populated only when the move actually happened (empty under
-    `dry_run`, since dry_run reports the plan and moves nothing)."""
+    `dry_run`, since dry_run reports the plan and moves nothing).
+
+    `total` is every `*.md` file considered; `eligible` is the subset that had a
+    parseable frontmatter AND a truthy `notion_id` (only THESE can ever be judged
+    an orphan, and only THESE count toward the volume-brake denominator —
+    IMPORTANT-2 fix-loop finding: `total` would otherwise dilute the brake with
+    records that were never at risk of being reaped). `skipped_no_id` is the
+    count kept-and-not-reaped solely because their `notion_id` was missing/empty
+    (surfaced for Task 4's sidecar, not silently dropped)."""
     total: int              # on-disk *.md record count considered for this table
-    orphans: list            # filenames (str) whose notion_id was absent from fetched
-    moved: list               # [(old_path str, new_path str), ...] — actual moves
+    eligible: int            # subset with parseable frontmatter + truthy notion_id
+    skipped_no_id: int        # kept (not reaped) — parseable but falsy notion_id
+    orphans: list              # filenames (str) whose notion_id was absent from fetched
+    moved: list                 # [(old_path str, new_path str), ...] — actual moves
 
 
 @dataclass
@@ -218,6 +228,28 @@ class ReapReport:
     reason: str              # populated only when skipped
     date: str                 # the `_retired/<date>/` stamp used (or would be used)
     by_table: dict            # table (source_db str) -> TableReapResult
+
+
+def _collision_safe_dest(dest_dir, filename, notion_id):
+    """Never let an archive move overwrite an existing file at the destination
+    (fix-loop IMPORTANT-1: archive-not-delete extends to same-day `_retired/`
+    collisions — e.g. a slug freed up by an earlier archive gets reused by an
+    unrelated new record, or a same-day re-run re-orphans into the same dir). If
+    `dest_dir / filename` already exists, append a `notion_id`-derived suffix,
+    and — in the vanishingly unlikely case THAT also collides — a numeric
+    counter, until a free name is found. Never overwrites; never returns a path
+    that already exists."""
+    dest = dest_dir / filename
+    if not dest.exists():
+        return dest
+    stem, suffix = Path(filename).stem, Path(filename).suffix
+    tag = (notion_id or "")[-8:] or "dup"
+    candidate = dest_dir / f"{stem}-{tag}{suffix}"
+    n = 2
+    while candidate.exists():
+        candidate = dest_dir / f"{stem}-{tag}-{n}{suffix}"
+        n += 1
+    return candidate
 
 
 def reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir, *,
@@ -254,18 +286,30 @@ def reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir, *,
     — never by filename or slug (A84: a Notion title edit changes the slug/
     filename but not the `notion_id`; such a record is NOT an orphan).
 
-    A record whose file is malformed (no parseable frontmatter) is skipped, not
-    reaped and not counted as a fetch match — repairing a malformed record is
-    not this function's job.
+    A record must have a READABLE IDENTITY before it can be judged
+    absent-from-fetch: a file with no parseable frontmatter (`ValueError`) is
+    skipped, not reaped, not counted eligible; a file with parseable frontmatter
+    but a FALSY `notion_id` (missing key, or `""`) is likewise kept, not reaped
+    — never classified an orphan — and counted in `skipped_no_id` (fix-loop
+    IMPORTANT-2: a falsy id being `not in fetched` would otherwise over-reap it).
+    The volume brake's denominator is the ELIGIBLE count (parseable + truthy
+    `notion_id`), not every `*.md` file, so records that were never at risk of
+    being reaped can't dilute the brake into looking safer than it is.
 
     Guard order: degraded-skip (silo-wide) -> build the read-only orphan PLAN
-    for every mapped table -> volume brake (checked — and can raise — even
-    under `dry_run`, since a plan that would nuke a fifth of a table is worth
-    surfacing loudly at preview time, not just at execution time) -> execute
-    (or, under `dry_run`, just report; `_retired/` is never created in that case).
+    for every mapped table (skip-and-count any record without a readable
+    identity) -> volume brake over the eligible count (checked — and can raise —
+    even under `dry_run`, since a plan that would nuke a fifth of a table is
+    worth surfacing loudly at preview time, not just at execution time) ->
+    execute (or, under `dry_run`, just report; `_retired/` is never created in
+    that case).
 
     An orphan is MOVED (never `os.remove`d) to
-    `state_dir/_retired/<date>/<source_db>/<filename>`.
+    `state_dir/_retired/<date>/<source_db>/<filename>` — collision-safe: if that
+    path is already occupied (a prior archive, e.g. a same-day re-run or a slug
+    reused by an unrelated new record), the move never overwrites it; a fresh
+    non-colliding name is chosen instead (`_collision_safe_dest`, fix-loop
+    IMPORTANT-1).
     """
     state_dir = Path(state_dir)
     tables_root = state_dir / "tables"
@@ -285,15 +329,19 @@ def reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir, *,
         )
 
     # ---- Build the per-table orphan PLAN (read-only; no moves yet). Mapped tables
-    # only; identity keyed strictly on frontmatter notion_id, never filename. ----
-    plan = {}   # table -> (total_count, [(Path, notion_id), ...] orphans)
+    # only; identity keyed strictly on frontmatter notion_id, never filename. A
+    # record without a READABLE identity (malformed YAML, or parseable-but-falsy
+    # notion_id) is skip-and-count — never classified an orphan (IMPORTANT-2). ----
+    plan = {}   # table -> (total, eligible, skipped_no_id, [(Path, notion_id), ...] orphans)
     for table in mapped_tables:
         table_dir = tables_root / Path(table)
         if not table_dir.is_dir():
-            plan[table] = (0, [])
+            plan[table] = (0, 0, 0, [])
             continue
         fetched = fetched_ids_by_table[table]
         total = 0
+        eligible = 0
+        skipped_no_id = 0
         orphans = []
         for p in sorted(table_dir.glob("*.md")):
             total += 1
@@ -301,33 +349,44 @@ def reap_orphans(silo, mapped_tables, fetched_ids_by_table, state_dir, *,
                 fm = _extract_frontmatter(p.read_text(encoding="utf-8"))
             except ValueError:
                 continue  # malformed record — not this function's job to fix or reap
-            if fm.get("notion_id") not in fetched:
-                orphans.append((p, fm.get("notion_id")))
-        plan[table] = (total, orphans)
+            nid = fm.get("notion_id")
+            if not nid:
+                skipped_no_id += 1  # no readable identity -> kept, never an orphan
+                continue
+            eligible += 1
+            if nid not in fetched:
+                orphans.append((p, nid))
+        plan[table] = (total, eligible, skipped_no_id, orphans)
 
-    # ---- VOLUME BRAKE — checked before any move, dry_run or not. ----
-    for table, (total, orphans) in plan.items():
-        if total and (len(orphans) / total) > volume_brake:
+    # ---- VOLUME BRAKE — over the ELIGIBLE count, not every *.md file (a record
+    # with no readable identity was never at risk of being reaped and must not
+    # dilute the fraction). Checked before any move, dry_run or not. ----
+    for table, (total, eligible, skipped_no_id, orphans) in plan.items():
+        if eligible and (len(orphans) / eligible) > volume_brake:
             raise VolumeBrakeExceeded(
-                f"reap_orphans[{silo}/{table}]: {len(orphans)}/{total} records "
-                f"({len(orphans) / total:.0%}) would be reaped, exceeding the "
+                f"reap_orphans[{silo}/{table}]: {len(orphans)}/{eligible} orphan-eligible "
+                f"records ({len(orphans) / eligible:.0%}) would be reaped, exceeding the "
                 f"{volume_brake:.0%} volume brake — reaping NOTHING for {silo} "
                 "(a mass-removal smells like a bad fetch, not a real deletion)."
             )
 
     # ---- Execute (or just report, under dry_run). ----
     by_table = {}
-    for table, (total, orphans) in plan.items():
+    for table, (total, eligible, skipped_no_id, orphans) in plan.items():
         orphan_names = [p.name for p, _nid in orphans]
         moved = []
         if not dry_run:
             dest_dir = state_dir / "_retired" / reap_date / table
-            for p, _nid in orphans:
+            for p, nid in orphans:
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                dest = dest_dir / p.name
+                # Collision-safe: never overwrite an existing archived file (a prior
+                # same-day archive, or a slug reused by an unrelated new record).
+                dest = _collision_safe_dest(dest_dir, p.name, nid)
                 shutil.move(str(p), str(dest))  # MOVE, never delete — archive-not-delete
                 moved.append((str(p), str(dest)))
-        by_table[table] = TableReapResult(total=total, orphans=orphan_names, moved=moved)
+        by_table[table] = TableReapResult(total=total, eligible=eligible,
+                                           skipped_no_id=skipped_no_id,
+                                           orphans=orphan_names, moved=moved)
 
     return ReapReport(silo=silo, dry_run=dry_run, skipped=False, reason="",
                        date=reap_date, by_table=by_table)

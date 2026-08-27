@@ -454,6 +454,95 @@ check("reap_f_no_orphans_reported", _rep_f.by_table["insurance"].orphans == [])
 check("reap_f_no_retired_dir_created", not (_sd_f / "_retired").exists())
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Fix-loop round 1 (Paper-Governs review-gate, adversarial): two real paths
+# past the six named guards. Both fixed with red->green tests below.
+# ══════════════════════════════════════════════════════════════════════════
+
+# ---- IMPORTANT-1: a same-day _retired/ collision must NEVER overwrite an
+# already-archived record (data loss). Pre-seed the destination as if a PRIOR
+# archive already occupies that filename (a realistic path: an earlier archive
+# frees up a slug that an unrelated later record then reuses), then reap a
+# fresh, DIFFERENT-notion_id orphan whose on-disk filename collides with it.
+# Both records must survive in _retired/, with their distinct content intact. ----
+_sd_g = _reap_state_dir()
+_retired_dir_g = _sd_g / "_retired" / "2026-08-27" / "insurance"
+_retired_dir_g.mkdir(parents=True)
+_PRIOR_ID_G = "00000000000000000000000000000099"
+(_retired_dir_g / "widget-b.md").write_text(
+    "---\n"
+    "type: state-widget\n"
+    'name: "Prior Archived Widget"\n'
+    f'notion_id: "{_PRIOR_ID_G}"\n'
+    f'notion_url: "https://www.notion.so/{_PRIOR_ID_G}"\n'
+    "---\n"
+    "prior body\n",
+    encoding="utf-8",
+)
+_write_record(_sd_g / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")
+# same target FILENAME as the pre-seeded archive, but a DIFFERENT notion_id —
+# this is the orphan that must not clobber the prior archive on move.
+_write_record(_sd_g / "tables" / "insurance", "widget-b.md", _ID2, "Widget B (new)")
+_rep_g = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1}}, _sd_g,
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_g_not_skipped", _rep_g.skipped is False)
+_prior_text_g = (_retired_dir_g / "widget-b.md").read_text(encoding="utf-8")
+check("reap_g_prior_archive_content_untouched", _PRIOR_ID_G in _prior_text_g)
+_retired_files_g = sorted(p.name for p in _retired_dir_g.glob("*.md"))
+check("reap_g_both_files_present_no_overwrite", len(_retired_files_g) == 2)
+_retired_texts_g = [(_retired_dir_g / n).read_text(encoding="utf-8") for n in _retired_files_g]
+check("reap_g_new_orphan_content_survives", any(_ID2 in t for t in _retired_texts_g))
+check("reap_g_source_moved_out_of_tables",
+      len(list((_sd_g / "tables" / "insurance").glob("widget-b*.md"))) == 0)
+
+# ---- IMPORTANT-2: a record with parseable frontmatter but a FALSY notion_id
+# (missing key, or "") must be KEPT (skip-and-count), never reaped. ----
+_sd_h = _reap_state_dir()
+_write_record(_sd_h / "tables" / "insurance", "widget-a.md", _ID1, "Widget A")  # normal, kept (fetched)
+(_sd_h / "tables" / "insurance").mkdir(parents=True, exist_ok=True)
+(_sd_h / "tables" / "insurance" / "no-id.md").write_text(
+    '---\ntype: state-widget\nname: "No ID Widget"\n---\nbody\n', encoding="utf-8")
+(_sd_h / "tables" / "insurance" / "empty-id.md").write_text(
+    '---\ntype: state-widget\nname: "Empty ID Widget"\nnotion_id: ""\n---\nbody\n', encoding="utf-8")
+_rep_h = dsync.reap_orphans(
+    "widgetco", ["insurance"], {"insurance": {_ID1}}, _sd_h,
+    dry_run=False, volume_brake=1.0, date="2026-08-27",
+)
+check("reap_h_not_skipped", _rep_h.skipped is False)
+check("reap_h_missing_id_kept", (_sd_h / "tables" / "insurance" / "no-id.md").is_file())
+check("reap_h_empty_id_kept", (_sd_h / "tables" / "insurance" / "empty-id.md").is_file())
+check("reap_h_neither_reported_as_orphan",
+      "no-id.md" not in _rep_h.by_table["insurance"].orphans
+      and "empty-id.md" not in _rep_h.by_table["insurance"].orphans)
+check("reap_h_skipped_no_id_count", _rep_h.by_table["insurance"].skipped_no_id == 2)
+check("reap_h_eligible_excludes_no_id_records", _rep_h.by_table["insurance"].eligible == 1)
+check("reap_h_total_still_counts_all_files", _rep_h.by_table["insurance"].total == 3)
+check("reap_h_no_retired_dir_created", not (_sd_h / "_retired").exists())
+
+# ---- MINOR fold-in: volume brake denominator is the ELIGIBLE count, not every
+# *.md file. 4 no-id records (never reapable) alongside 1 eligible orphan would
+# read as a mild 20% fraction over `total`=5, but is a 100% fraction over the
+# real `eligible`=1 -- must trip the brake. ----
+_sd_i = _reap_state_dir()
+_write_record(_sd_i / "tables" / "insurance", "orphan.md", _ID2, "Orphan")  # eligible, orphaned
+for _n in range(4):
+    (_sd_i / "tables" / "insurance" / f"no-id-{_n}.md").write_text(
+        f'---\ntype: state-widget\nname: "No ID {_n}"\n---\nbody\n', encoding="utf-8")
+_brake_raised_i = False
+try:
+    dsync.reap_orphans(
+        "widgetco", ["insurance"], {"insurance": set()}, _sd_i,   # nothing fetched -> orphan.md orphaned
+        dry_run=False, volume_brake=0.2, date="2026-08-27",
+    )
+except dsync.VolumeBrakeExceeded:
+    _brake_raised_i = True
+check("reap_i_brake_uses_eligible_denominator_not_total", _brake_raised_i)
+check("reap_i_no_id_records_untouched",
+      all((_sd_i / "tables" / "insurance" / f"no-id-{_n}.md").is_file() for _n in range(4)))
+
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
