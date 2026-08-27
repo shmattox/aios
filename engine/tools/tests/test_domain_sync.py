@@ -136,11 +136,30 @@ check("row_value_relation_empty", dsync._row_value("Owner", {"type": "relation",
 check("row_value_unhandled_type", dsync._row_value("Files", {"type": "files", "files": [{"name": "x"}]})
       == [("Files", None)])
 
+# No `id` on the page -> fall back to the raw url verbatim (legacy fixture shape).
 _page = {"url": "https://n/x", "properties": {
     "Name": {"type": "title", "title": [{"plain_text": "Foo"}]},
     "Active": {"type": "checkbox", "checkbox": True},
 }}
 check("row_from_page", dsync._row_from_page(_page) == {"url": "https://n/x", "Name": "Foo", "Active": "__YES__"})
+
+# A REAL Notion page carries an `id` and a title-slugged `url`. Identity must come
+# from the bare `id`, not the title-slug — else a title edit re-slugs the record
+# (A84 break) and a live sync duplicates every row against a bare-id mirror.
+_page_live = {"id": "11111111-1111-1111-1111-111111111111",
+              "url": "https://www.notion.so/Some-Title-11111111111111111111111111111111",
+              "properties": {"Name": {"type": "title", "title": [{"plain_text": "Some Title"}]}}}
+check("row_from_page_uses_bare_id_url",
+      dsync._row_from_page(_page_live)["url"] == "https://www.notion.so/11111111111111111111111111111111")
+check("row_from_page_identity_is_title_independent",
+      dm.notion_id_from_url(dsync._row_from_page(_page_live)["url"]) == "11111111111111111111111111111111")
+
+# Notion's auto-increment "ID" column is a `unique_id` property, not `number` —
+# without an explicit case it fell through to None and nulled every `<Thing> ID`
+# field on a live sync (decision_id, task_id, …).
+check("row_value_unique_id_extracts_number",
+      dsync._row_value("Decision ID", {"type": "unique_id", "unique_id": {"number": 7, "prefix": None}})
+      == [("Decision ID", 7)])
 
 
 # ══════════════════════════════════════════════════════════════════════════

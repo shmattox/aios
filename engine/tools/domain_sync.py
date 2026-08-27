@@ -193,11 +193,28 @@ def _row_value(name, prop):
         return [(name, fv.get(fv.get("type")))]
     if t in ("number", "url", "email", "phone_number"):
         return [(name, v)]
+    if t == "unique_id":
+        # Notion's auto-increment "ID" column: {"unique_id": {"number": 42, "prefix": ...}}.
+        # Every silo maps its `<Thing> ID` field as a `number` (decision_id, task_id, …);
+        # without this case it fell through to None and nulled every id on a live sync.
+        return [(name, (v or {}).get("number"))]
     return [(name, None)]  # files/rollups/etc: not carried (same scope limit as normalize_page)
 
 
 def _row_from_page(page):
-    row = {"url": page.get("url")}
+    # Identity comes from the authoritative page `id`, NOT the API's title-slugged
+    # `url` (Notion returns `notion.so/<Title-Slug>-<id>`). Keying on that raw url
+    # would make the slug identity title-DEPENDENT (breaking A84 stability on any
+    # title edit) and never match a mirror keyed on the bare id — the exact
+    # seed/live-gather mismatch that duplicated every Personal record on the first
+    # live sync. Build the canonical bare-id url the rest of the pipe already
+    # speaks (relations in `_prop_to_pairs` are built the same way), so
+    # `notion_id_from_url` yields the stable 32-hex id. Fall back to the raw url
+    # only for a page with no id (never a real Notion page — keeps legacy
+    # hermetic fixtures valid).
+    pid = page.get("id")
+    url = f"https://www.notion.so/{pid.replace('-', '')}" if pid else page.get("url")
+    row = {"url": url}
     for name, prop in (page.get("properties") or {}).items():
         for k, v in _row_value(name, prop):
             row[k] = v
