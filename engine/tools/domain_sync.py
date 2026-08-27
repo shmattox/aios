@@ -730,13 +730,17 @@ def sync_silo(env_root, silo, *, dry_run=False, no_reap=False, volume_brake=0.2,
     slugmap_path = state_dir / "_slugmap.json"
     slugmap = load_slugmap(slugmap_path)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    mapped_tables = [t["source_db"] for t in cfg["tables"]]
+    # local-only tables (no Notion source) are excluded from the whole sync — never
+    # gathered, never in mapped_tables (so reap never considers their records orphans),
+    # their existing records left untouched. They still validate against the schema.
+    sync_tables = [t for t in cfg["tables"] if not t.get("local_only")]
+    mapped_tables = [t["source_db"] for t in sync_tables]
 
     tables_result = {}
     fetched_ids_by_table = {}
     degraded_tables = []
 
-    for table in cfg["tables"]:
+    for table in sync_tables:
         db = table["source_db"]
         try:
             rows = gather_fn(silo, table)
