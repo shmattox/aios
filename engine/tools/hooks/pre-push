@@ -30,7 +30,15 @@ zero=0000000000000000000000000000000000000000
 while read local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref: nothing outgoing
     if [ "$remote_sha" = "$zero" ]; then
-        range="$local_sha"                          # brand-new ref: everything we are publishing
+        # brand-new branch: scan ONLY the commits it adds over origin/main. Scanning the full
+        # reachable history ($local_sha) re-flags already-public fixtures carried on old commits
+        # and made every new-branch push (i.e. every PR branch) un-gateable (found 2026-08-27).
+        # Fall back to full history only when there is no origin/main baseline (a genuine first push).
+        if git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+            range="refs/remotes/origin/main..$local_sha"
+        else
+            range="$local_sha"
+        fi
     else
         range="$remote_sha..$local_sha"
     fi
