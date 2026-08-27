@@ -101,6 +101,55 @@ check("roundtrip_nested_notion_id",
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# local_only tables — a table with no Notion source: import_silo skips it (no
+# snapshot required, no KeyError), its existing records are left untouched, and
+# sync excludes it from mapped_tables so reap can never orphan them.
+# ══════════════════════════════════════════════════════════════════════════
+_lo_root = Path(tempfile.mkdtemp())
+(_lo_root / "profile").mkdir()
+(_lo_root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
+_lo_sd = _lo_root / "state" / "domains" / "widgetco"
+(_lo_sd / "tables").mkdir(parents=True)
+(_lo_sd / "schema.yaml").write_text(textwrap.dedent("""\
+    state-widget:
+      required: [name, type, notion_id]
+      notion_source_db: insurance
+      notion_db: "00000000000000000000000000000abc"
+      notion_fields:
+        name: [Name, title]
+    state-person:
+      required: [name, type, notion_id]
+      notion_source_db: people
+      local_only: true
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+_lo_cfg = dm.load_silo_config(_lo_root, "widgetco")
+_lo_by_db = {t["source_db"]: t for t in _lo_cfg["tables"]}
+check("local_only_flag_threaded", _lo_by_db["people"]["local_only"] is True)
+check("local_only_default_false", _lo_by_db["insurance"]["local_only"] is False)
+
+# an EXISTING local-only record, and a snapshot for ONLY the normal table
+(_lo_sd / "tables" / "people").mkdir(parents=True)
+(_lo_sd / "tables" / "people" / "jane.md").write_text(
+    "---\ntype: state-person\nname: Jane\nnotion_id: 00000000000000000000000000000777\n---\nbody\n", encoding="utf-8")
+_lo_snap = _lo_sd / "_snapshots"
+dsync.write_snapshot("widgetco", _lo_by_db["insurance"],
+                     [{"url": "https://n/00000000000000000000000000000abc", "Name": "Policy X"}],
+                     ss.stable_slugs("insurance", [{"url": "https://n/00000000000000000000000000000abc", "Name": "Policy X"}], {}),
+                     _lo_snap, exported="2026-08-27")
+# import must NOT raise for the missing people snapshot, and must leave jane.md intact
+_lo_written = dm.import_silo(_lo_root, "widgetco", _lo_snap)
+check("local_only_import_no_raise_and_writes_normal",
+      (_lo_sd / "tables" / "insurance" / "policy-x.md").is_file())
+check("local_only_record_untouched",
+      (_lo_sd / "tables" / "people" / "jane.md").is_file()
+      and "name: Jane" in (_lo_sd / "tables" / "people" / "jane.md").read_text(encoding="utf-8"))
+check("local_only_not_written_by_import",
+      all("people" not in str(p) for p in _lo_written))
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # _row_value — pure unit tests for the Notion-property -> raw-row-value normalizer.
 # ══════════════════════════════════════════════════════════════════════════
 check("row_value_title", dsync._row_value(

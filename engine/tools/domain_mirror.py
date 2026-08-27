@@ -172,6 +172,12 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
                        # Absent → gather_table degrades this table cleanly (never a live source id in
                        # the fact-free engine; the id is per-install instance data in the schema).
                        "notion_db": tdef.get("notion_db"),
+                       # OPTIONAL `local_only: true` — a table that lives ONLY on disk (no Notion
+                       # source): domain_sync skips it entirely (never gathered, never reaped, no
+                       # snapshot required), but its records still validate against the schema. For
+                       # a table whose Notion DB was never built (e.g. FO people) — keeps its records
+                       # intact without degrading the silo.
+                       "local_only": bool(tdef.get("local_only")),
                        "fields": fields, "computed": computed, "state_native": state_native})
     return {"state_dir": state_dir, "schema": schema, "tables": tables}
 
@@ -264,6 +270,8 @@ def import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, la
     # mapped export is missing (before any write) — deterministic, atomic-ish.
     exports, slug_maps = {}, {}
     for table in cfg["tables"]:
+        if table.get("local_only"):
+            continue  # local-only: no Notion source, no snapshot to import; records stay untouched
         db = table["source_db"]
         if db in exports:
             continue
@@ -276,12 +284,16 @@ def import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, la
     # above): a relation naming a source_db that is NOT a mirrored table would otherwise KeyError
     # mid-write, leaving an earlier table's files on disk (a partial import). Validate before any write.
     for table in cfg["tables"]:
+        if table.get("local_only"):
+            continue
         for field, _kind, _tmpl, _prop, rel_source in table["fields"]:
             if rel_source and rel_source not in slug_maps:
                 raise KeyError(f"[{silo}/{table['name']}] field {field!r}: cross-export relation "
                                f"source_db {rel_source!r} is not a mirrored table (no export loaded)")
     written = []
     for table in cfg["tables"]:
+        if table.get("local_only"):
+            continue  # local-only: never written from a snapshot (there is none); its records stay
         data = exports[table["source_db"]]
         url_to_slug = slug_maps[table["source_db"]]
         # last_synced precedence: the snapshot's own export date (`_meta.exported`) wins; the CLI
