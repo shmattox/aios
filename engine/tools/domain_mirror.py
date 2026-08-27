@@ -167,6 +167,11 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
             raise ValueError(f"[{tname}] state_native fields are also derived from the snapshot: "
                              f"{clash} — a field cannot be both unreproducible and computed")
         tables.append({"name": tname, "source_db": tdef["notion_source_db"],
+                       # OPTIONAL `notion_db:` — the live Notion database/data-source id (or
+                       # collection:// form) this table gathers from (Plan 3 domain_sync live path).
+                       # Absent → gather_table degrades this table cleanly (never a live source id in
+                       # the fact-free engine; the id is per-install instance data in the schema).
+                       "notion_db": tdef.get("notion_db"),
                        "fields": fields, "computed": computed, "state_native": state_native})
     return {"state_dir": state_dir, "schema": schema, "tables": tables}
 
