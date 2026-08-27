@@ -200,6 +200,24 @@ check("gather_table_checkbox", _g0["Active"] == "__YES__")
 check("gather_table_multi_select", _g0["Tags"] == ["alpha", "beta"])
 check("gather_table_date_fanout", _g0["date:Due:start"] == "2026-08-27" and _g0["date:Due:end"] is None)
 
+# A mirror sync must fetch the WHOLE table (the fetched id-set is the reap's orphan
+# authority) — so gather_table with no explicit page_size must ask _query_source for
+# an effectively-unbounded cap, NOT the old 100 that silently truncated big tables.
+_captured_ps = {}
+def _fake_query_source_capture(db_id, token, page_size):
+    _captured_ps["ps"] = page_size
+    return "databases", [], None
+ng._query_source = _fake_query_source_capture
+ng.resolve_token = lambda token_env=None: ("fake-token", "env")
+try:
+    dsync.gather_table("widgetco", {"name": "insurance", "source_db": "insurance",
+                                    "notion_db": "00000000000000000000000000000009"})
+finally:
+    ng._query_source = _orig_query_source
+    ng.resolve_token = _orig_resolve_token
+check("gather_table_fetches_all_rows_by_default", _captured_ps["ps"] == dsync._ALL_ROWS)
+check("gather_table_all_rows_exceeds_notion_page_max", _captured_ps["ps"] > 100)
+
 # a query failure raises RuntimeError naming the table — never a silent empty result
 # (an empty table would be indistinguishable from "everything vanished" to the reap's
 # volume brake, Task 3).

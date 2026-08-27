@@ -221,13 +221,25 @@ def _row_from_page(page):
     return row
 
 
+# A mirror sync fetches the WHOLE table — the id-set it produces is the reap's
+# authority, so a partial fetch would make reap treat the un-fetched tail as
+# orphans and archive real records. `page_size=None` means "every row" (paginate
+# `_query_source` to exhaustion); an explicit int still caps (tests). The old
+# default of 100 silently truncated any table over 100 rows.
+_ALL_ROWS = 10_000_000  # effectively unbounded row cap; _query_source paginates until has_more=False
+
+
 def gather_table(silo, table_cfg, *, token=None, token_env=notion_gather.DEFAULT_TOKEN_NAME,
-                 page_size=100):
+                 page_size=None):
     """Fetch one table's rows LIVE, shaped for `write_snapshot`. `table_cfg` needs a
     `notion_db` key (the already-resolved database/data-source id or `collection://`
     ref, from the silo's `profile/domains.yaml` — resolving it is the CALLER's job, same
     as `notion_gather.cmd_tasks` resolves `--db` from its own CLI args; the walker
     (Task 3) is what pairs a schema table with its profile id).
+
+    `page_size=None` (the default the sync uses) fetches EVERY row — a full-table
+    gather, since the fetched id-set is the reap's orphan authority. Pass an int
+    only to cap deliberately (tests).
 
     Fails loud: no token -> `notion_gather._no_token_exit` (process exit 2, same
     contract as every other headless gather); a query error (bad id, HTTP failure after
@@ -241,7 +253,8 @@ def gather_table(silo, table_cfg, *, token=None, token_env=notion_gather.DEFAULT
         if not tok:
             notion_gather._no_token_exit(token_env)  # exits — no token, no silent partial gather
     db_id = notion_gather.normalize_id(table_cfg["notion_db"])
-    _endpoint, pages, err = notion_gather._query_source(db_id, tok, page_size)
+    cap = _ALL_ROWS if page_size is None else page_size
+    _endpoint, pages, err = notion_gather._query_source(db_id, tok, cap)
     if err is not None:
         name = table_cfg.get("name") or table_cfg.get("source_db") or table_cfg["notion_db"]
         raise RuntimeError(f"gather_table[{silo}/{name}]: {err}")
