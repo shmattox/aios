@@ -30,6 +30,27 @@ try:
     dm.coerce("bogus", "x", url_to_slug={}, link_tmpl=None); check("unknown_kind_raises", False)
 except ValueError: check("unknown_kind_raises", True)
 
+# --- Plan 2b Task 1: json_multi_select (projects.key_members) ---
+_jms = lambda v: dm.coerce("json_multi_select", v, url_to_slug={}, link_tmpl=None)
+check("jms_decodes_json_array_string", _jms('["alpha","bravo"]') == ["alpha", "bravo"])
+check("jms_none_stays_none",           _jms(None) is None)
+check("jms_empty_string_is_none",      _jms("") is None)
+check("jms_already_a_list_passthru",   _jms(["alpha"]) == ["alpha"])
+check("jms_multi_select_still_charsplits_str", dm.coerce("multi_select", "ab", url_to_slug={}, link_tmpl=None) == ["a", "b"])  # unchanged: old kind untouched
+
+# --- Plan 2b Task 2: sync_date computed rule (prices.as_of) ---
+check("sync_date_emits_run_last_synced", dm.compute_field({"rule": "sync_date"}, {}, last_synced="2026-06-30") == "2026-06-30")
+check("sync_date_none_when_absent",      dm.compute_field({"rule": "sync_date"}, {}, last_synced=None) is None)
+check("lookup_rule_still_works",         dm.compute_field({"rule": "lookup", "from": "x", "table": {"a": "b"}}, {"x": "a"}) == "b")  # regression: existing rule intact
+
+# --- Plan 2b Task 3: json_relation (assets.asset -> prices, single scalar, tolerant) ---
+_u2s = {"https://www.notion.so/abc123def": "usd"}   # prices export url_to_slug: row url -> slug
+_jr = lambda v: dm.coerce("json_relation", v, url_to_slug=_u2s, link_tmpl="prices/{slug}")
+check("jr_json_string_single_scalar", _jr('["https://www.notion.so/abc123def"]') == "[[prices/usd]]")
+check("jr_none_stays_none",           _jr(None) is None)
+check("jr_empty_list_is_none",        _jr("[]") is None)
+check("jr_unmapped_target_is_none",   _jr('["https://www.notion.so/zzz"]') is None)   # tolerant: no such price -> null
+
 # emitter: deterministic order, null, quoting of wikilinks + numeric-looking strings
 fm = dm.emit_frontmatter({"type": "state-entity", "name": "Example Legacy Trust",
                           "status": None, "articles_filed": False,
@@ -516,7 +537,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _CURATED = {"owner_entity", "asset"}             # still golden-only: A80 covers `wiki`, and
                                                      # these two are REPRODUCIBLE (a ruleset / a
                                                      # decode) so they are Plan 2b's, not A80's.
-    _mism, _bad_extra, _counts = [], [], {}
+    _mism, _bad_extra, _counts, _fm_by_key = [], [], {}, {}
     for _gen in _written:
         # The table is the record's parent dir relative to _out, as a posix string — this yields
         # "logs/change-log" for a nested source_db and still "tasks" for a flat one. Using parts[0]
@@ -529,6 +550,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
             _mism.append((_tbl, _gen.name, "no golden file")); continue
         _g = _norm(_load_fm(_gen.read_text(encoding="utf-8")))
         _s = _norm(_load_fm(_gold.read_text(encoding="utf-8")))
+        _fm_by_key[(_tbl, _gen.name)] = _g            # used by the body-passthrough check below
         _diffs = {k: (_g.get(k), _s.get(k)) for k in _g if _g.get(k) != _s.get(k)}
         _unexpected = (set(_s) - set(_g)) - _CURATED  # a golden field we forgot to map
         if _unexpected:
@@ -547,6 +569,20 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # not Notion-derived. Plan 3 must re-run that generator after a sync or it strips them.
     _VIEW_MARK = "generated relational views"
     _BOILER = re.compile(r"^State-engine mirror of the Notion .* row\.$")
+    # Plan 2b Task 2: migrate_prices.py used its OWN custom boilerplate sentence (not the generic
+    # "...mirror of the Notion X row." shared by the 5 originally-shipped tables) — same DERIVED,
+    # unread-by-the-engine status (state/domains is not in the vault), just different wording. A
+    # second literal pattern here, not an engine change (YAGNI: the engine composes bodies from
+    # `Description` alone regardless of table; this only teaches the TEST which retired-migrator
+    # phrasings to treat as filler when diffing against the golden).
+    _PRICES_BOILER = re.compile(
+        r"^State-engine price note \(Market Prices mirror\)\. `spot` is the last-known Notion "
+        r"mark; live feed deferred\.$")
+    # Plan 2b Task 3: migrate_assets.py also used its OWN boilerplate wording ("operational mirror",
+    # not the generic "State-engine mirror of the Notion X row." shared by the 5 originally-shipped
+    # tables) — same DERIVED, unread-by-the-engine status, just different phrasing. Same precedent as
+    # _PRICES_BOILER: a third literal pattern here, not an engine change.
+    _ASSETS_BOILER = re.compile(r"^State-engine operational mirror of the Notion A&L row\.$")
 
     def _body(text):
         parts = text.split("---", 2)
@@ -554,10 +590,12 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
 
     def _strip_derived(b):
         keep = [ln for ln in b.split("\n")
-                if not ln.startswith("# ") and not _BOILER.match(ln.strip())]
+                if not ln.startswith("# ") and not _BOILER.match(ln.strip())
+                and not _PRICES_BOILER.match(ln.strip())
+                and not _ASSETS_BOILER.match(ln.strip())]
         return "\n".join(keep).strip()
 
-    _body_ok, _body_bad, _body_skipped = 0, [], 0
+    _body_ok, _body_bad, _body_skipped, _body_enriched = 0, [], 0, 0
     for _gen in _written:
         # Same fix as the frontmatter loop above: the table is the record's PARENT DIR relative to
         # _out (not just its first path segment), so a nested source_db like "logs/change-log"
@@ -570,21 +608,36 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         if _VIEW_MARK in _gold_text:
             _body_skipped += 1
             continue
-        if _body(_gen.read_text(encoding="utf-8")).strip() == _strip_derived(_body(_gold_text)):
+        _gen_body = _body(_gen.read_text(encoding="utf-8")).strip()
+        _gold_stripped = _strip_derived(_body(_gold_text))
+        if _gen_body == _gold_stripped:
             _body_ok += 1
-        else:
-            _body_bad.append((_tbl, _gen.name))
-    # HONEST SCOPE: this is a TRIPWIRE, not a positive proof of body composition. Every compared
-    # record is empty-body on BOTH sides today — no mapped export carries a `Description` property,
-    # so build_record's body path is never actually exercised here. What it DOES guard is the real
-    # risk: a body the retired migrators rendered and the engine drops, changing without a signal.
-    # (Proven to fail when broken.) It does NOT prove `Description` passthrough — the first mapped
-    # table that has that property will be the first to exercise it. Note also that the skipped set
-    # is currently 100% of `entities` (all 11 carry generated view blocks), so that table has no
-    # body coverage at all.
+            continue
+        # Plan 2b Task 1 (projects): the first mapped table whose export actually carries a
+        # `Description` property, exercising the passthrough this check could previously only
+        # predict. The retired migrators' `render_note` NEVER wrote `Description` into the body
+        # (only the `# {Title}` heading + boilerplate — see migrate_projects.py:render_note), so
+        # the golden is empty here after stripping; build_record correctly composes the body from
+        # the same `Description` value already proven equal by the frontmatter-equivalence loop
+        # above. That is an ENRICHMENT the retired migrator discarded, not a regression — accept it
+        # ONLY when golden had nothing (never overwrites a real golden body) and the generated body
+        # matches the record's own already-verified `description` field exactly (never a
+        # rubber-stamp for arbitrary generated text).
+        _fm_desc = (_fm_by_key.get((_tbl, _gen.name), {}).get("description") or "")
+        if _gold_stripped == "" and _gen_body != "" and _gen_body == str(_fm_desc).strip():
+            _body_enriched += 1
+            continue
+        _body_bad.append((_tbl, _gen.name))
+    # HONEST SCOPE: this is a TRIPWIRE, not a positive proof of body composition for every table.
+    # What it DOES guard is the real risk: a body the retired migrators rendered and the engine
+    # drops, changing without a signal (proven to fail when broken) — and, since Plan 2b Task 1, a
+    # genuine proof of `Description` passthrough for `projects` (the enrichment branch above still
+    # requires the generated body equal the independently-verified frontmatter `description`, so a
+    # corrupted or wrong-property body still fails). Note the skipped set is currently 100% of
+    # `entities` (all 11 carry generated view blocks), so that table has no body coverage at all.
     check("fo_body_substance_preserved", not _body_bad)
-    print(f"FO body contract: {_body_ok} substance-equal, {len(_body_bad)} divergent, "
-          f"{_body_skipped} skipped (generated view blocks)")
+    print(f"FO body contract: {_body_ok} substance-equal, {_body_enriched} description-enriched, "
+          f"{len(_body_bad)} divergent, {_body_skipped} skipped (generated view blocks)")
     if _body_bad:
         print("FO body divergences (first 6):", _body_bad[:6])
 
@@ -600,6 +653,44 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _wiki_n = sum(1 for _g in _written if "wiki" in _load_fm(_g.read_text(encoding="utf-8")))
     check("a80_wiki_carried_on_real_data", _wiki_n == 18)
     print(f"A80 state_native: wiki carried forward on {_wiki_n} real records (entities 11 + people 7)")
+    # Plan 2b Task 3 — PAPER-GOVERNS: explicit, standalone proof that every asset's `owner_entity`
+    # (STATE-NATIVE, A80) is BYTE-PRESERVED from the golden — not just implied by the generic
+    # frontmatter-equivalence loop above. Compares generated vs golden per-record, both non-null
+    # values (Seth's owner_for() assignment) AND null-stays-null (the 13 personal-by-nature assets).
+    _owner_gen = {_g.name: _load_fm(_g.read_text(encoding="utf-8")).get("owner_entity")
+                  for _g in _written if _g.parent.relative_to(_out).as_posix() == "assets"}
+    _owner_gold = {_p.name: _load_fm(_p.read_text(encoding="utf-8")).get("owner_entity")
+                   for _p in (_GOLDEN / "assets").glob("*.md")}
+    _owner_mism = [k for k in _owner_gold if _owner_gen.get(k) != _owner_gold[k]]
+    _owner_set_n = sum(1 for v in _owner_gold.values() if v is not None)
+    check("assets_owner_entity_byte_preserved", not _owner_mism)
+    check("assets_owner_entity_27_set", _owner_set_n == 27)
+    print(f"PAPER-GOVERNS: owner_entity byte-preserved on {len(_owner_gold) - len(_owner_mism)}/"
+          f"{len(_owner_gold)} assets ({_owner_set_n} non-null, Seth's owner_for() ruleset)")
+    if _owner_mism:
+        print("owner_entity MISMATCHES (silent-deletion class — STOP):", _owner_mism[:10])
+    # Plan 2b final-review minor #3 — HARDENING: lock in the final reviewer's empirical proof that
+    # owner_entity is NEVER auto-derived. Re-run import_silo against the SAME hermetic snapshot but
+    # into a FRESH, EMPTY out_dir (unseeded — no prior records, so _read_state_native has nothing to
+    # carry forward). Assert every asset record comes back with NO owner_entity key at all, while a
+    # genuine non-state-native field (`balance`) still populates on at least one record — proving the
+    # import genuinely ran and this isn't a vacuous pass on an empty result.
+    _out_unseeded = Path(tempfile.mkdtemp()) / "tables"
+    _written_unseeded = dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out_unseeded,
+                                       last_synced="2026-06-30")
+    _assets_unseeded = [_p for _p in _written_unseeded
+                        if _p.parent.relative_to(_out_unseeded).as_posix() == "assets"]
+    _unseeded_fms = [_load_fm(_p.read_text(encoding="utf-8")) for _p in _assets_unseeded]
+    _unseeded_owner_leak = [n for n, fm in zip((_p.name for _p in _assets_unseeded), _unseeded_fms)
+                            if "owner_entity" in fm]
+    _unseeded_balance_set = sum(1 for fm in _unseeded_fms if fm.get("balance") is not None)
+    check("assets_unseeded_import_ran", len(_assets_unseeded) > 0 and _unseeded_balance_set > 0)
+    check("assets_unseeded_owner_entity_never_derived", not _unseeded_owner_leak)
+    print(f"PAPER-GOVERNS unseeded: {len(_assets_unseeded)} asset records, "
+          f"{_unseeded_balance_set} with balance populated, 0 with owner_entity key "
+          f"(no carry-forward source -> no derivation)")
+    if _unseeded_owner_leak:
+        print("owner_entity DERIVED without carry-forward (regression — STOP):", _unseeded_owner_leak[:10])
     if _mism:
         print("FO mismatches (first 6):", _mism[:6])
     if _bad_extra:

@@ -29,6 +29,14 @@ def coerce(kind, value, *, url_to_slug, link_tmpl):
         return None if value in (None, "") else str(value)
     if kind == "multi_select":
         return None if not value else [str(v) for v in value]
+    if kind == "json_multi_select":
+        # Notion returns a multi_select as a JSON-array STRING; decode BEFORE listing so a
+        # str is not iterated character-by-character (the silent-corruption bug this fixes).
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        return None if not value else [str(v) for v in value]
     if kind == "number":
         return None if value is None else value
     if kind == "date":
@@ -45,6 +53,20 @@ def coerce(kind, value, *, url_to_slug, link_tmpl):
         if isinstance(value, list):
             return [_link(u, url_to_slug, link_tmpl) for u in value]
         return _link(value, url_to_slug, link_tmpl)
+    if kind == "json_relation":
+        # A single-valued cross-export relation stored as a JSON-array string (Notion always wraps
+        # a relation in an array). Decode, resolve the sole element to one wikilink scalar,
+        # reproducing migrate_assets.py:price_slug_for (urls[0]). TOLERANT by design: an unmapped
+        # target -> None (asset: null), matching price_slug_for's `.get` — NOT _link's fail-loud [url].
+        if not value:
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        urls = value if isinstance(value, list) else [value]
+        if not urls:
+            return None
+        slug = url_to_slug.get(urls[0])
+        return None if slug is None else "[[" + link_tmpl.format(slug=slug) + "]]"
     raise ValueError(f"unknown kind: {kind!r}")
 
 
@@ -149,17 +171,22 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
     return {"state_dir": state_dir, "schema": schema, "tables": tables}
 
 
-def compute_field(spec: dict, fm: dict):
+def compute_field(spec: dict, fm: dict, *, last_synced=None):
     """Evaluate a declarative computed (state-native) field against the record fields built so far.
     Fact-free: the engine knows only the RULE shape; all specifics (source field, mapping, slug
     templates) come from the schema `spec`.
 
-    Supported rule (minimal, closed set):
+    Supported rules (minimal, closed set):
+      sync_date — emit the run's `last_synced` (the snapshot's own `_meta.exported` date, or the
+                  CLI fallback — see build_record). Fact-free: the engine never reads an FO value
+                  for this; it is purely "when was this run's snapshot taken."
       lookup — map the value of another record field (`from`) through a declared `table`, then
                optionally wrap the result as a relation wikilink via `link` (e.g. "companies/{slug}").
                A None source yields None (field omitted-as-null). An unmapped key uses `default`
                if declared, else FAILS LOUD (a content/contract error, like an unknown checkbox)."""
     rule = spec.get("rule")
+    if rule == "sync_date":
+        return last_synced
     if rule != "lookup":
         raise ValueError(f"unknown computed-field rule: {rule!r}")
     src = fm.get(spec["from"])
@@ -204,7 +231,7 @@ def build_record(table, row, url_to_slug, slug_maps, last_synced=None, preserved
         fm[field] = coerce(kind, row.get(prop), url_to_slug=u2s, link_tmpl=link_tmpl)
     # Computed (state-native) fields run AFTER the Notion-property fields so a rule can read them.
     for cfield, cspec in table["computed"]:
-        fm[cfield] = compute_field(cspec, fm)
+        fm[cfield] = compute_field(cspec, fm, last_synced=last_synced)
     # state_native (A80): carried verbatim from the existing record — no rule can reproduce these,
     # so rebuilding without them DELETES them. Emitted HERE, in the computed slot, because that is
     # where they already sit on disk; any other position would churn every such record for nothing.
