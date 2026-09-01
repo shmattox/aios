@@ -1,4 +1,4 @@
-import json, os, time
+import json, os, subprocess, time
 from pathlib import Path
 import pytest, sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # engine/tools on path
@@ -313,3 +313,60 @@ def test_cli_approve_and_resolve(tmp_path):
     activity.main(["resolve", "--env-root", str(tmp_path), "--id", "factory-cli-1",
                    "--decision", "approved"])
     assert activity.read_all(tmp_path)[0]["status"] == "running"
+
+
+# --- A124: concurrency-safe span writes -- N real OS processes racing one run record ---
+# Real subprocesses, not threads: fan-out agents each shell out to this CLI as separate
+# processes, so an in-process lock would prove nothing. These fail on the lockless
+# read-modify-write (two readers see the same len(spans), mint the same id, and the later
+# os.replace clobbers the earlier write).
+
+def test_span_start_concurrent_processes_get_distinct_ids_zero_drops(tmp_path):
+    activity.start_run(tmp_path, id="wf-race-1", surface="workflow", title="race", now=0.0)
+    script = str(Path(activity.__file__))
+    n = 12
+    procs = [subprocess.Popen(
+        [sys.executable, script, "span-start", "--env-root", str(tmp_path),
+         "--id", "wf-race-1", "--name", "agent-%d" % i],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for i in range(n)]
+    ids = []
+    for p in procs:
+        out, err = p.communicate(timeout=60)
+        assert p.returncode == 0, err
+        ids.append(out.strip())
+    assert len(ids) == n
+    assert len(set(ids)) == n, "duplicate span_ids minted: %r" % (ids,)
+    rec = activity.read_all(tmp_path)[0]
+    assert len(rec["spans"]) == n, "dropped spans: %d of %d landed" % (len(rec["spans"]), n)
+
+
+def test_end_span_concurrent_processes_exact_run_cost(tmp_path):
+    activity.start_run(tmp_path, id="wf-race-2", surface="workflow", title="race2", now=0.0)
+    n = 10
+    span_ids = [activity.start_span(tmp_path, "wf-race-2", name="a%d" % i, now=0.0) for i in range(n)]
+    script = str(Path(activity.__file__))
+    costs = [round(0.11 * (i + 1), 2) for i in range(n)]
+    procs = [subprocess.Popen(
+        [sys.executable, script, "span-end", "--env-root", str(tmp_path),
+         "--id", "wf-race-2", "--span-id", sid, "--cost", str(cost)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for sid, cost in zip(span_ids, costs)]
+    for p in procs:
+        out, err = p.communicate(timeout=60)
+        assert p.returncode == 0, err
+    rec = activity.read_all(tmp_path)[0]
+    assert all(s["status"] == "ok" for s in rec["spans"]), "an end_span update was lost"
+    assert activity.run_cost(rec) == pytest.approx(sum(costs)), "run_cost inexact under concurrency"
+
+
+def test_prune_removes_the_lock_sidecar(tmp_path):
+    """A lock file outlives its record otherwise: prune would leave one .lock per pruned run
+    accumulating in state/activity/ forever."""
+    activity.start_run(tmp_path, id="wf-lock-prune", surface="workflow", title="t", now=0.0)
+    activity.start_span(tmp_path, "wf-lock-prune", name="s", now=0.0)  # creates the .lock
+    activity.finish_run(tmp_path, "wf-lock-prune", "ended", now=0.0)
+    lock = activity.ACTIVITY_DIR(tmp_path) / "wf-lock-prune.json.lock"
+    assert lock.exists(), "the mutators should have created a lock sidecar"
+    assert activity.prune(tmp_path, retain_s=0, now=100000.0) == 1
+    assert not lock.exists(), "prune left the .lock sidecar behind"

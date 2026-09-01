@@ -2,7 +2,7 @@
 agent surface. One JSON file per run under state/activity/; live logs under
 state/activity/logs/. Every write is best-effort and MUST NOT raise into a producer's
 real work — callers wrap nothing; this module swallows its own I/O errors."""
-import json, os, sys, time
+import contextlib, json, os, sys, time
 from pathlib import Path
 
 LIVE_WINDOW_S = 90
@@ -48,6 +48,63 @@ def _atomic_write(path, obj):
         pass
 
 
+@contextlib.contextmanager
+def _run_lock(path, timeout=5.0, poll=0.02):
+    """Cross-process advisory lock guarding one run record's read-modify-write window
+    (msvcrt on Windows, flock on POSIX). Fan-out agents each shell out to this CLI as
+    SEPARATE OS PROCESSES against one run record, so the lock must be OS-level -- an
+    in-process lock would serialize nothing. Best-effort like the rest of this module:
+    any locking failure still yields (the write proceeds unlocked) rather than raising
+    into a producer, and a wedged lock degrades to 'proceed' at the deadline instead of
+    blocking a producer's real work forever."""
+    lock_path = f"{path}.lock"
+    fh = None
+    locked = False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fh = open(lock_path, "a+b")
+        if os.fstat(fh.fileno()).st_size < 1:
+            fh.write(b"L")   # any single byte; msvcrt.locking needs >=1 byte to lock a range
+            fh.flush()
+        deadline = time.time() + timeout
+        while True:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    break
+                time.sleep(poll)
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        if fh is not None:
+            if locked:
+                try:
+                    if sys.platform == "win32":
+                        import msvcrt
+                        fh.seek(0)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
 def _rec_path(env_root, rid):
     return str(ACTIVITY_DIR(env_root) / f"{rid}.json")
 
@@ -77,29 +134,33 @@ def start_run(env_root, *, id, surface, title, item_ids=(), repo=None, pid=None,
 def heartbeat(env_root, id, *, now=None, **updates):
     if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
         return
-    rec = _read_json(_rec_path(env_root, id))
-    if not rec:
-        return
-    rec["heartbeat"] = _now(now)
-    for k in ("tokens", "cost_usd", "detail", "log_path", "worktree", "pid"):
-        if k in updates:
-            rec[k] = updates[k]
-    _atomic_write(_rec_path(env_root, id), rec)
+    path = _rec_path(env_root, id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return
+        rec["heartbeat"] = _now(now)
+        for k in ("tokens", "cost_usd", "detail", "log_path", "worktree", "pid"):
+            if k in updates:
+                rec[k] = updates[k]
+        _atomic_write(path, rec)
 
 
 def start_span(env_root, run_id, *, name, kind="internal", parent_span_id=None, now=None):
     if not _safe_id(run_id):
         return None
-    rec = _read_json(_rec_path(env_root, run_id))
-    if not rec:
-        return None
-    spans = rec.setdefault("spans", [])
-    span_id = f"{run_id}#{len(spans) + 1}"
-    spans.append({"span_id": span_id, "parent_span_id": parent_span_id, "name": name,
-                  "kind": kind, "status": "running", "start": _now(now), "end": None,
-                  "input_tokens": 0, "output_tokens": 0, "cost": None, "error": None})
-    rec["heartbeat"] = _now(now)
-    _atomic_write(_rec_path(env_root, run_id), rec)
+    path = _rec_path(env_root, run_id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return None
+        spans = rec.setdefault("spans", [])
+        span_id = f"{run_id}#{len(spans) + 1}"
+        spans.append({"span_id": span_id, "parent_span_id": parent_span_id, "name": name,
+                      "kind": kind, "status": "running", "start": _now(now), "end": None,
+                      "input_tokens": 0, "output_tokens": 0, "cost": None, "error": None})
+        rec["heartbeat"] = _now(now)
+        _atomic_write(path, rec)
     return span_id
 
 
@@ -107,62 +168,70 @@ def end_span(env_root, run_id, span_id, *, status="ok", input_tokens=0, output_t
              cost=None, error=None, now=None):
     if not _safe_id(run_id):
         return
-    rec = _read_json(_rec_path(env_root, run_id))
-    if not rec:
-        return
-    for s in rec.get("spans", []):
-        if s.get("span_id") == span_id:
-            s.update({"status": status, "end": _now(now), "input_tokens": input_tokens,
-                      "output_tokens": output_tokens, "cost": cost, "error": error})
-            break
-    rec["heartbeat"] = _now(now)
-    _atomic_write(_rec_path(env_root, run_id), rec)
+    path = _rec_path(env_root, run_id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return
+        for s in rec.get("spans", []):
+            if s.get("span_id") == span_id:
+                s.update({"status": status, "end": _now(now), "input_tokens": input_tokens,
+                          "output_tokens": output_tokens, "cost": cost, "error": error})
+                break
+        rec["heartbeat"] = _now(now)
+        _atomic_write(path, rec)
 
 
 def request_approval(env_root, run_id, *, kind, prompt, resume_token=None, now=None):
     if not _safe_id(run_id):
         return
-    rec = _read_json(_rec_path(env_root, run_id))
-    if not rec:
-        return
-    ts = _now(now)
-    rec["status"] = "awaiting_approval"
-    rec["pending_approval"] = {"awaiting": True, "kind": kind, "prompt": prompt,
-                               "resume_token": resume_token, "requested_at": ts,
-                               "responded_at": None, "decision": None}
-    rec["heartbeat"] = ts
-    _atomic_write(_rec_path(env_root, run_id), rec)
+    path = _rec_path(env_root, run_id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return
+        ts = _now(now)
+        rec["status"] = "awaiting_approval"
+        rec["pending_approval"] = {"awaiting": True, "kind": kind, "prompt": prompt,
+                                   "resume_token": resume_token, "requested_at": ts,
+                                   "responded_at": None, "decision": None}
+        rec["heartbeat"] = ts
+        _atomic_write(path, rec)
 
 
 def resolve_approval(env_root, run_id, *, decision, now=None):
     if not _safe_id(run_id):
         return
-    rec = _read_json(_rec_path(env_root, run_id))
-    if not rec:
-        return
-    ts = _now(now)
-    pa = rec.get("pending_approval") or {}
-    pa.update({"awaiting": False, "decision": decision, "responded_at": ts})
-    rec["pending_approval"] = pa
-    rec["status"] = "running"
-    rec["heartbeat"] = ts
-    _atomic_write(_rec_path(env_root, run_id), rec)
+    path = _rec_path(env_root, run_id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return
+        ts = _now(now)
+        pa = rec.get("pending_approval") or {}
+        pa.update({"awaiting": False, "decision": decision, "responded_at": ts})
+        rec["pending_approval"] = pa
+        rec["status"] = "running"
+        rec["heartbeat"] = ts
+        _atomic_write(path, rec)
 
 
 def finish_run(env_root, id, status, *, now=None, **updates):
     if not _safe_id(id):  # symmetric with start_run — never resolve a path outside state/activity/
         return
-    rec = _read_json(_rec_path(env_root, id))
-    if not rec:
-        return
-    ts = _now(now)
-    rec["status"] = status if status in TERMINAL else "ended"
-    rec["ended"] = ts
-    rec["heartbeat"] = ts
-    for k in ("tokens", "cost_usd", "detail", "log_path", "worktree"):
-        if k in updates:
-            rec[k] = updates[k]
-    _atomic_write(_rec_path(env_root, id), rec)
+    path = _rec_path(env_root, id)
+    with _run_lock(path):
+        rec = _read_json(path)
+        if not rec:
+            return
+        ts = _now(now)
+        rec["status"] = status if status in TERMINAL else "ended"
+        rec["ended"] = ts
+        rec["heartbeat"] = ts
+        for k in ("tokens", "cost_usd", "detail", "log_path", "worktree"):
+            if k in updates:
+                rec[k] = updates[k]
+        _atomic_write(path, rec)
 
 
 def run_cost(rec):
@@ -290,7 +359,9 @@ def prune(env_root, *, retain_s=86400, now=None):
             # d/n came from listdir so it is in-dir; the log path is built from the record's own
             # id field (JSON content, never validated) — guard it so a crafted "../" id can't
             # os.remove an arbitrary .log outside LOGS_DIR.
-            paths = [d / n]
+            # the record's own `.lock` sidecar (A124) rides along: same in-dir name from
+            # listdir plus a fixed suffix, so it inherits d/n's traversal safety.
+            paths = [d / n, d / f"{n}.lock"]
             rid = rec.get("id")
             if _safe_id(rid):
                 paths.append(LOGS_DIR(env_root) / f"{rid}.log")
