@@ -87,7 +87,12 @@ def test_gather_matches_backlog_parse_prefix_rule_for_5plus_letter_ids(tmp_path)
 def test_gather_missing_sources_never_raises(tmp_path):
     (tmp_path / "state").mkdir(); (tmp_path / "profile").mkdir()
     items, ctx = p.gather(str(tmp_path))          # no backlogs, no docs, no activity
-    assert items == [] and all(v == set() for v in ctx.values())
+    assert items == []
+    # Every id-set is empty. `parse_errors` (A144) is a LIST of {repo, backlog, error} dicts, not a
+    # set, so the old blanket `all(v == set() ...)` no longer states the intent — spell it out:
+    # nothing found, and nothing failed to parse either.
+    assert all(v == set() for k, v in ctx.items() if k != "parse_errors")
+    assert ctx["parse_errors"] == []
     assert p.model(str(tmp_path))["stages"][0]["count"] == 0
 
 def test_gather_classifies_real_done_and_seed_items(tmp_path):

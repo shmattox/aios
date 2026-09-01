@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backlog_parse import parse_backlog, station_for  # noqa: E402
+from backlog_parse import parse_backlog, station_for, BacklogIdError  # noqa: E402
 
 SAMPLE = """# BACKLOG
 ## Now
@@ -43,3 +43,45 @@ def test_station_mapping():
     # standup group overrides an otherwise-quiet open item
     assert station_for(items["A204"], {"A204": "needs-you"}, today=today) == "needs_you"
     assert station_for(items["A204"], {"A204": "handed-off"}, today=today) == "in_motion"
+
+
+# --- A144: a letter-suffixed id is REFUSED, never silently truncated -------------------------
+
+def test_suffixed_id_raises_instead_of_truncating():
+    """`PS392b` used to parse as id `PS392` with `b` as its headline. That is not cosmetic: a `b`
+    item is normally split off a FINISHED parent, so the stem lands in the done set, the drain
+    selector drops it, and genuinely open work goes permanently invisible. Refuse it instead."""
+    try:
+        parse_backlog("- [ ] **A26b** - the remainder of A26")
+    except BacklogIdError as e:
+        assert "A26b" in str(e)
+        assert "letter suffix" in str(e)
+    else:
+        raise AssertionError("a suffixed id must raise, not parse")
+
+
+def test_suffixed_id_is_refused_in_every_item_state():
+    """open / done / seed all go through the same gate — a done suffixed id still poisons the
+    done set that the open ones are checked against."""
+    for line in ("- [ ] **A26a** - open", "- [x] **A26a** - done", "- ◷ **A26a** - seed"):
+        try:
+            parse_backlog(line)
+        except BacklogIdError:
+            pass
+        else:
+            raise AssertionError(f"must raise for: {line}")
+
+
+def test_plain_ids_are_untouched():
+    """The contract is letters+digits; everything already conforming must parse exactly as before."""
+    items = parse_backlog(
+        "\n".join(["- [ ] **A26** — fine", "- [x] **PS392** — also fine", "- [ ] **H144** — fine"])
+    )
+    assert [i["id"] for i in items] == ["A26", "PS392", "H144"]
+    assert items[0]["headline"] == "fine"
+
+
+def test_a_trailing_letter_elsewhere_in_the_line_is_not_an_id_suffix():
+    """Only the id token itself is policed — prose after the id may contain anything."""
+    items = parse_backlog("- [ ] **A26** - ship v2b of the thing")
+    assert [i["id"] for i in items] == ["A26"]

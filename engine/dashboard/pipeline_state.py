@@ -156,13 +156,23 @@ def _held_ids(env_root):
 def gather(env_root):
     items = []
     done_ids = set()
+    parse_errors = []  # A144: repos whose backlog could not be parsed, surfaced not swallowed
     for repo, bl in _backlog_files(env_root):
         try:
             with open(bl, encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
         except OSError:
             continue
-        for it in parse_backlog(text):
+        try:
+            parsed_items = parse_backlog(text)
+        except ValueError as e:
+            # A144: a malformed id RAISES rather than being silently truncated — right at the
+            # parser, wrong for a sweep across every repo, where one bad line would take the whole
+            # brief down with it. Skip that repo and keep the reason attached so it surfaces as a
+            # named problem instead of a quietly shorter list.
+            parse_errors.append({"repo": repo, "backlog": bl, "error": str(e)})
+            continue
+        for it in parsed_items:
             it["repo"] = repo
             items.append(it)
             if it.get("state") == "done" and it.get("id"):
@@ -176,6 +186,11 @@ def gather(env_root):
         "plan_ids": _ids_in_docs(env_root, "plans") & real_ids,
         "active_ids": active & real_ids, "review_ids": review & real_ids,
         "held_ids": _held_ids(env_root) & real_ids, "done_ids": done_ids,
+        # A144: never write-only. A repo skipped for a malformed backlog id rides out on the
+        # context so a consumer can SAY so — a silently shorter list is the failure mode this
+        # whole change exists to remove, and swallowing the reason here would recreate it one
+        # layer up.
+        "parse_errors": parse_errors,
     }
     # an item can't be both spec- and plan-having in two stages: plan wins (handled by classify order)
     return items, ctx
