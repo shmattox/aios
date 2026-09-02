@@ -372,6 +372,17 @@ def test_prune_removes_the_lock_sidecar(tmp_path):
     assert not lock.exists(), "prune left the .lock sidecar behind"
 
 
+@pytest.fixture(autouse=True)
+def _reset_lock_unsupported_latch():
+    """`_lock_unsupported_marked` is a MODULE-level latch: correct in production, where each CLI
+    invocation is its own short-lived process, but inside one pytest process it leaks across
+    tests — the first test to trip ENOLCK would silently suppress the marker for every later one.
+    Reset it per test so these are order-independent rather than accidentally passing."""
+    activity._lock_unsupported_marked = False
+    yield
+    activity._lock_unsupported_marked = False
+
+
 def test_unlockable_filesystem_does_not_stall_the_producer(tmp_path, monkeypatch):
     """A filesystem that cannot lock (ENOLCK on SMB/NFS/some FUSE mounts) must be detected
     on the FIRST attempt and fall through unlocked. Retrying a permanent error burns the whole
@@ -466,6 +477,11 @@ def test_contended_lock_still_writes_after_the_deadline(tmp_path, monkeypatch):
         assert elapsed < 3.0, "blocked far past its own deadline (%.2fs)" % elapsed
         assert sid == "wf-contended#1"                       # degraded, but it still wrote
         assert len(activity.read_all(tmp_path)[0]["spans"]) == 1
+        # THE headline invariant: contention is the designed, self-limiting degradation, so it
+        # must NOT leave the install-level "this filesystem cannot lock" marker. Without this,
+        # moving the marker call onto the contended branch keeps the whole suite green.
+        assert not (activity.ACTIVITY_DIR(tmp_path) / activity.LOCK_UNSUPPORTED_MARKER).exists(), \
+            "contended-past-deadline must not be marked as an unlockable filesystem"
     finally:
         holder.kill()
         holder.wait(timeout=10)
@@ -480,7 +496,7 @@ def test_unlockable_filesystem_leaves_a_breadcrumb(tmp_path, monkeypatch):
     Only the PERMANENT case is marked. Losing a contended lock at the deadline is the designed,
     self-limiting degradation and would just make this noisy."""
     activity.start_run(tmp_path, id="wf-crumb", surface="workflow", title="t", now=0.0)
-    marker = activity.ACTIVITY_DIR(tmp_path) / ".lock-unsupported"
+    marker = activity.ACTIVITY_DIR(tmp_path) / activity.LOCK_UNSUPPORTED_MARKER
     assert not marker.exists()
 
     def _boom(*a, **k):
@@ -505,7 +521,7 @@ def test_breadcrumb_not_written_when_locking_works(tmp_path):
     activity.start_run(tmp_path, id="wf-nocrumb", surface="workflow", title="t", now=0.0)
     activity.start_span(tmp_path, "wf-nocrumb", name="s", now=0.0)
     activity.heartbeat(tmp_path, "wf-nocrumb", now=1.0)
-    assert not (activity.ACTIVITY_DIR(tmp_path) / ".lock-unsupported").exists()
+    assert not (activity.ACTIVITY_DIR(tmp_path) / activity.LOCK_UNSUPPORTED_MARKER).exists()
 
 
 def test_breadcrumb_failure_never_raises(tmp_path, monkeypatch):
@@ -527,3 +543,40 @@ def test_breadcrumb_failure_never_raises(tmp_path, monkeypatch):
 
     activity.heartbeat(tmp_path, "wf-crumbfail", now=1.0)          # must not raise
     assert activity.read_all(tmp_path)[0]["heartbeat"] == 1.0
+
+
+def test_breadcrumb_written_once_and_repaired_if_empty(tmp_path, monkeypatch):
+    """Two guarantees the docstring claims and nothing pinned: a second mutator call does not
+    rewrite the marker, and a torn/empty marker is REPAIRED rather than latching content-free."""
+    activity.start_run(tmp_path, id="wf-once", surface="workflow", title="t", now=0.0)
+
+    def _boom(*a, **k):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    if sys.platform == "win32":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", _boom)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", _boom)
+
+    marker = activity.ACTIVITY_DIR(tmp_path) / activity.LOCK_UNSUPPORTED_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("", encoding="utf-8")          # a torn first write
+    activity.heartbeat(tmp_path, "wf-once", now=1.0)
+    assert marker.read_text(encoding="utf-8").strip(), "an empty marker latched and was never repaired"
+
+    body = marker.read_text(encoding="utf-8")
+    activity.heartbeat(tmp_path, "wf-once", now=2.0)
+    assert marker.read_text(encoding="utf-8") == body, "marker rewritten on a second call"
+
+
+def test_prune_preserves_the_lock_unsupported_marker(tmp_path):
+    """The marker describes the MOUNT, not any run, so a prune that reaps terminal records must
+    leave it. Unpinned before: widening prune() to delete non-.json entries stayed green."""
+    activity.start_run(tmp_path, id="wf-prunemark", surface="workflow", title="t", now=0.0)
+    activity.finish_run(tmp_path, "wf-prunemark", "ended", now=0.0)
+    marker = activity.ACTIVITY_DIR(tmp_path) / activity.LOCK_UNSUPPORTED_MARKER
+    marker.write_text("unlockable\n", encoding="utf-8")
+    assert activity.prune(tmp_path, retain_s=0, now=100000.0) == 1
+    assert marker.exists(), "prune ate the install-level marker"

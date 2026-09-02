@@ -64,6 +64,7 @@ _LOCK_CONTENDED = frozenset(x for x in (
 
 
 LOCK_UNSUPPORTED_MARKER = ".lock-unsupported"
+_lock_unsupported_marked = False   # in-process latch; see _mark_lock_unsupported
 
 
 def _mark_lock_unsupported(lock_path, err):
@@ -79,16 +80,35 @@ def _mark_lock_unsupported(lock_path, err):
     of any one run, and this keeps the record contract untouched. Written once (skipped if present)
     so a hot loop cannot churn it. Best-effort and silent like the rest of this module's I/O.
     """
+    global _lock_unsupported_marked
+    if _lock_unsupported_marked:
+        return                       # unconditional: os.path.exists() alone is not a latch (below)
     try:
         marker = os.path.join(os.path.dirname(lock_path), LOCK_UNSUPPORTED_MARKER)
-        if os.path.exists(marker):
-            return
+        # NOT `if os.path.exists(marker): return` on its own. exists() swallows OSError and
+        # returns False, so on the flaky SMB/NFS mount this marker EXISTS for, a transient stat
+        # failure would re-write it every call — and it costs a syscall per mutator call forever.
+        # The in-process flag above is the real latch; this only avoids clobbering a marker a
+        # PREVIOUS process wrote. A present-but-EMPTY marker is repaired rather than trusted: a
+        # torn or interrupted first write would otherwise latch permanently while saying nothing.
+        try:
+            if os.path.getsize(marker) > 0:
+                _lock_unsupported_marked = True
+                return
+        except OSError:
+            pass                     # absent, or unstattable — fall through and (re)write
         name = errno.errorcode.get(getattr(err, "errno", None), str(getattr(err, "errno", "?")))
-        with open(marker, "w", encoding="utf-8") as fh:
+        # Written atomically (tmp + os.replace, the convention _atomic_write already sets here) so
+        # a partial write can never latch as a content-free marker.
+        tmp = "%s.%d.tmp" % (marker, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(
-                "advisory file locking is unavailable on this filesystem\n"
+                "advisory file locking is unavailable, or failed with a non-contention errno\n"
                 "errno: %s (%s)\n"
                 "when:  %s\n"
+                "note:  a non-contention errno is TREATED as permanent (retrying it would stall\n"
+                "  every call). ENOLCK in particular can also mean transient kernel lock-record\n"
+                "  exhaustion, so this marker is a lead, not a verdict on the filesystem.\n"
                 "meaning: activity.py run-record writes are proceeding UNLOCKED, so concurrent\n"
                 "  span writes from parallel agent processes can drop spans, duplicate span_ids\n"
                 "  and undercount run_cost (A124). Move state/activity/ to a filesystem that\n"
@@ -96,6 +116,8 @@ def _mark_lock_unsupported(lock_path, err):
                 % (name, getattr(err, "strerror", ""),
                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
             )
+        os.replace(tmp, marker)
+        _lock_unsupported_marked = True
     except Exception:
         pass
 
