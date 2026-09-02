@@ -76,20 +76,28 @@ def test_seed_preserves_existing_entries():
         assert load_slugmap(sd/"_slugmap.json") == got
 
 
-# ---- harness footer (exactly once, at end of file) — this repo's test_*.py files run
-# their own checks at import/exec (python test_seed_slugmap.py), not via pytest discovery
-# (see suite_test.py's docstring); the three test_* functions above are invoked here so
-# `python test_seed_slugmap.py` actually exercises them and exits non-zero on failure. ----
-FAIL = []
-for _fn in (test_seed_reads_notion_id_to_stem,
-            test_seed_skips_record_without_notion_id,
-            test_seed_dry_run_writes_nothing,
-            test_seed_cli_refuses_gm_silo,
-            test_seed_preserves_existing_entries):
-    try:
-        _fn()
-    except Exception as exc:  # noqa: BLE001 - collect every failure, don't stop at the first
-        FAIL.append(f"{_fn.__name__}: {exc}")
+# ---- harness footer (exactly once, at end of file) ----
+# GUARDED by __main__ (A6284). This file is a HYBRID: it defines module-level `def test_*`, so
+# `conftest.py` deliberately does NOT ignore it (its rule is "ignore only what pytest cannot
+# import"). Unguarded, this `sys.exit` fired during COLLECTION and aborted the entire run with
+# `INTERNALERROR ... SystemExit: 0` — `python -m pytest -q` from the repo root reported
+# "no tests ran", exit 3, collecting NOTHING repo-wide. That is the command registered as this
+# repo's factory `test_cmd`, so the drain gate was verifying nothing at all.
+#
+# With the guard, both mechanisms work as conftest.py describes them: pytest imports the file and
+# collects the five `def test_*` below, AND `python test_seed_slugmap.py` (how `suite_test.py`
+# subprocesses it) still runs them and exits non-zero on failure. Complementary, not redundant.
+if __name__ == "__main__":
+    FAIL = []
+    for _fn in (test_seed_reads_notion_id_to_stem,
+                test_seed_skips_record_without_notion_id,
+                test_seed_dry_run_writes_nothing,
+                test_seed_cli_refuses_gm_silo,
+                test_seed_preserves_existing_entries):
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - collect every failure, don't stop at the first
+            FAIL.append(f"{_fn.__name__}: {exc}")
 
-print("FAILURES:", FAIL)
-sys.exit(1 if FAIL else 0)
+    print("FAILURES:", FAIL)
+    sys.exit(1 if FAIL else 0)
