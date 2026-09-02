@@ -27,6 +27,14 @@ parents to the first dir that does (in-mount markers; never chase the out-of-mou
 markers first (walk up for `state/`+`profile/`), config second; only when BOTH fail is the install
 absent, and even then STOP with guidance, never auto-`/aios:setup`.
 
+**§0b Is the RUNNING engine the installed one? (H8292)** Run
+`python "${CLAUDE_PLUGIN_ROOT}/engine/tools/brief_render.py" version` — it prints `{plugin_version,
+engine_sha, files, root}` for the engine this session actually mounted. If `~/.claude/plugins/aios-engine-fingerprint.json`
+exists (written by the install's session-start smoke check), compare `engine_sha`: a MISMATCH means this
+session mounted stale code (the 2026-09-01 class — renderers silently returned nothing) → STOP and tell
+{{ENTITY_NAME}} to start a new session; a mount cannot be refreshed from inside the session holding it.
+No fingerprint file → proceed (a no-smoke-check install), but state the `engine_sha` in the loading ack.
+
 The goal is NOT to tell {{ENTITY_NAME}} what exists. It is a **decision-and-action launcher**:
 the few things that need a move today, each carrying (a) how urgent it *really* is, (b) what
 their own playbook says, (c) the recommended next action(s), and (d) a door into a focused

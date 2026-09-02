@@ -7,6 +7,7 @@ docs/superpowers/specs/2026-07-17-brief-freshness-actionability-design.md (A93 �
 """
 import hashlib
 import json
+import os
 import sys
 
 VALID_GRADES = {"1", "2a", "2b"}
@@ -569,6 +570,34 @@ def _extract_domain_filters(argv):
     return remaining, domains
 
 
+def engine_fingerprint(root):
+    """sha1 over the bytes of every `engine/tools/*.py` under `root` (sorted by name). Two engine
+    trees with the same fingerprint run the same code, whatever their metadata claims."""
+    import hashlib
+    h = hashlib.sha1()
+    tools = os.path.join(root, "engine", "tools")
+    names = sorted(n for n in (os.listdir(tools) if os.path.isdir(tools) else []) if n.endswith(".py"))
+    for n in names:
+        h.update(n.encode("utf-8"))
+        with open(os.path.join(tools, n), "rb") as fh:
+            h.update(fh.read().replace(b"\r\n", b"\n"))      # line-ending agnostic (checkout autocrlf)
+    return {"engine_sha": h.hexdigest()[:16], "files": len(names)}
+
+
+def engine_version(root=None):
+    """{plugin_version, engine_sha, files, root} for the engine THIS file belongs to."""
+    root = root or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    ver = None
+    try:
+        with open(os.path.join(root, ".claude-plugin", "plugin.json"), encoding="utf-8") as fh:
+            ver = json.load(fh).get("version")
+    except (OSError, ValueError):
+        ver = None
+    out = {"plugin_version": ver, "root": root}
+    out.update(engine_fingerprint(root))
+    return out
+
+
 def main(argv):
     # The card emits non-cp1252 glyphs (🔵/🟠). Windows stdout defaults to cp1252
     # and would crash on print(); force UTF-8 on the CLI output boundary.
@@ -577,6 +606,12 @@ def main(argv):
     except (AttributeError, ValueError):
         pass
     argv, domain_filters = _extract_domain_filters(argv)
+    if len(argv) >= 2 and argv[1] == "version":
+        # H8292: what engine is RUNNING? Prints the plugin version + a content fingerprint of this
+        # engine's tools so a caller (the smoke check, the brief's §0) can tell a stale mount from
+        # the installed build by CODE, not by install metadata. Takes no further args.
+        print(json.dumps(engine_version(), ensure_ascii=False))
+        return 0
     if len(argv) < 3:
         print("usage: brief_render.py {station|card} <cache.json> <station|item_id>\n"
               "       brief_render.py overview <cache.json> [limit]\n"
@@ -655,11 +690,29 @@ def main(argv):
         return 0
     cache = _load(cache_path)
     if op == "station":
-        print(render_station(cache, key))
+        # H8292: a silently-empty render is impossible — zero rows from a NON-empty station means the
+        # engine and the cache disagree (a stale mount reading a renamed key), never "nothing to show".
+        out = render_station(cache, key)
+        n_in = len(_station_items(cache, key))
+        if not out.strip() and n_in:
+            print("brief_render station: rendered 0 cards from %d item(s) in station %r — engine/cache "
+                  "mismatch (stale mount? run `brief_render.py version`)" % (n_in, key), file=sys.stderr)
+            return 3
+        if not n_in:
+            print("brief_render station: station %r has no items in this cache" % key, file=sys.stderr)
+        print(out)
     elif op == "card":
         print(render_card_by_id(cache, key))
     elif op == "overview":
-        print(render_overview(cache, limit=limit))
+        out = render_overview(cache, limit=limit)
+        n_in = len(cache.get("act") or [])
+        if not out.strip() and n_in and (limit is None or limit > 0):
+            print("brief_render overview: rendered 0 rows from %d act item(s) — engine/cache mismatch "
+                  "(stale mount reading a pre-rename key? run `brief_render.py version`)" % n_in, file=sys.stderr)
+            return 3
+        if not n_in:
+            print("brief_render overview: cache carries no act items", file=sys.stderr)
+        print(out)
     elif op == "in-motion":
         print(render_in_motion(cache))
     elif op == "settle":

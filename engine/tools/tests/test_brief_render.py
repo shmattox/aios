@@ -781,3 +781,47 @@ def test_standup_veto_triage_never_drops_unannotated_item():
     out = R.render_factory_standup(data)
     assert "H2" in out            # the un-annotated item is surfaced, not silently dropped
     assert "H1" not in out        # the explicitly-clean one is collapsed
+
+
+# --- H8292: a stale mount must be detectable, and an empty render must say why ---
+
+def test_version_op_prints_plugin_version_and_engine_fingerprint(capsys):
+    import brief_render as br
+    rc = br.main(["x", "version", "ignored"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["plugin_version"] and len(out["engine_sha"]) == 16 and out["files"] > 5
+    assert br.engine_fingerprint(out["root"])["engine_sha"] == out["engine_sha"]   # stable
+
+def test_engine_fingerprint_changes_with_code_and_ignores_line_endings(tmp_path):
+    import brief_render as br
+    (tmp_path / "engine" / "tools").mkdir(parents=True)
+    (tmp_path / "engine" / "tools" / "a.py").write_bytes(b"x = 1\n")
+    a = br.engine_fingerprint(str(tmp_path))["engine_sha"]
+    (tmp_path / "engine" / "tools" / "a.py").write_bytes(b"x = 1\r\n")
+    assert br.engine_fingerprint(str(tmp_path))["engine_sha"] == a           # CRLF checkout is the same code
+    (tmp_path / "engine" / "tools" / "a.py").write_bytes(b"x = 2\n")
+    assert br.engine_fingerprint(str(tmp_path))["engine_sha"] != a           # real change is visible
+
+def test_overview_zero_rows_from_nonempty_act_exits_3(tmp_path, monkeypatch, capsys):
+    import brief_render as br
+    cache = tmp_path / "c.json"
+    cache.write_text(json.dumps({"act": [ACT_ITEM]}), encoding="utf-8")
+    monkeypatch.setattr(br, "render_overview", lambda c, limit=None: "")     # the stale-mount symptom
+    rc = br.main(["x", "overview", str(cache)])
+    err = capsys.readouterr().err
+    assert rc == 3 and "0 rows from 1 act item" in err and "version" in err
+
+def test_overview_empty_act_still_exits_0_but_says_so(tmp_path, capsys):
+    import brief_render as br
+    cache = tmp_path / "c.json"; cache.write_text(json.dumps({"act": []}), encoding="utf-8")
+    rc = br.main(["x", "overview", str(cache)])
+    cap = capsys.readouterr()
+    assert rc == 0 and "no act items" in cap.err
+
+def test_station_zero_cards_from_nonempty_station_exits_3(tmp_path, monkeypatch, capsys):
+    import brief_render as br
+    cache = tmp_path / "c.json"
+    cache.write_text(json.dumps({"stations": {"dev": [ACT_ITEM]}}), encoding="utf-8")
+    monkeypatch.setattr(br, "render_station", lambda c, k: "")
+    rc = br.main(["x", "station", str(cache), "dev"])
+    assert rc == 3 and "0 cards from 1 item" in capsys.readouterr().err
