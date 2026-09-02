@@ -651,8 +651,24 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # golden field on all 18 records if carry-forward were broken — so FAILURES: [] already IS the
     # proof. Count it explicitly so it is visible rather than inferred.
     _wiki_n = sum(1 for _g in _written if "wiki" in _load_fm(_g.read_text(encoding="utf-8")))
-    check("a80_wiki_carried_on_real_data", _wiki_n == 18)
-    print(f"A80 state_native: wiki carried forward on {_wiki_n} real records (entities 11 + people 7)")
+    # Was 18 (entities 11 + people 7) when written 2026-07-15. On 2026-08-27 `people` gained
+    # `local_only: true` in the FO schema (its Notion DB was never built), and `import_silo` skips
+    # a local-only table at all three guards -- export validation, relation validation and the WRITE
+    # loop (`domain_mirror.py:273,287,295`). So people records are no longer IMPORTED at all: their
+    # `wiki` is now safe BY CONSTRUCTION (nothing rewrites the record) rather than by carry-forward,
+    # and they can never appear in `_written`. 11 is the correct count, and it is exactly the set
+    # this check can still speak for -- the entities table, where carry-forward really does run.
+    #
+    # This assertion went stale on 2026-08-27 and stayed red until 2026-09-02. Nothing caught it
+    # because the repo's registered suite command collects zero tests (A6284) -- the gate that would
+    # have flagged it could not run. Deliberately NOT loosened to `>= 11`: an exact count is what
+    # makes a silent carry-forward regression on entities fail here.
+    _people_local_only = any(_t.get("local_only") for _t in _cfg["tables"]
+                             if _t.get("source_db") == "people")
+    check("a80_people_still_local_only", _people_local_only)   # if this flips, the 11 below is wrong
+    check("a80_wiki_carried_on_real_data", _wiki_n == 11)
+    print(f"A80 state_native: wiki carried forward on {_wiki_n} real records (entities 11; "
+          f"people 7 excluded \u2014 local_only, never imported)")
     # Plan 2b Task 3 — PAPER-GOVERNS: explicit, standalone proof that every asset's `owner_entity`
     # (STATE-NATIVE, A80) is BYTE-PRESERVED from the golden — not just implied by the generic
     # frontmatter-equivalence loop above. Compares generated vs golden per-record, both non-null
