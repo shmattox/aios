@@ -50,17 +50,21 @@ def _atomic_write(path, obj):
 
 # errnos meaning "someone else holds it, try again" -- everything else means the filesystem
 # does not implement locking, which must NOT be retried (see the retry loop below).
+_LOCK_TIMEOUT_S = 5.0   # module-level so a test can shrink it and still exercise the REAL lock
 _LOCK_CONTENDED = frozenset(x for x in (
     getattr(errno, "EACCES", None),      # msvcrt.locking, Windows contention
     getattr(errno, "EAGAIN", None),      # fcntl.flock, POSIX contention
-    getattr(errno, "EWOULDBLOCK", None), # == EAGAIN on most platforms; kept explicit
+    getattr(errno, "EWOULDBLOCK", None), # == EAGAIN on POSIX; on Windows this is
+                                         # WSAEWOULDBLOCK (10035, a Winsock errno a
+                                         # file lock never raises) -- harmless, and
+                                         # EAGAIN is in the set separately.
     getattr(errno, "EDEADLK", None),
     getattr(errno, "EDEADLOCK", None),
 ) if x is not None)
 
 
 @contextlib.contextmanager
-def _run_lock(path, timeout=5.0, poll=0.02):
+def _run_lock(path, timeout=None, poll=0.02):
     """Cross-process advisory lock guarding one run record's read-modify-write window
     (msvcrt on Windows, flock on POSIX). Fan-out agents each shell out to this CLI as
     SEPARATE OS PROCESSES against one run record, so the lock must be OS-level -- an
@@ -71,6 +75,7 @@ def _run_lock(path, timeout=5.0, poll=0.02):
 
     NOT REENTRANT: never call one locked mutator from inside another -- a nested acquire on
     the same path stalls the full deadline and then proceeds UNLOCKED."""
+    timeout = _LOCK_TIMEOUT_S if timeout is None else timeout
     lock_path = f"{path}.lock"
     fh = None
     locked = False
@@ -101,7 +106,10 @@ def _run_lock(path, timeout=5.0, poll=0.02):
                 if e.errno not in _LOCK_CONTENDED or time.time() >= deadline:
                     break
                 time.sleep(poll)
-    except OSError:
+    except Exception:
+        # deliberately broad: this module's contract is that its own I/O NEVER raises into a
+        # producer's real work, and the acquire path can fail in non-OSError ways (e.g. ImportError
+        # on a build without fcntl). Failing to lock must degrade, never propagate.
         pass
     try:
         yield

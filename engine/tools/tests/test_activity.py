@@ -1,4 +1,4 @@
-import contextlib, errno, json, os, subprocess, time
+import contextlib, errno, json, os, subprocess, textwrap, time
 from pathlib import Path
 import pytest, sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # engine/tools on path
@@ -379,7 +379,10 @@ def test_unlockable_filesystem_does_not_stall_the_producer(tmp_path, monkeypatch
     never blocks a producer's real work."""
     activity.start_run(tmp_path, id="wf-nolock", surface="workflow", title="t", now=0.0)
 
+    calls = []
+
     def _boom(*a, **k):
+        calls.append(1)
         raise OSError(errno.ENOLCK, "no locks available")
 
     if sys.platform == "win32":
@@ -394,6 +397,7 @@ def test_unlockable_filesystem_does_not_stall_the_producer(tmp_path, monkeypatch
         activity.heartbeat(tmp_path, "wf-nolock", now=1.0)
     elapsed = time.time() - t0
     # 3 calls x the 5s deadline = ~15s if a permanent error is retried as contention.
+    assert calls, "the lock primitive was never called -- this test disarmed itself"
     assert elapsed < 1.0, "unlockable fs stalled the producer for %.2fs across 3 calls" % elapsed
     assert activity.read_all(tmp_path)[0]["heartbeat"] == 1.0  # and the write still happened
 
@@ -426,13 +430,42 @@ def test_start_span_racing_end_span_across_processes(tmp_path):
 
 
 def test_contended_lock_still_writes_after_the_deadline(tmp_path, monkeypatch):
-    """The degraded branch: when the lock cannot be acquired within the deadline the write
-    proceeds UNLOCKED rather than raising or dropping data. That is the deliberate trade (the
-    module must never raise into a producer) and it is the single most consequential branch in
-    this code, so it is pinned here rather than left to inference."""
-    activity.start_run(tmp_path, id="wf-degraded", surface="workflow", title="t", now=0.0)
-    monkeypatch.setattr(activity, "_run_lock",
-                        lambda path, timeout=5.0, poll=0.02: contextlib.nullcontext())
-    sid = activity.start_span(tmp_path, "wf-degraded", name="s", now=1.0)
-    assert sid == "wf-degraded#1"
-    assert len(activity.read_all(tmp_path)[0]["spans"]) == 1
+    """The degraded branch: when the lock is genuinely held by ANOTHER PROCESS past the deadline,
+    the write proceeds unlocked rather than raising or dropping data -- the deliberate trade,
+    since this module must never raise into or block a producer forever.
+
+    Contends with a real subprocess holder and shrinks only the DEADLINE constant, so the real
+    retry loop, handle handling and release path all still run. (A previous version of this test
+    monkeypatched `_run_lock` itself into a nullcontext and passed even with the lock's entire
+    body deleted -- it pinned nothing.)"""
+    activity.start_run(tmp_path, id="wf-contended", surface="workflow", title="t", now=0.0)
+    path = activity._rec_path(tmp_path, "wf-contended")
+    holder_src = textwrap.dedent(
+        """
+        import sys, time
+        p = sys.argv[1] + ".lock"
+        fh = open(p, "a+b")
+        fh.write(b"L"); fh.flush(); fh.seek(0)
+        if sys.platform == "win32":
+            import msvcrt; msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl; fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        print("held", flush=True)
+        time.sleep(4)
+        """
+    )
+    holder = subprocess.Popen([sys.executable, "-c", holder_src, str(path)],
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"  # lock is genuinely taken
+        monkeypatch.setattr(activity, "_LOCK_TIMEOUT_S", 0.3)
+        t0 = time.time()
+        sid = activity.start_span(tmp_path, "wf-contended", name="s", now=1.0)
+        elapsed = time.time() - t0
+        assert elapsed >= 0.3, "did not actually contend (%.3fs) -- the lock was not held" % elapsed
+        assert elapsed < 3.0, "blocked far past its own deadline (%.2fs)" % elapsed
+        assert sid == "wf-contended#1"                       # degraded, but it still wrote
+        assert len(activity.read_all(tmp_path)[0]["spans"]) == 1
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
