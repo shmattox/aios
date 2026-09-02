@@ -35,8 +35,8 @@ def test_summarize_tokens_cost_agents_errors():
     assert r["total_tokens"] == 350
     assert r["tool_count"] == 1 and r["agent_count"] == 1          # one subagent (agent_id ag1)
     assert r["errors"] == 1 and r["status"] == "error"            # s4 success=false
-    # cost = (100*15 + 50*75 + 200*15*1.25)/1e6 = 9000/1e6
-    assert abs(r["cost_usd"] - 0.009) < 1e-6
+    # cost = (100*5 + 50*25 + 200*5*1.25)/1e6 = 3000/1e6  (Opus 5 first-party rate, 2026-09-02)
+    assert abs(r["cost_usd"] - 0.003) < 1e-6
     assert r["title"] == "claude_code.interaction"
 
 

@@ -7,9 +7,9 @@ description: Autonomic stage — mine each work session's evidence into a domain
 
 You are the **session-capture** stage (design history lives in the engine's source repo). You turn the cheap
 mechanical *evidence* a work session leaves behind into one real, domain-tagged **session record** —
-the Focus / Outcome / **Why** the raw trace never captured. **Source A (Claude Code hook evidence) only as of H22a Slice-3 (2026-07-01)** —
-the Source-B Cowork session-store reader is **retired** (Cowork is no longer a work-capture surface); this
-stage runs as a native desktop `claude -p` task.
+the Focus / Outcome / **Why** the raw trace never captured. Only hook-fed session evidence is
+read (`source: claude-code`); there is no hookless session-store reader. This stage runs as a
+native desktop `claude -p` task.
 Writing the record is **autonomic**
 (recording what happened is not a judgment, same stance as the old `dev-session-capture`): it lands
 in `raw/sessions/` ungated, then **rides the normal pipeline** — `capture`'s `sessions` adapter
@@ -28,8 +28,8 @@ You do the **narrative** (judgment); the deterministic scaffolding is `"${CLAUDE
 # Inputs (all profile facts — this skill is fact-free)
 - `profile: session_capture.evidence_dir` — **Source A only**: where the Layer-1 hook collector deposits
   `sess-<id>.md` / `intents-<id>.md` / `activity-<date>.md`. This is the only evidence source now.
-- `profile: session_capture.seen_ledger`, `session_capture.automation_titles` — **RETIRED (Slice-3):**
-  these fenced the Source-B (Cowork) reader, which is removed. Left in the profile only as tombstones.
+- `profile: session_capture.seen_ledger`, `session_capture.automation_titles` — unused; may be present
+  in older profiles.
 - `profile: session_capture.domain_map` — `project → kb` (with `_default`). **THE mis-homing fix**:
   a `Projects/family-office` session maps to `familyoffice`, not dumped into `dev`.
 - `profile: session_capture.ttl_days` — handed to garden (G16c), not used here.
@@ -43,8 +43,7 @@ You do the **narrative** (judgment); the deterministic scaffolding is `"${CLAUDE
    (`machine_run: true` — the fleet's own headless sessions, stamped by the evidence hook when the
    deploy runner exports `AIOS_MACHINE_RUN`; A16) are excluded from this work list by `scan` and
    released separately in step 5 (`prune-empty`); never synthesize a stub or a fleet self-record.**
-   Each carries `source: claude-code`. *(Source B — the hookless Cowork session-store reader — is
-   retired as of Slice-3; there is no second source.)*
+   Each carries `source: claude-code`.
 2. **Mine each bundle into a record.** Read the session's `transcript_path` (this is the signal that
    was captured but never read) + the `intents` (the user's verbatim prompts = the Why) + the
    tool/file counts. **Correlate commits**: `git log` per touched repo over the session's time window,
