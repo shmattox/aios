@@ -63,6 +63,43 @@ _LOCK_CONTENDED = frozenset(x for x in (
 ) if x is not None)
 
 
+LOCK_UNSUPPORTED_MARKER = ".lock-unsupported"
+
+
+def _mark_lock_unsupported(lock_path, err):
+    """Drop ONE marker next to the run records when the filesystem cannot lock at all.
+
+    Why this exists: an unlockable mount (ENOLCK/EINVAL/EOPNOTSUPP on SMB, NFS, some FUSE mounts)
+    degrades PERMANENTLY and silently -- every write from then on runs with zero concurrency
+    protection, which is precisely the corruption A124 added the lock to prevent. Before the errno
+    fix it at least announced itself as a multi-second stall per call; removing that stall made the
+    failure quieter rather than rarer, so it needs a trace of its own.
+
+    Deliberately a marker FILE, not a record field: it is an install-level property, not a property
+    of any one run, and this keeps the record contract untouched. Written once (skipped if present)
+    so a hot loop cannot churn it. Best-effort and silent like the rest of this module's I/O.
+    """
+    try:
+        marker = os.path.join(os.path.dirname(lock_path), LOCK_UNSUPPORTED_MARKER)
+        if os.path.exists(marker):
+            return
+        name = errno.errorcode.get(getattr(err, "errno", None), str(getattr(err, "errno", "?")))
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(
+                "advisory file locking is unavailable on this filesystem\n"
+                "errno: %s (%s)\n"
+                "when:  %s\n"
+                "meaning: activity.py run-record writes are proceeding UNLOCKED, so concurrent\n"
+                "  span writes from parallel agent processes can drop spans, duplicate span_ids\n"
+                "  and undercount run_cost (A124). Move state/activity/ to a filesystem that\n"
+                "  supports locking, or accept single-writer use. Delete this file to re-arm.\n"
+                % (name, getattr(err, "strerror", ""),
+                   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+            )
+    except Exception:
+        pass
+
+
 @contextlib.contextmanager
 def _run_lock(path, timeout=None, poll=0.02):
     """Cross-process advisory lock guarding one run record's read-modify-write window
@@ -103,8 +140,13 @@ def _run_lock(path, timeout=None, poll=0.02):
                 # FUSE mounts) -- retrying that is dead time on EVERY call, forever, and would
                 # stall a producer for the full deadline per mutator. Give up immediately and
                 # proceed unlocked, which is exactly the pre-lock behaviour.
-                if e.errno not in _LOCK_CONTENDED or time.time() >= deadline:
+                if e.errno not in _LOCK_CONTENDED:
+                    # PERMANENT: this filesystem cannot lock. Leave a trace, since from here on
+                    # every write is unprotected and nothing else would ever say so.
+                    _mark_lock_unsupported(lock_path, e)
                     break
+                if time.time() >= deadline:
+                    break   # contended past the deadline: the designed, self-limiting degradation
                 time.sleep(poll)
     except Exception:
         # deliberately broad: this module's contract is that its own I/O NEVER raises into a

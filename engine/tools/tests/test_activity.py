@@ -469,3 +469,61 @@ def test_contended_lock_still_writes_after_the_deadline(tmp_path, monkeypatch):
     finally:
         holder.kill()
         holder.wait(timeout=10)
+
+
+def test_unlockable_filesystem_leaves_a_breadcrumb(tmp_path, monkeypatch):
+    """A filesystem that cannot lock degrades SILENTLY and PERMANENTLY: every write from then on
+    runs with zero concurrency protection and nothing anywhere says so. The stall it used to cause
+    was at least a symptom someone would chase; removing the stall (the A124 review's CRITICAL)
+    made the failure quieter, not rarer. So the permanent case drops one marker file.
+
+    Only the PERMANENT case is marked. Losing a contended lock at the deadline is the designed,
+    self-limiting degradation and would just make this noisy."""
+    activity.start_run(tmp_path, id="wf-crumb", surface="workflow", title="t", now=0.0)
+    marker = activity.ACTIVITY_DIR(tmp_path) / ".lock-unsupported"
+    assert not marker.exists()
+
+    def _boom(*a, **k):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    if sys.platform == "win32":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", _boom)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", _boom)
+
+    activity.heartbeat(tmp_path, "wf-crumb", now=1.0)
+    assert marker.exists(), "an unlockable filesystem left no trace at all"
+    body = marker.read_text(encoding="utf-8")
+    assert "ENOLCK" in body or str(errno.ENOLCK) in body, body   # names WHY, not just that
+    assert activity.read_all(tmp_path)[0]["heartbeat"] == 1.0    # and the write still landed
+
+
+def test_breadcrumb_not_written_when_locking_works(tmp_path):
+    """The marker must mean something: a healthy install never grows one."""
+    activity.start_run(tmp_path, id="wf-nocrumb", surface="workflow", title="t", now=0.0)
+    activity.start_span(tmp_path, "wf-nocrumb", name="s", now=0.0)
+    activity.heartbeat(tmp_path, "wf-nocrumb", now=1.0)
+    assert not (activity.ACTIVITY_DIR(tmp_path) / ".lock-unsupported").exists()
+
+
+def test_breadcrumb_failure_never_raises(tmp_path, monkeypatch):
+    """The breadcrumb is subject to the same contract as everything else here: if WRITING the
+    marker fails, the producer must not see it."""
+    activity.start_run(tmp_path, id="wf-crumbfail", surface="workflow", title="t", now=0.0)
+
+    def _boom(*a, **k):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    if sys.platform == "win32":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", _boom)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", _boom)
+    monkeypatch.setattr(activity, "_mark_lock_unsupported",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("marker disk full")))
+
+    activity.heartbeat(tmp_path, "wf-crumbfail", now=1.0)          # must not raise
+    assert activity.read_all(tmp_path)[0]["heartbeat"] == 1.0
