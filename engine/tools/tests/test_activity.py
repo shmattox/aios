@@ -1,4 +1,4 @@
-import json, os, subprocess, time
+import contextlib, errno, json, os, subprocess, time
 from pathlib import Path
 import pytest, sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # engine/tools on path
@@ -370,3 +370,69 @@ def test_prune_removes_the_lock_sidecar(tmp_path):
     assert lock.exists(), "the mutators should have created a lock sidecar"
     assert activity.prune(tmp_path, retain_s=0, now=100000.0) == 1
     assert not lock.exists(), "prune left the .lock sidecar behind"
+
+
+def test_unlockable_filesystem_does_not_stall_the_producer(tmp_path, monkeypatch):
+    """A filesystem that cannot lock (ENOLCK on SMB/NFS/some FUSE mounts) must be detected
+    on the FIRST attempt and fall through unlocked. Retrying a permanent error burns the whole
+    deadline on every mutator call, which breaks this module's stated invariant that its I/O
+    never blocks a producer's real work."""
+    activity.start_run(tmp_path, id="wf-nolock", surface="workflow", title="t", now=0.0)
+
+    def _boom(*a, **k):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    if sys.platform == "win32":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", _boom)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", _boom)
+
+    t0 = time.time()
+    for _ in range(3):
+        activity.heartbeat(tmp_path, "wf-nolock", now=1.0)
+    elapsed = time.time() - t0
+    # 3 calls x the 5s deadline = ~15s if a permanent error is retried as contention.
+    assert elapsed < 1.0, "unlockable fs stalled the producer for %.2fs across 3 calls" % elapsed
+    assert activity.read_all(tmp_path)[0]["heartbeat"] == 1.0  # and the write still happened
+
+
+def test_start_span_racing_end_span_across_processes(tmp_path):
+    """The realistic fan-out shape: agents opening and closing spans at the same time. The two
+    other race tests each stress ONE mutator in isolation, so neither covers this."""
+    activity.start_run(tmp_path, id="wf-race-3", surface="workflow", title="race3", now=0.0)
+    pre = [activity.start_span(tmp_path, "wf-race-3", name="pre%d" % i, now=0.0) for i in range(6)]
+    script = str(Path(activity.__file__))
+    procs = []
+    for i in range(6):
+        procs.append(subprocess.Popen(
+            [sys.executable, script, "span-start", "--env-root", str(tmp_path),
+             "--id", "wf-race-3", "--name", "new%d" % i],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        procs.append(subprocess.Popen(
+            [sys.executable, script, "span-end", "--env-root", str(tmp_path),
+             "--id", "wf-race-3", "--span-id", pre[i], "--cost", "1.0"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+    for p in procs:
+        out, err = p.communicate(timeout=60)
+        assert p.returncode == 0, err
+    rec = activity.read_all(tmp_path)[0]
+    assert len(rec["spans"]) == 12, "dropped spans: %d of 12" % len(rec["spans"])
+    assert len({s["span_id"] for s in rec["spans"]}) == 12, "duplicate span_ids"
+    closed = [s for s in rec["spans"] if s["status"] == "ok"]
+    assert len(closed) == 6, "lost end_span updates: %d of 6 closed" % len(closed)
+    assert activity.run_cost(rec) == pytest.approx(6.0)
+
+
+def test_contended_lock_still_writes_after_the_deadline(tmp_path, monkeypatch):
+    """The degraded branch: when the lock cannot be acquired within the deadline the write
+    proceeds UNLOCKED rather than raising or dropping data. That is the deliberate trade (the
+    module must never raise into a producer) and it is the single most consequential branch in
+    this code, so it is pinned here rather than left to inference."""
+    activity.start_run(tmp_path, id="wf-degraded", surface="workflow", title="t", now=0.0)
+    monkeypatch.setattr(activity, "_run_lock",
+                        lambda path, timeout=5.0, poll=0.02: contextlib.nullcontext())
+    sid = activity.start_span(tmp_path, "wf-degraded", name="s", now=1.0)
+    assert sid == "wf-degraded#1"
+    assert len(activity.read_all(tmp_path)[0]["spans"]) == 1

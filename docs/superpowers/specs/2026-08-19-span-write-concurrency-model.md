@@ -44,7 +44,16 @@ Rationale for this over the alternatives named in the backlog item:
 - **Per-run file lock** keeps the existing read-modify-write shape, touches only the
   mutators, and is symmetric with the module's existing atomic-write pattern.
 
-Retry policy: a bounded non-blocking-lock retry loop (20ms poll, 5s deadline) rather than
+Retry policy is errno-discriminating, and this is load-bearing: only CONTENTION errnos
+(`EACCES` from `msvcrt`, `EAGAIN`/`EWOULDBLOCK` from `flock`) are retried. Any other `OSError`
+means the filesystem does not implement locking at all (`ENOLCK`/`EINVAL`/`EOPNOTSUPP` on SMB,
+NFS and some FUSE mounts) — retrying that is dead time on EVERY mutator call forever, which
+would stall a producer for the full deadline per call and break this module's core invariant.
+The 2026-09-01 review caught this: with a blanket `except OSError`, three `heartbeat()` calls
+on an unlockable filesystem took 15.07s. Pinned by
+`test_unlockable_filesystem_does_not_stall_the_producer`.
+
+Beyond that, a bounded non-blocking-lock retry loop (20ms poll, 5s deadline) rather than
 a blocking OS lock call, so a wedged lock (e.g. a killed holder on a platform without
 lock-release-on-exit guarantees) degrades to "proceed unlocked" instead of hanging a
 producer indefinitely — consistent with the module's standing invariant that its own I/O
@@ -80,6 +89,12 @@ Verified on this implementation (2026-09-01), not inherited from the earlier att
   repeated runs (a concurrency fix that passes once has proved nothing).
 - Non-vacuity: neutering `_run_lock` to a no-op yield makes both tests fail again, so
   the lock is demonstrably what carries them — they are not passing incidentally.
+- Removing the errno filter makes `test_unlockable_filesystem_does_not_stall_the_producer`
+  fail and the file take **15.30s** instead of 1.23s — that test earns its place.
+- `test_start_span_racing_end_span_across_processes` covers the realistic fan-out shape
+  (open and close concurrently); the other two each stress ONE mutator in isolation.
+- `test_contended_lock_still_writes_after_the_deadline` pins the degraded branch, which
+  is the most consequential path in this code and was previously inferred, not tested.
 
 ## NEW-2 (deferred)
 

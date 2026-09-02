@@ -2,7 +2,7 @@
 agent surface. One JSON file per run under state/activity/; live logs under
 state/activity/logs/. Every write is best-effort and MUST NOT raise into a producer's
 real work — callers wrap nothing; this module swallows its own I/O errors."""
-import contextlib, json, os, sys, time
+import contextlib, errno, json, os, sys, time
 from pathlib import Path
 
 LIVE_WINDOW_S = 90
@@ -48,6 +48,17 @@ def _atomic_write(path, obj):
         pass
 
 
+# errnos meaning "someone else holds it, try again" -- everything else means the filesystem
+# does not implement locking, which must NOT be retried (see the retry loop below).
+_LOCK_CONTENDED = frozenset(x for x in (
+    getattr(errno, "EACCES", None),      # msvcrt.locking, Windows contention
+    getattr(errno, "EAGAIN", None),      # fcntl.flock, POSIX contention
+    getattr(errno, "EWOULDBLOCK", None), # == EAGAIN on most platforms; kept explicit
+    getattr(errno, "EDEADLK", None),
+    getattr(errno, "EDEADLOCK", None),
+) if x is not None)
+
+
 @contextlib.contextmanager
 def _run_lock(path, timeout=5.0, poll=0.02):
     """Cross-process advisory lock guarding one run record's read-modify-write window
@@ -56,7 +67,10 @@ def _run_lock(path, timeout=5.0, poll=0.02):
     in-process lock would serialize nothing. Best-effort like the rest of this module:
     any locking failure still yields (the write proceeds unlocked) rather than raising
     into a producer, and a wedged lock degrades to 'proceed' at the deadline instead of
-    blocking a producer's real work forever."""
+    blocking a producer's real work forever.
+
+    NOT REENTRANT: never call one locked mutator from inside another -- a nested acquire on
+    the same path stalls the full deadline and then proceeds UNLOCKED."""
     lock_path = f"{path}.lock"
     fh = None
     locked = False
@@ -78,8 +92,13 @@ def _run_lock(path, timeout=5.0, poll=0.02):
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 locked = True
                 break
-            except OSError:
-                if time.time() >= deadline:
+            except OSError as e:
+                # CONTENTION means another holder has it: retry. Anything else means this
+                # filesystem cannot lock at all (ENOLCK/EINVAL/EOPNOTSUPP on SMB, NFS, some
+                # FUSE mounts) -- retrying that is dead time on EVERY call, forever, and would
+                # stall a producer for the full deadline per mutator. Give up immediately and
+                # proceed unlocked, which is exactly the pre-lock behaviour.
+                if e.errno not in _LOCK_CONTENDED or time.time() >= deadline:
                     break
                 time.sleep(poll)
     except OSError:
