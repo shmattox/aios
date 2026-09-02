@@ -160,3 +160,17 @@ def test_fetch_runs_falls_back_to_configured_service(monkeypatch):
     monkeypatch.setattr(o, "_get", fake_get)
     out = o.fetch_runs()
     assert out["runs"] == [] and out["agg"]["jaeger_up"] is True
+
+
+def test_fable_priced_and_unknown_model_surfaces_unpriced_note():
+    # A134: fable rows present at first-party rates; a genuinely unknown id still falls back AND is reported
+    assert o.PRICES["claude-fable-5"] == (10.0, 50.0) and o.PRICES["claude-fable-5-1"] == (10.0, 50.0)
+    def _run(model):
+        return o.summarize_trace({"traceID": model, "spans": [
+            _span("l", "claude_code.llm_request",
+                  {"span.type": "llm_request", "model": model, "session.id": "s",
+                   "input_tokens": 1000, "output_tokens": 100}, start=1_000_000, dur=1000)]})
+    fable, unknown = _run("claude-fable-5"), _run("claude-mystery-9")
+    assert fable["priced"] is True and abs(fable["cost_usd"] - 0.015) < 1e-9   # 1000*10 + 100*50 = 15000 / 1e6
+    assert unknown["priced"] is False                                            # the A129 unpriced-model note fires
+    assert o._aggregate([fable, unknown], jaeger_up=True)["unpriced_models"] == ["claude-mystery-9"]
