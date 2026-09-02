@@ -64,7 +64,12 @@ check("emit_close", fm.rstrip().endswith("---"))
 # per-silo config resolution (profile + schema, fact-free)
 import json, tempfile, textwrap
 def _scratch_silo():
-    root = Path(tempfile.mkdtemp())
+    # .resolve() is load-bearing, not decoration: find_env_root() resolves its argument
+    # (domain_mirror.py:120), so an UNRESOLVED temp root never compares equal to what it
+    # returns on any platform where the temp dir is reached through an indirection --
+    # macOS /var -> /private/var, Windows 8.3 short names. Linux /tmp has neither, which is
+    # why this passed locally and on ubuntu while failing macOS+Windows on CI's first run.
+    root = Path(tempfile.mkdtemp()).resolve()
     (root / "profile").mkdir()
     (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
     sd = root / "state" / "domains" / "demo"
@@ -151,7 +156,7 @@ try:
 except KeyError: check("dangling_raises", True)
 
 # fail-loud on a missing snapshot export for a mapped source_db (fresh empty snap dir)
-_empty = Path(tempfile.mkdtemp())
+_empty = Path(tempfile.mkdtemp()).resolve()
 _write_export(_empty / "things-export.json", [], {})   # people-export.json deliberately absent
 try:
     dm.import_silo(_root, "demo", _empty); check("missing_export_raises", False)
@@ -249,7 +254,7 @@ except ValueError:
 
 # ── Capabilities 1 + 2, end-to-end on the fixture `acme` silo, validated by the SHARED validator ──
 def _a53_silo():
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     (root / "profile").mkdir()
     (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
     sd = root / "state" / "domains" / "acme"
@@ -314,7 +319,7 @@ check("a53_same_export_still_works", 'owner: "[[people/ada]]"' in
 # tree. Two tables: a valid one (would be written first) + one whose relation names a bogus
 # rel_source. The import must raise AND leave the valid table's dir empty (atomic). ──
 def _a53_badrel_silo():
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     (root / "profile").mkdir()
     (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
     sd = root / "state" / "domains" / "acme2"
@@ -367,7 +372,7 @@ check("a72_no_multiline_skip", _skip_needle not in _self_src)
 # Synthetic fixture silo; the engine stays fact-free (the field list lives in the schema).
 # ══════════════════════════════════════════════════════════════════════════════
 def _a80_silo(state_native_line):
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     (root / "profile").mkdir()
     (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
     sd = root / "state" / "domains" / "keep"
@@ -476,7 +481,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # CAVEAT (unchanged from A53): for the reconstructed tables the slug DERIVATION is not
     # independently proven here (it is taken from the frozen filenames); what IS proven for them is
     # field-mapping equivalence. `entities` exercises a real url_to_slug end-to-end.
-    _snap = Path(tempfile.mkdtemp())
+    _snap = Path(tempfile.mkdtemp()).resolve()
     for _t in _cfg["tables"]:
         _db = _t["source_db"]
         # source_db may be a nested path (e.g. "logs/change-log") but the Notion export filename
@@ -516,7 +521,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         print("FO golden fixture STALE — mapped tables with no golden dir:", _nogold)
         print("  regenerate: python Projects/family-office/state-mirror/migration/extract_golden.py")
 
-    _out = Path(tempfile.mkdtemp()) / "tables"
+    _out = Path(tempfile.mkdtemp()).resolve() / "tables"
     # A80: seed the DESTINATION from the golden so state_native carry-forward has a real record to
     # read — without this, `wiki` has nothing to carry and would have to stay excluded, which is the
     # very blind spot that hid this class. Still hermetic: the seed is the FROZEN golden, never the
@@ -691,7 +696,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # carry forward). Assert every asset record comes back with NO owner_entity key at all, while a
     # genuine non-state-native field (`balance`) still populates on at least one record — proving the
     # import genuinely ran and this isn't a vacuous pass on an empty result.
-    _out_unseeded = Path(tempfile.mkdtemp()) / "tables"
+    _out_unseeded = Path(tempfile.mkdtemp()).resolve() / "tables"
     _written_unseeded = dm.import_silo(_ENV_ROOT, "familyoffice", _snap, _out_unseeded,
                                        last_synced="2026-06-30")
     _assets_unseeded = [_p for _p in _written_unseeded

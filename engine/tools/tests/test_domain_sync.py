@@ -17,7 +17,7 @@ def check(name, cond):
 # KEYS reuse stable_slugs's known dispatch keys ("insurance", "notes") so the fake-
 # gather rows below can flow through the REAL stable_slugs, not a stub. ──
 def _fixture_silo():
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     (root / "profile").mkdir()
     (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
     sd = root / "state" / "domains" / "widgetco"
@@ -77,7 +77,7 @@ check("rows_passthrough_verbatim", _doc_ins["rows"] == _fake_rows_ins)
 check("url_to_slug_matches_stable_slugs_output", _doc_ins["url_to_slug"] == _u2s_ins)
 
 # exported defaults to today (UTC, YYYY-MM-DD) when omitted
-_dest_default = dsync.write_snapshot("widgetco", _tables["insurance"], [], {}, Path(tempfile.mkdtemp()))
+_dest_default = dsync.write_snapshot("widgetco", _tables["insurance"], [], {}, Path(tempfile.mkdtemp()).resolve())
 _doc_default = json.loads(_dest_default.read_text(encoding="utf-8"))
 check("meta_exported_defaults_to_date_shape", bool(re.match(r"^\d{4}-\d{2}-\d{2}$", _doc_default["_meta"]["exported"])))
 
@@ -105,7 +105,7 @@ check("roundtrip_nested_notion_id",
 # snapshot required, no KeyError), its existing records are left untouched, and
 # sync excludes it from mapped_tables so reap can never orphan them.
 # ══════════════════════════════════════════════════════════════════════════
-_lo_root = Path(tempfile.mkdtemp())
+_lo_root = Path(tempfile.mkdtemp()).resolve()
 (_lo_root / "profile").mkdir()
 (_lo_root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
 _lo_sd = _lo_root / "state" / "domains" / "widgetco"
@@ -312,7 +312,7 @@ _FO_SCHEMA_DIR = _ENV_ROOT / "state" / "domains" / "familyoffice"
 
 if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _cfg_fo = dm.load_silo_config(_ENV_ROOT, "familyoffice")
-    _snap5 = Path(tempfile.mkdtemp())
+    _snap5 = Path(tempfile.mkdtemp()).resolve()
     _covered5, _skipped5 = [], []
     for _t in _cfg_fo["tables"]:
         _db = _t["source_db"]
@@ -338,7 +338,7 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     # Seed out_dir from golden so state_native (A80: owner_entity/wiki) carry-forward has a
     # real record to read — same precedent as test_domain_mirror.py's A72 gate; without this
     # every state-native field would show as an "unexpected golden-only field" false alarm.
-    _out5 = Path(tempfile.mkdtemp()) / "tables"
+    _out5 = Path(tempfile.mkdtemp()).resolve() / "tables"
     for _db in _covered5:
         _dst = _out5 / _db
         _dst.mkdir(parents=True, exist_ok=True)
@@ -405,7 +405,7 @@ else:
 # ══════════════════════════════════════════════════════════════════════════
 
 def _reap_state_dir():
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp()).resolve()
     return root / "state" / "domains" / "widgetco"
 
 
@@ -689,7 +689,7 @@ check("sync_pipeline_status_reap_not_skipped", _status4a["reap_skipped"] is Fals
 # ---- (2) GM is EXCLUDED entirely (S9) — refused before even reading its schema.yaml;
 # a deliberately-nonexistent env_root proves it, since sync_silo would raise trying to
 # resolve anything under it if it looked at all. ----
-_rep4b = dsync.sync_silo(Path(tempfile.mkdtemp()) / "does-not-exist-at-all", "gm")
+_rep4b = dsync.sync_silo(Path(tempfile.mkdtemp()).resolve() / "does-not-exist-at-all", "gm")
 check("sync_gm_skipped", _rep4b.skipped is True)
 check("sync_gm_reason_names_exclusion", "S9" in _rep4b.reason or "local-SSOT" in _rep4b.reason)
 check("sync_gm_no_status_path", _rep4b.status_path is None)
