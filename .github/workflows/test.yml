@@ -1,0 +1,67 @@
+name: test
+
+# AIOS ships as a public Claude Code plugin that macOS and Linux users install, but until now
+# every test only ever ran on one Windows machine. Whole code paths shipped unexecuted — most
+# sharply `activity.py`'s POSIX `fcntl.flock` branch (A124), whose Windows twin is `msvcrt`, so
+# the platform half that most users actually run had never been executed once.
+#
+# The matrix is OS-first for exactly that reason. A single Python version is enough: the gap is
+# platform, not interpreter.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false      # a POSIX-only failure must not hide a macOS-only one
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The engine is stdlib-only apart from pytest; `fastembed` is optional and the semantic
+      # passes degrade to lexical without it, so it is deliberately NOT installed here.
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      # The repo's own registered command, verbatim — CI must exercise what the factory runs,
+      # not a variant of it. Until 2026-09-02 this collected NOTHING (A6284): an unguarded
+      # module-level sys.exit aborted collection and the run reported "no tests ran" with exit 3.
+      # A CI job added before that fix would have gone green over an empty run, which is worse
+      # than no CI. Guarded below so that can never silently recur.
+      - name: Run suite
+        run: python -m pytest -q
+
+      # BELT AND BRACES, deliberately loose. The step above already catches the real A6284
+      # shape: an aborted collection exits 3 and fails the job on its own. What this adds is the
+      # pathological case that history says to fear here - a run that collects (almost) nothing
+      # and still reports green, which is how an empty gate looked healthy for days. So the floor
+      # guards EMPTINESS, not coverage: it is set far below the real count (757 as of 2026-09-02)
+      # so ordinary suite churn never trips it. Measured: re-introducing the A6284 defect drops
+      # collection to 670 AND exits 3, so a tight floor would be redundant and brittle both.
+      - name: Assert the suite actually collected tests
+        shell: bash
+        run: |
+          n=$(python -m pytest -q --collect-only 2>/dev/null | grep -cE "^(engine|tools)/.*::" || true)
+          echo "collected $n test ids"
+          if [ "$n" -lt 200 ]; then
+            echo "::error::only $n tests collected - collection is broken, not the suite passing"
+            exit 1
+          fi
