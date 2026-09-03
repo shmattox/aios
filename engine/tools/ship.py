@@ -36,6 +36,7 @@ import queue_tx
 from frontmatter import read_frontmatter
 
 EXCERPT_CHARS = 4000
+SIG_LINE_CHARS = 60          # below this a line is boilerplate (headings, list bullets, stubs)
 MERGE_DELIM = "\n\n---\n\n"
 
 # A85 injection markers — deliberately small + high-precision (the hold-and-flag action absorbs
@@ -234,11 +235,45 @@ def _resolve_facts(item, vault_root, kb_map):
     }
 
 
+def _containment(draft_text, target_text):
+    """Both directions of the duplicate question, computed (A6719, read side).
+
+    "Is this a duplicate?" is TWO questions, and answering only one loses content either
+    way. Ask only whether the page is inside the draft and a real edit reads as redundant,
+    so rejecting it discards the delta. Ask only whether the draft is inside the page and a
+    divergent draft looks safe to write, so shipping it drops whatever the page had. On
+    2026-09-02 a single gate run made both mistakes: three canonical pages overwritten, and
+    15 pages' worth of delta rejected as DUPLICATE — including a journal day missing four
+    entire build entries. Neither was a hard call; nobody computed the containment.
+    """
+    def sig(text):
+        body = re.sub(r"(?s)\A---.*?\n---\n", "", text)
+        return [re.sub(r"\s+", " ", ln).strip() for ln in body.split("\n")]
+    d, t = sig(draft_text), sig(target_text)
+    dj, tj = " ".join(d), " ".join(t)
+    adds = [ln for ln in d if len(ln) > SIG_LINE_CHARS and ln not in tj]
+    drops = [ln for ln in t if len(ln) > SIG_LINE_CHARS and ln not in dj]
+    if not adds:
+        verdict = "true-duplicate: the draft adds nothing the page lacks — rejecting loses nothing"
+    elif not drops:
+        verdict = ("superset: the page is fully contained in the draft — a plain write is "
+                   "lossless, and rejecting would discard %d line(s)" % len(adds))
+    else:
+        verdict = ("divergent: the draft adds %d line(s) AND a plain write would DROP %d the "
+                   "page holds — merge, never replace, and never reject as a duplicate"
+                   % (len(adds), len(drops)))
+    return {"draft_adds": len(adds), "target_would_lose": len(drops), "verdict": verdict,
+            "draft_adds_sample": adds[:3], "target_would_lose_sample": drops[:3]}
+
+
 def resolve(queue_path, vault_root, kb_map, cid):
     item = _find_item(queue_path, cid)
     facts = _resolve_facts(item, vault_root, kb_map)
     if facts["draft_found"]:
         facts["draft_excerpt"] = _read(facts["draft_path"])[:EXCERPT_CHARS]
+    # The collision the gate has to see BEFORE it writes or rejects — not after.
+    if facts["draft_found"] and facts["target_exists"]:
+        facts["containment"] = _containment(_read(facts["draft_path"]), _read(facts["target_path"]))
     print(json.dumps(facts, ensure_ascii=False, indent=2))
 
 

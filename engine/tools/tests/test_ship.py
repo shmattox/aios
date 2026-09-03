@@ -7,6 +7,7 @@ import json, os, sys, tempfile, shutil, subprocess
 HARNESS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .../engine/tools
 sys.path.insert(0, HARNESS)
 import queue_tx
+import ship
 
 PASS, FAIL = [], []
 def check(name, cond):
@@ -357,6 +358,27 @@ try:
           and open(pj["prev_content_path"], encoding="utf-8").read() == RICH)
     check("A6719: the overwrite still happened (draft is now canonical)",
           open(victim, encoding="utf-8").read().rstrip().endswith("pointer only."))
+
+    # A6719 read side: `resolve` must answer BOTH containment directions, so "duplicate" and
+    # "safe to write" are computed facts rather than an operator's impression. Asking only one
+    # direction is what overwrote three pages and rejected 15 pages' worth of delta in one run.
+    LONG_A = "A" * 70 + " alpha line that is unmistakably substantive prose."
+    LONG_B = "B" * 70 + " beta line that only the draft carries at all."
+    page = "---\ntype: company\n---\n\n# P\n\n" + LONG_A + "\n"
+    con = ship._containment(page, page)
+    check("A6719: identical draft/page reads as a true duplicate",
+          con["draft_adds"] == 0 and con["verdict"].startswith("true-duplicate"))
+    con = ship._containment(page.rstrip() + "\n" + LONG_B + "\n", page)
+    check("A6719: a draft that ADDS a line is never a duplicate",
+          con["draft_adds"] == 1 and con["target_would_lose"] == 0
+          and con["verdict"].startswith("superset"))
+    con = ship._containment("---\ntype: company\n---\n\n# P\n\n" + LONG_B + "\n", page)
+    check("A6719: a divergent draft reports what a plain write would DROP",
+          con["draft_adds"] == 1 and con["target_would_lose"] == 1
+          and con["verdict"].startswith("divergent"))
+    check("A6719: frontmatter is excluded from the containment comparison",
+          ship._containment("---\ntype: x\ndate: 1\n---\n\n" + LONG_A + "\n",
+                            "---\ntype: y\ndate: 2\n---\n\n" + LONG_A + "\n")["draft_adds"] == 0)
 
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
