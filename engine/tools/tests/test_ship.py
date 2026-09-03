@@ -7,6 +7,7 @@ import json, os, sys, tempfile, shutil, subprocess
 HARNESS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .../engine/tools
 sys.path.insert(0, HARNESS)
 import queue_tx
+import ship
 
 PASS, FAIL = [], []
 def check(name, cond):
@@ -331,6 +332,54 @@ try:
           not os.path.exists(os.path.join(staging, "oldreject.md")))
 
     # 7. queue still validates after the run
+    # A6719: a NON-JOURNAL ship over an EXISTING page must preserve the prior content. The merge
+    # BEHAVIOUR stays journal-only by design, but the BACKUP must not be - without it the overwrite
+    # is unrecoverable (prev_content_path null). That gap destroyed three canonical pages on
+    # 2026-09-02, including a Paper-Governs entity page, before it was caught.
+    comp_dir = os.path.join(vault, "03_Dev", "wiki", "companies")
+    os.makedirs(comp_dir, exist_ok=True)
+    victim = os.path.join(comp_dir, "overwrite-me.md")
+    RICH = ("---\ntype: company\n---\n\n# Rich page\n\n"
+            "## Ownership (papered)\n\nload-bearing content.\n")
+    open(victim, "w", encoding="utf-8").write(RICH)
+    draft("overwrite-me.md", "---\ntype: company\n---\n\n# Thin\n\npointer only.\n")
+    queue_tx._apply_items(queue, [{
+        "id": "it-overwrite", "source": "notes", "kb": "dev", "stage": "awaiting",
+        "conflict_key": "dev/wiki/companies/overwrite-me.md", "lane": "review",
+        "draft_path": "03_Dev/wiki/staging/overwrite-me.md", "payload_path": None}], "add")
+    ro = run("ship", "--queue", queue, "--vault-root", vault, "--kb-map", kb_map,
+             "--id", "it-overwrite", "--approved-by", "test", "--human-approved")
+    oo = json.loads(ro.stdout.splitlines()[-1])
+    pj = json.load(open(oo["revert_pointer"], encoding="utf-8"))
+    check("A6719: non-journal overwrite records a prev_content_path",
+          ro.returncode == 0 and pj["prev_content_path"] is not None)
+    check("A6719: the prior page content is recoverable byte-for-byte",
+          pj["prev_content_path"] is not None
+          and open(pj["prev_content_path"], encoding="utf-8").read() == RICH)
+    check("A6719: the overwrite still happened (draft is now canonical)",
+          open(victim, encoding="utf-8").read().rstrip().endswith("pointer only."))
+
+    # A6719 read side: `resolve` must answer BOTH containment directions, so "duplicate" and
+    # "safe to write" are computed facts rather than an operator's impression. Asking only one
+    # direction is what overwrote three pages and rejected 15 pages' worth of delta in one run.
+    LONG_A = "A" * 70 + " alpha line that is unmistakably substantive prose."
+    LONG_B = "B" * 70 + " beta line that only the draft carries at all."
+    page = "---\ntype: company\n---\n\n# P\n\n" + LONG_A + "\n"
+    con = ship._containment(page, page)
+    check("A6719: identical draft/page reads as a true duplicate",
+          con["draft_adds"] == 0 and con["verdict"].startswith("true-duplicate"))
+    con = ship._containment(page.rstrip() + "\n" + LONG_B + "\n", page)
+    check("A6719: a draft that ADDS a line is never a duplicate",
+          con["draft_adds"] == 1 and con["target_would_lose"] == 0
+          and con["verdict"].startswith("superset"))
+    con = ship._containment("---\ntype: company\n---\n\n# P\n\n" + LONG_B + "\n", page)
+    check("A6719: a divergent draft reports what a plain write would DROP",
+          con["draft_adds"] == 1 and con["target_would_lose"] == 1
+          and con["verdict"].startswith("divergent"))
+    check("A6719: frontmatter is excluded from the containment comparison",
+          ship._containment("---\ntype: x\ndate: 1\n---\n\n" + LONG_A + "\n",
+                            "---\ntype: y\ndate: 2\n---\n\n" + LONG_A + "\n")["draft_adds"] == 0)
+
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
