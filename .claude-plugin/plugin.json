@@ -1,6 +1,6 @@
 {
   "name": "aios",
-  "version": "0.24.5",
+  "version": "0.24.6",
   "description": "AIOS \u00e2\u20ac\u201d a fact-free, review-gated knowledge pipeline (capture \u00e2\u2020\u2019 sort \u00e2\u2020\u2019 ingest \u00e2\u2020\u2019 gate \u00e2\u2020\u2019 garden) plus a chat-native daily brief, running over your own markdown vault. The engine ships here; your facts stay in your env root.",
   "author": {
     "name": "Seth Mattox",

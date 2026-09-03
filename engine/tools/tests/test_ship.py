@@ -380,6 +380,28 @@ try:
           ship._containment("---\ntype: x\ndate: 1\n---\n\n" + LONG_A + "\n",
                             "---\ntype: y\ndate: 2\n---\n\n" + LONG_A + "\n")["draft_adds"] == 0)
 
+    # A7926 WIRING: the index-count reconcile must actually be reached by a journal ship. The helper
+    # having its own green tests proves nothing about whether ship.py calls it — an unwired guard is
+    # silently deletable. Ship a journal item into a wiki that HAS an index and read the count back.
+    wiki_dev = os.path.join(vault, "03_Dev", "wiki")
+    os.makedirs(os.path.join(wiki_dev, "journal"), exist_ok=True)
+    idx = os.path.join(wiki_dev, "index.md")
+    open(idx, "w", encoding="utf-8", newline="").write(
+        "---\ntype: index\njournal_count: 0\npage_count: 0\n---\n\n# Index\n")
+    draft("2026-07-09.md", "---\ntype: journal\n---\n\n# 2026-07-09\n\nwired.\n")
+    queue_tx._apply_items(queue, [{
+        "id": "it-idxwire", "source": "notes", "kb": "dev", "stage": "awaiting",
+        "conflict_key": "dev/wiki/journal/2026-07-09.md", "lane": "auto-ship",
+        "draft_path": "03_Dev/wiki/staging/2026-07-09.md", "payload_path": None}], "add")
+    rw = run("ship", "--queue", queue, "--vault-root", vault, "--kb-map", kb_map,
+             "--id", "it-idxwire", "--approved-by", "auto-ship")
+    on_disk = len([f for f in os.listdir(os.path.join(wiki_dev, "journal")) if f.endswith(".md")])
+    idx_txt = open(idx, encoding="utf-8").read()
+    check("A7926: a journal ship reconciles the index count (the wiring, not just the helper)",
+          rw.returncode == 0 and ("journal_count: %d" % on_disk) in idx_txt and on_disk > 0)
+    check("A7926: the ship reports the reconciled count back",
+          json.loads(rw.stdout.splitlines()[-1]).get("index_journal_count") == on_disk)
+
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

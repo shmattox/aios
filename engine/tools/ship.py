@@ -379,8 +379,26 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
             shutil.move(_win_long(src_draft), _win_long(staging_archived))
         except OSError:
             pass
+    # A7926: a journal ship changes the number the index advertises, so reconcile the index's
+    # derived counts here rather than leaving them to rot. The kb-schema rule is "the index never
+    # goes stale" and env-ops H92 checks it daily, but nothing ever wrote the keys — the GM index
+    # sat at 76 against 88 files on disk. Journal ships only: they are what moves journal_count, and
+    # a per-ship listdir of one wiki is cheap. Guarded like the husk move — a ship that already
+    # landed must never fail on its bookkeeping tail, and the counts are recomputable from disk on
+    # the next run, so a miss is self-healing rather than a torn write.
+    counts_reconciled = None
+    if facts["is_journal"]:
+        try:
+            import index_counts
+            counts_reconciled = index_counts.recompute(
+                os.path.dirname(os.path.dirname(target)), apply=True)["journal_count"]
+        except (Exception, SystemExit):
+            # SystemExit too: recompute fails LOUD when a wiki has no index.md, which is right for
+            # its own CLI and wrong here — a vault without an index must not kill a landed ship.
+            pass
     print(json.dumps({"ok": True, "id": cid, "shipped_path": target, "merged": merged,
-                      "revert_pointer": pointer_path}, ensure_ascii=False))
+                      "revert_pointer": pointer_path,
+                      "index_journal_count": counts_reconciled}, ensure_ascii=False))
 
 
 def amend(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_approved=False,
