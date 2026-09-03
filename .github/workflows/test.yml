@@ -59,7 +59,7 @@ jobs:
       - name: Assert the suite actually collected tests
         shell: bash
         run: |
-          n=$(python -m pytest -q --collect-only 2>/dev/null | grep -cE "^(engine|tools)/.*::" || true)
+          n=$(python -m pytest --collect-only 2>/dev/null | grep -cE "^(engine|tools)/.*::" || true)
           echo "collected $n test ids"
           if [ "$n" -lt 200 ]; then
             echo "::error::only $n tests collected - collection is broken, not the suite passing"
