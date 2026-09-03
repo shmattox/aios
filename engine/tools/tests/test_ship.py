@@ -331,6 +331,33 @@ try:
           not os.path.exists(os.path.join(staging, "oldreject.md")))
 
     # 7. queue still validates after the run
+    # A6719: a NON-JOURNAL ship over an EXISTING page must preserve the prior content. The merge
+    # BEHAVIOUR stays journal-only by design, but the BACKUP must not be - without it the overwrite
+    # is unrecoverable (prev_content_path null). That gap destroyed three canonical pages on
+    # 2026-09-02, including a Paper-Governs entity page, before it was caught.
+    comp_dir = os.path.join(vault, "03_Dev", "wiki", "companies")
+    os.makedirs(comp_dir, exist_ok=True)
+    victim = os.path.join(comp_dir, "overwrite-me.md")
+    RICH = ("---\ntype: company\n---\n\n# Rich page\n\n"
+            "## Ownership (papered)\n\nload-bearing content.\n")
+    open(victim, "w", encoding="utf-8").write(RICH)
+    draft("overwrite-me.md", "---\ntype: company\n---\n\n# Thin\n\npointer only.\n")
+    queue_tx._apply_items(queue, [{
+        "id": "it-overwrite", "source": "notes", "kb": "dev", "stage": "awaiting",
+        "conflict_key": "dev/wiki/companies/overwrite-me.md", "lane": "review",
+        "draft_path": "03_Dev/wiki/staging/overwrite-me.md", "payload_path": None}], "add")
+    ro = run("ship", "--queue", queue, "--vault-root", vault, "--kb-map", kb_map,
+             "--id", "it-overwrite", "--approved-by", "test", "--human-approved")
+    oo = json.loads(ro.stdout.splitlines()[-1])
+    pj = json.load(open(oo["revert_pointer"], encoding="utf-8"))
+    check("A6719: non-journal overwrite records a prev_content_path",
+          ro.returncode == 0 and pj["prev_content_path"] is not None)
+    check("A6719: the prior page content is recoverable byte-for-byte",
+          pj["prev_content_path"] is not None
+          and open(pj["prev_content_path"], encoding="utf-8").read() == RICH)
+    check("A6719: the overwrite still happened (draft is now canonical)",
+          open(victim, encoding="utf-8").read().rstrip().endswith("pointer only."))
+
     check("final: queue validates", queue_tx.validate(queue_tx.load(queue)) is None)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

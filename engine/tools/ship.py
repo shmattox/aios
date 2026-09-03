@@ -278,12 +278,18 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
     os.makedirs(revert_dir, exist_ok=True)
     target = facts["target_path"]
     merged, prev_copy = False, None
-    if facts["is_journal"] and facts["target_exists"]:
-        # DAILY-NOTE MERGE GUARD: preserve the incumbent verbatim, append a delimited entry.
+    incumbent = None
+    if facts["target_exists"]:
+        # A6719: back up ANY existing target before it is replaced — journal or not. The MERGE
+        # BEHAVIOUR below stays journal-only by design, but the BACKUP must not be, or a non-journal
+        # overwrite is unrecoverable (prev_content_path null). That gap silently destroyed three
+        # canonical pages on 2026-09-02, including a Paper-Governs entity page, before it was caught.
         incumbent = _read(target)
         prev_copy = os.path.join(revert_dir, f"{cid}.prev.md")
         with open(_win_long(prev_copy), "w", encoding="utf-8") as f:
             f.write(incumbent)
+    if facts["is_journal"] and facts["target_exists"]:
+        # DAILY-NOTE MERGE GUARD: preserve the incumbent verbatim, append a delimited entry.
         if _draft_supersets(draft_text, incumbent):
             # A43: the draft already contains the whole incumbent (a complete re-draft) — appending
             # would duplicate the note. Replace with the draft; the pre-merge copy above keeps undo
