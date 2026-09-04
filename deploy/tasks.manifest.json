@@ -13,6 +13,28 @@
     { "id": "aios-inbox-capture",   "substrate": "manual",         "cron": null,          "body_path": "deploy/tasks/inbox-capture.md",   "allowed_tools": [], "enabled": true,  "description": "MCP-source capture (gmail/drive) - session-run; scheduling needs authenticated MCP." },
     { "id": "aios-cloud-ingest",    "substrate": "schedule-cloud", "cron": "0 8 * * *",  "body_path": "deploy/cloud/ingest.md",          "allowed_tools": [], "enabled": false, "description": "No-always-on-desktop variant - register manually via /schedule; clear MCP connectors to zero." },
     { "id": "aios-cloud-gate-auto", "substrate": "schedule-cloud", "cron": "0 10 * * *", "body_path": "deploy/cloud/gate-auto.md",       "allowed_tools": [], "enabled": false, "description": "Cloud variant of gate-auto (UTC crons; pull-first/push-both)." },
-    { "id": "aios-cloud-garden",    "substrate": "schedule-cloud", "cron": "0 12 * * 0", "body_path": "deploy/cloud/garden.md",          "allowed_tools": [], "enabled": false, "description": "Cloud variant of garden." }
+    { "id": "aios-cloud-garden",    "substrate": "schedule-cloud", "cron": "0 12 * * 0", "body_path": "deploy/cloud/garden.md",          "allowed_tools": [], "enabled": false, "description": "Cloud variant of garden." },
+
+    {
+      "id": "aios-gh-ingest",
+      "substrate": "github",
+      "cron": "0 8 * * *",
+      "enabled": false,
+      "description": "Sub-project A: GitHub Actions substrate for aios-ingest (same body). enabled flips true in the cutover commit; cron is UTC."
+    },
+    {
+      "id": "aios-gh-gate-auto",
+      "substrate": "github",
+      "cron": "0 10 * * *",
+      "enabled": false,
+      "description": "Sub-project A: GitHub Actions substrate for aios-gate-auto (same body). enabled flips true in the cutover commit; cron is UTC."
+    },
+    {
+      "id": "aios-gh-garden",
+      "substrate": "github",
+      "cron": "0 12 * * 0",
+      "enabled": false,
+      "description": "Sub-project A: GitHub Actions substrate for aios-garden (same body). enabled flips true in the cutover commit; cron is UTC."
+    }
   ]
 }
