@@ -66,3 +66,39 @@ def test_main_exit_1_when_any_repo_errors(pair, tmp_path, capsys):
     (a / "f.txt").write_text("a wins\n")
     assert gs.main(["--repo", str(a), "--message", "m", "--artifact-dir", str(tmp_path / "art")]) == 1
     assert '"error"' in capsys.readouterr().out
+
+
+def test_commit_failure_exports_staged_patch(pair, tmp_path):
+    _, a, _ = pair
+    (a / "f.txt").write_text("staged but uncommittable\n")
+    hook = a / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n"); hook.chmod(0o755)
+    r = gs.sync_repo(str(a), "leg run", False, str(tmp_path / "art"), "a")
+    assert r["changed"] and r["committed"] is None and r["pushed"] is False
+    assert r["error"] and "commit" in r["error"].lower()
+    assert os.path.isfile(r["patch"]) and "+staged but uncommittable" in open(r["patch"]).read()
+
+
+def test_push_rejected_once_then_retry_succeeds(pair, tmp_path):
+    bare, a, b = pair
+    counter = tmp_path / "count"
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nif [ ! -f '%s' ]; then echo 1 > '%s'; exit 1; fi\nexit 0\n"
+                    % (counter.as_posix(), counter.as_posix()))
+    hook.chmod(0o755)
+    (a / "f.txt").write_text("retry me\n")
+    r = gs.sync_repo(str(a), "leg run", False, str(tmp_path / "art"), "a")
+    assert r["pushed"] is True and r["error"] is None and r["patch"] is None
+    _git(b, "fetch", "-q")
+    assert "leg run" in _git(b, "log", "--oneline", "origin/main")
+
+
+def test_push_rejected_twice_reports_error_and_exports_patch(pair, tmp_path):
+    bare, a, _ = pair
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n"); hook.chmod(0o755)
+    (a / "f.txt").write_text("never lands\n")
+    r = gs.sync_repo(str(a), "leg run", False, str(tmp_path / "art"), "a")
+    assert r["error"] and "push rejected twice" in r["error"].lower()
+    assert r["pushed"] is False
+    assert os.path.isfile(r["patch"])

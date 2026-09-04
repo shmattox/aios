@@ -41,7 +41,12 @@ def sync_repo(path, message, dry_run, artifact_dir, name):
         r["patch"] = _write_patch(path, artifact_dir, name, staged=True)
         _run(path, "reset", "-q", check=True)
         return r
-    _run(path, "commit", "-q", "-m", message, check=True)
+    try:
+        _run(path, "commit", "-q", "-m", message, check=True)
+    except RuntimeError as e:
+        r["error"] = "commit failed: %s" % str(e)[-400:]
+        r["patch"] = _write_patch(path, artifact_dir, name, staged=True)
+        return r
     r["committed"] = _run(path, "rev-parse", "HEAD", check=True).stdout.strip()
     for attempt in (1, 2):
         pull = _run(path, "pull", "--rebase", "--autostash", "-q")
