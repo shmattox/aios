@@ -77,6 +77,9 @@ jobs:
           max_turns: ${{ fromJSON(steps.cfg.outputs.config).max_turns }}
           allowed_tools: ${{ fromJSON(steps.cfg.outputs.config).allowed_tools }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Keep this: without it, claude-code-action falls back to the Claude GitHub App,
+          # which needs an OIDC token (id-token: write) we deliberately don't grant.
+          github_token: ${{ github.token }}
       - id: sync
         name: Commit + push (or export the dry-run patch)
         if: steps.run.outcome == 'success'
