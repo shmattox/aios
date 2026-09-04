@@ -5,6 +5,7 @@ description: >-
   adapter; v1 implements `claude` (anthropics/claude-code-action on a subscription OAuth token).
 inputs:
   leg:            { required: true,  description: "pipeline leg, e.g. ingest" }
+  body_path:      { required: true,  description: "the leg's deploy/tasks/<leg>.md, relative to plugin_root" }
   env_root:       { required: true,  description: "absolute path of the env checkout" }
   plugin_root:    { required: true,  description: "absolute path of the aios checkout" }
   result_path:    { required: true,  description: "where the runner must write result.json" }
@@ -30,9 +31,11 @@ runs:
         esac
     - id: prompt
       shell: bash
+      env:
+        LEG: ${{ inputs.leg }}
       run: |
         python "${{ inputs.plugin_root }}/deploy/github/run-agent/prompt.py" \
-          --leg "${{ inputs.leg }}" --body-path "$(python "${{ inputs.plugin_root }}/deploy/github/leg_config.py" "${{ inputs.leg }}" | python -c 'import json,sys; print(json.load(sys.stdin)["body_path"])')" \
+          --leg "$LEG" --body-path "${{ inputs.body_path }}" \
           --env-root "${{ inputs.env_root }}" --plugin-root "${{ inputs.plugin_root }}" \
           --result-path "${{ inputs.result_path }}" --run-id "${{ github.run_id }}" > "$RUNNER_TEMP/prompt.txt"
         { echo "text<<__AIOS_PROMPT__"; cat "$RUNNER_TEMP/prompt.txt"; echo "__AIOS_PROMPT__"; } >> "$GITHUB_OUTPUT"
@@ -50,4 +53,6 @@ runs:
           ${{ inputs.allowed_tools != '' && format('--allowedTools "{0}"', inputs.allowed_tools) || '' }}
     - id: check
       shell: bash
-      run: python "${{ inputs.plugin_root }}/deploy/github/run-agent/result_check.py" --leg "${{ inputs.leg }}" --result "${{ inputs.result_path }}"
+      env:
+        LEG: ${{ inputs.leg }}
+      run: python "${{ inputs.plugin_root }}/deploy/github/run-agent/result_check.py" --leg "$LEG" --result "${{ inputs.result_path }}"

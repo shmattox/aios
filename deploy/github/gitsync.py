@@ -48,15 +48,18 @@ def sync_repo(path, message, dry_run, artifact_dir, name):
         r["patch"] = _write_patch(path, artifact_dir, name, staged=True)
         return r
     r["committed"] = _run(path, "rev-parse", "HEAD", check=True).stdout.strip()
+    # F6: a fresh `actions/checkout` sets no upstream tracking, so the bare `pull`/`push` forms
+    # (which rely on tracking) fail. Resolve the branch once and use explicit refspecs instead.
+    branch = _run(path, "rev-parse", "--abbrev-ref", "HEAD", check=True).stdout.strip()
     for attempt in (1, 2):
-        pull = _run(path, "pull", "--rebase", "--autostash", "-q")
+        pull = _run(path, "pull", "--rebase", "--autostash", "-q", "origin", branch)
         if pull.returncode != 0:
             _run(path, "rebase", "--abort")
             r["error"] = "rebase failed (attempt %d): %s" % (attempt, (pull.stderr or pull.stdout).strip()[-400:])
             r["patch"] = _write_patch(path, artifact_dir, name, staged=False)
             return r
         r["committed"] = _run(path, "rev-parse", "HEAD", check=True).stdout.strip()
-        push = _run(path, "push", "-q")
+        push = _run(path, "push", "-q", "origin", "HEAD:%s" % branch)
         if push.returncode == 0:
             r["pushed"] = True
             return r
@@ -72,7 +75,6 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--artifact-dir", required=True)
     a = p.parse_args(argv)
-    failed = False
     for path in a.repo:
         name = os.path.basename(os.path.normpath(path)) or "repo"
         try:
@@ -80,8 +82,11 @@ def main(argv=None):
         except RuntimeError as e:
             r = {"name": name, "changed": None, "committed": None, "pushed": False, "patch": None, "error": str(e)}
         print(json.dumps(r))
-        failed = failed or bool(r["error"])
-    return 1 if failed else 0
+        if r["error"]:
+            # F3: never proceed on stale state — a conflicted repo must not let a later one
+            # push, since the next run would then skip the unpushed drafts entirely.
+            return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ jobs:
           repository: shmattox/secondbrain
           ssh-key: ${{ secrets.VAULT_DEPLOY_KEY }}
           path: env/SecondBrain
+      # shmattox/aios is PUBLIC — no ssh-key/deploy-key needed for this checkout.
       - name: Checkout engine (aios) at env/Projects/aios
         uses: actions/checkout@v4
         with:
@@ -47,46 +48,72 @@ jobs:
       - id: cfg
         name: Resolve leg config from the manifest
         shell: bash
+        env:
+          LEG: ${{ inputs.leg }}
         run: |
-          cfg=$(python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/leg_config.py" "${{ inputs.leg }}")
+          cfg=$(python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/leg_config.py" "$LEG")
           echo "$cfg"
           echo "config=$cfg" >> "$GITHUB_OUTPUT"
+      - id: enabled-guard
+        name: Refuse a live run of a manifest-disabled leg
+        if: ${{ !fromJSON(steps.cfg.outputs.config).enabled && !inputs.dry_run }}
+        shell: bash
+        env:
+          LEG: ${{ inputs.leg }}
+        run: |
+          echo "::error::leg $LEG is disabled in tasks.manifest.json (github.enabled=false); refusing a live run. Use dry_run: true instead."
+          exit 1
       - id: run
         name: Run the leg (adapter)
         uses: ./env/Projects/aios/deploy/github/run-agent
         continue-on-error: true
         with:
           leg: ${{ inputs.leg }}
+          body_path: ${{ fromJSON(steps.cfg.outputs.config).body_path }}
           env_root: ${{ github.workspace }}/env
           plugin_root: ${{ github.workspace }}/env/Projects/aios
-          result_path: ${{ runner.temp }}/result.json
+          result_path: ${{ github.workspace }}/result.json
           model: ${{ fromJSON(steps.cfg.outputs.config).model }}
           max_turns: ${{ fromJSON(steps.cfg.outputs.config).max_turns }}
           allowed_tools: ${{ fromJSON(steps.cfg.outputs.config).allowed_tools }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
       - id: sync
         name: Commit + push (or export the dry-run patch)
         if: steps.run.outcome == 'success'
         shell: bash
+        env:
+          LEG: ${{ inputs.leg }}
         run: |
           python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/gitsync.py" \
             --repo "$GITHUB_WORKSPACE/env/SecondBrain" --repo "$GITHUB_WORKSPACE/env" \
-            --message "aios ${{ inputs.leg }}: run ${{ github.run_id }}" \
+            --message "aios $LEG: run ${{ github.run_id }}" \
             --artifact-dir "$RUNNER_TEMP/artifacts" ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Export diff artifact on failure (nothing to push, but capture the work)
+        if: steps.run.outcome != 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          LEG: ${{ inputs.leg }}
+        run: |
+          python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/gitsync.py" \
+            --repo "$GITHUB_WORKSPACE/env/SecondBrain" --repo "$GITHUB_WORKSPACE/env" \
+            --message "aios $LEG: run ${{ github.run_id }} (failed, dry-run export)" \
+            --artifact-dir "$RUNNER_TEMP/artifacts" --dry-run
       - name: Upload result + patches
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aios-${{ inputs.leg }}-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/result.json
+            ${{ github.workspace }}/result.json
             ${{ runner.temp }}/artifacts
           if-no-files-found: ignore
           retention-days: 30
       - name: Fail the job if the leg failed
         if: steps.run.outcome != 'success'
         shell: bash
+        env:
+          LEG: ${{ inputs.leg }}
         run: |
-          echo "::error::leg ${{ inputs.leg }} status=${{ steps.run.outputs.status }}"
+          echo "::error::leg $LEG status=${{ steps.run.outputs.status }}"
           exit 1

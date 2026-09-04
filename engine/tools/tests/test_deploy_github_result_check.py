@@ -62,6 +62,36 @@ def test_wrong_typed_verify_or_summary_is_invalid_not_crash():
     assert rc.check(_result(summary=123), "ingest")[:2] == (1, "invalid")
 
 
+def test_falsy_typed_verify_is_invalid_not_silently_coalesced():
+    # `verify = r.get("verify") or {}` before the isinstance check let every falsy wrong type
+    # through as an empty dict, so the guard only ever caught truthy ones.
+    for bad in ([], "", 0):
+        assert rc.check(_result(verify=bad), "ingest")[:2] == (1, "invalid"), bad
+
+
+def test_ok_with_failed_verify_is_exit_1_and_status_failed():
+    # Anti-green-wash (spec §4/§5): VERIFY mismatch => failed, nothing committed or pushed.
+    code, status, md = rc.check(
+        _result(status="ok", verify={"passed": False, "notes": "queue drifted"}), "ingest")
+    assert (code, status) == (1, "failed")
+    assert "VERIFY" in md and "queue drifted" in md
+
+
+def test_ok_with_passing_verify_is_exit_0_ok():
+    assert rc.check(_result(status="ok", verify={"passed": True, "notes": "n"}), "ingest")[:2] == (0, "ok")
+
+
+def test_ok_without_a_verify_block_is_failed():
+    # An absent verify block on an "ok" run is not evidence of verification.
+    p = _result()
+    with open(p, encoding="utf-8") as f:
+        d = json.load(f)
+    d.pop("verify")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+    assert rc.check(p, "ingest")[:2] == (1, "failed")
+
+
 def test_cli_still_writes_status_on_wrong_typed_verify(tmp_path, monkeypatch):
     out = tmp_path / "out.txt"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))

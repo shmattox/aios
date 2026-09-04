@@ -25,12 +25,22 @@ def check(result_path, leg):
                               % (leg, r.get("leg") if isinstance(r, dict) else None,
                                  r.get("status") if isinstance(r, dict) else None))
     status = r["status"]
-    verify = r.get("verify") or {}
-    if "verify" in r and not isinstance(verify, dict):
-        return 1, "invalid", "### aios `%s` — FAILED: result.json invalid (verify must be a dict, got %r)\n" % (leg, type(verify).__name__)
+    # F11: validate the RAW value before coalescing — `verify = r.get("verify") or {}` run first
+    # let every falsy wrong type ([], "", 0) silently pass as an empty dict.
+    raw_verify = r.get("verify")
+    if "verify" in r and not isinstance(raw_verify, dict):
+        return 1, "invalid", "### aios `%s` — FAILED: result.json invalid (verify must be a dict, got %r)\n" % (leg, type(raw_verify).__name__)
+    verify = raw_verify if isinstance(raw_verify, dict) else {}
     summary = r.get("summary", "")
     if "summary" in r and not isinstance(summary, str):
         return 1, "invalid", "### aios `%s` — FAILED: result.json invalid (summary must be a string, got %r)\n" % (leg, type(summary).__name__)
+    # F4a (anti-green-wash, spec §4/§5): an "ok" run whose VERIFY didn't pass — or has no verify
+    # block at all, which is not evidence of verification — is FAILED, never a silent exit 0.
+    # `degraded` keeps its own meaning and is not re-checked here.
+    if status == "ok" and verify.get("passed") is not True:
+        md = ("### aios `%s` — FAILED: VERIFY did not pass (passed=%r)\n\n%s\n\n_VERIFY passed=%s — %s_\n"
+              % (leg, verify.get("passed"), summary.strip(), verify.get("passed"), verify.get("notes", "")))
+        return 1, "failed", md
     md = ("### aios `%s` — %s (run %s)\n\n%s\n\n_VERIFY passed=%s — %s_\n"
           % (leg, status.upper(), r.get("run_id", "?"), summary.strip(),
              verify.get("passed"), verify.get("notes", "")))
