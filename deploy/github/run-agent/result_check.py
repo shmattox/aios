@@ -26,8 +26,13 @@ def check(result_path, leg):
                                  r.get("status") if isinstance(r, dict) else None))
     status = r["status"]
     verify = r.get("verify") or {}
+    if "verify" in r and not isinstance(verify, dict):
+        return 1, "invalid", "### aios `%s` — FAILED: result.json invalid (verify must be a dict, got %r)\n" % (leg, type(verify).__name__)
+    summary = r.get("summary", "")
+    if "summary" in r and not isinstance(summary, str):
+        return 1, "invalid", "### aios `%s` — FAILED: result.json invalid (summary must be a string, got %r)\n" % (leg, type(summary).__name__)
     md = ("### aios `%s` — %s (run %s)\n\n%s\n\n_VERIFY passed=%s — %s_\n"
-          % (leg, status.upper(), r.get("run_id", "?"), r.get("summary", "").strip(),
+          % (leg, status.upper(), r.get("run_id", "?"), summary.strip(),
              verify.get("passed"), verify.get("notes", "")))
     return (0 if status in OK_STATUSES else 1), status, md
 

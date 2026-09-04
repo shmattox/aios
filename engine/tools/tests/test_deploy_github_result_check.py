@@ -55,3 +55,16 @@ def test_cli_writes_output_and_summary_files_even_on_failure(tmp_path, monkeypat
     assert code == 1
     assert "status=missing" in out.read_text()
     assert "no result file" in summ.read_text()
+
+
+def test_wrong_typed_verify_or_summary_is_invalid_not_crash():
+    assert rc.check(_result(verify="not a dict"), "ingest")[:2] == (1, "invalid")
+    assert rc.check(_result(summary=123), "ingest")[:2] == (1, "invalid")
+
+
+def test_cli_still_writes_status_on_wrong_typed_verify(tmp_path, monkeypatch):
+    out = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert rc.main(["--leg", "ingest", "--result", _result(verify="nope")]) == 1
+    assert "status=invalid" in out.read_text()
