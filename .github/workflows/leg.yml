@@ -1,0 +1,92 @@
+name: aios leg
+# Sub-project A reusable workflow: check the three repos out in the DESKTOP layout so the native
+# leg bodies run verbatim, run the adapter, then let gitsync (not the agent) commit and push.
+on:
+  workflow_call:
+    inputs:
+      leg:     { type: string,  required: true }
+      dry_run: { type: boolean, required: false, default: true }
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: { required: true }
+      ENV_DEPLOY_KEY:          { required: true }
+      VAULT_DEPLOY_KEY:        { required: true }
+
+concurrency:
+  group: aios-writer          # ONE writer at a time across every leg (spec §3.2)
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  leg:
+    name: ${{ inputs.leg }} (${{ inputs.dry_run && 'dry-run' || 'live' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout env (claude-env)
+        uses: actions/checkout@v4
+        with:
+          repository: shmattox/claude-env
+          ssh-key: ${{ secrets.ENV_DEPLOY_KEY }}
+          path: env
+      - name: Checkout vault (secondbrain) at env/SecondBrain
+        uses: actions/checkout@v4
+        with:
+          repository: shmattox/secondbrain
+          ssh-key: ${{ secrets.VAULT_DEPLOY_KEY }}
+          path: env/SecondBrain
+      - name: Checkout engine (aios) at env/Projects/aios
+        uses: actions/checkout@v4
+        with:
+          repository: shmattox/aios
+          path: env/Projects/aios
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: cfg
+        name: Resolve leg config from the manifest
+        shell: bash
+        run: |
+          cfg=$(python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/leg_config.py" "${{ inputs.leg }}")
+          echo "$cfg"
+          echo "config=$cfg" >> "$GITHUB_OUTPUT"
+      - id: run
+        name: Run the leg (adapter)
+        uses: ./env/Projects/aios/deploy/github/run-agent
+        continue-on-error: true
+        with:
+          leg: ${{ inputs.leg }}
+          env_root: ${{ github.workspace }}/env
+          plugin_root: ${{ github.workspace }}/env/Projects/aios
+          result_path: ${{ runner.temp }}/result.json
+          model: ${{ fromJSON(steps.cfg.outputs.config).model }}
+          max_turns: ${{ fromJSON(steps.cfg.outputs.config).max_turns }}
+          allowed_tools: ${{ fromJSON(steps.cfg.outputs.config).allowed_tools }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+      - id: sync
+        name: Commit + push (or export the dry-run patch)
+        if: steps.run.outcome == 'success'
+        shell: bash
+        run: |
+          python "$GITHUB_WORKSPACE/env/Projects/aios/deploy/github/gitsync.py" \
+            --repo "$GITHUB_WORKSPACE/env/SecondBrain" --repo "$GITHUB_WORKSPACE/env" \
+            --message "aios ${{ inputs.leg }}: run ${{ github.run_id }}" \
+            --artifact-dir "$RUNNER_TEMP/artifacts" ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Upload result + patches
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aios-${{ inputs.leg }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/result.json
+            ${{ runner.temp }}/artifacts
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Fail the job if the leg failed
+        if: steps.run.outcome != 'success'
+        shell: bash
+        run: |
+          echo "::error::leg ${{ inputs.leg }} status=${{ steps.run.outputs.status }}"
+          exit 1

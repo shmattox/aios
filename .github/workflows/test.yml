@@ -65,3 +65,12 @@ jobs:
             echo "::error::only $n tests collected - collection is broken, not the suite passing"
             exit 1
           fi
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: raven-actions/actionlint@v2
+        with:
+          files: ".github/workflows/*.yml deploy/github/run-agent/action.yml"

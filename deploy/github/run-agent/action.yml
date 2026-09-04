@@ -1,0 +1,53 @@
+name: aios run-agent
+description: >-
+  Vendor-neutral adapter (sub-project A): run ONE aios pipeline leg under the task contract.
+  Inputs are the contract; result.json + exit code are the outputs. `runner` selects the vendor
+  adapter; v1 implements `claude` (anthropics/claude-code-action on a subscription OAuth token).
+inputs:
+  leg:            { required: true,  description: "pipeline leg, e.g. ingest" }
+  env_root:       { required: true,  description: "absolute path of the env checkout" }
+  plugin_root:    { required: true,  description: "absolute path of the aios checkout" }
+  result_path:    { required: true,  description: "where the runner must write result.json" }
+  runner:         { required: false, default: "claude" }
+  model:          { required: false, default: "" }
+  max_turns:      { required: false, default: "150" }
+  allowed_tools:  { required: false, default: "" }
+  claude_code_oauth_token: { required: false, default: "" }
+  github_token:   { required: false, default: "" }
+outputs:
+  status:
+    description: ok | degraded | failed | missing | invalid
+    value: ${{ steps.check.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - id: guard
+      shell: bash
+      run: |
+        case "${{ inputs.runner }}" in
+          claude) ;;
+          *) echo "::error::unknown runner '${{ inputs.runner }}' (v1 implements: claude)"; exit 1 ;;
+        esac
+    - id: prompt
+      shell: bash
+      run: |
+        python "${{ inputs.plugin_root }}/deploy/github/run-agent/prompt.py" \
+          --leg "${{ inputs.leg }}" --body-path "$(python "${{ inputs.plugin_root }}/deploy/github/leg_config.py" "${{ inputs.leg }}" | python -c 'import json,sys; print(json.load(sys.stdin)["body_path"])')" \
+          --env-root "${{ inputs.env_root }}" --plugin-root "${{ inputs.plugin_root }}" \
+          --result-path "${{ inputs.result_path }}" --run-id "${{ github.run_id }}" > "$RUNNER_TEMP/prompt.txt"
+        { echo "text<<__AIOS_PROMPT__"; cat "$RUNNER_TEMP/prompt.txt"; echo "__AIOS_PROMPT__"; } >> "$GITHUB_OUTPUT"
+    - id: claude
+      if: inputs.runner == 'claude'
+      uses: anthropics/claude-code-action@v1
+      continue-on-error: true      # result_check decides the outcome (spec §3.1)
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        github_token: ${{ inputs.github_token }}
+        prompt: ${{ steps.prompt.outputs.text }}
+        claude_args: >-
+          --max-turns ${{ inputs.max_turns }}
+          ${{ inputs.model != '' && format('--model {0}', inputs.model) || '' }}
+          ${{ inputs.allowed_tools != '' && format('--allowedTools "{0}"', inputs.allowed_tools) || '' }}
+    - id: check
+      shell: bash
+      run: python "${{ inputs.plugin_root }}/deploy/github/run-agent/result_check.py" --leg "${{ inputs.leg }}" --result "${{ inputs.result_path }}"
