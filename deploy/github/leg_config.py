@@ -45,6 +45,7 @@ def resolve(leg, manifest_path=DEFAULT_MANIFEST):
         "allowed_tools": ",".join(native["allowed_tools"]),
         "cron": gh["cron"],
         "enabled": bool(gh["enabled"]),
+        "context_stages": ",".join(native.get("context_stages") or []),
     }
 
 

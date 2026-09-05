@@ -63,6 +63,10 @@ jobs:
         run: |
           echo "::error::leg $LEG is disabled in tasks.manifest.json (github.enabled=false); refusing a live run. Use dry_run: true instead."
           exit 1
+      - id: since
+        name: Record the run-window floor (120s clock-rounding slack)
+        shell: bash
+        run: echo "since=$(date -u -d '-120 seconds' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - id: run
         name: Run the leg (adapter)
         uses: ./env/Projects/aios/deploy/github/run-agent
@@ -80,9 +84,30 @@ jobs:
           # Keep this: without it, claude-code-action falls back to the Claude GitHub App,
           # which needs an OIDC token (id-token: write) we deliberately don't grant.
           github_token: ${{ github.token }}
+      - id: ctx
+        name: Verify the context-log recorded this run (A21, deterministic — not the model's word)
+        if: steps.run.outcome == 'success'
+        shell: bash
+        env:
+          STAGES: ${{ fromJSON(steps.cfg.outputs.config).context_stages }}
+          SINCE: ${{ steps.since.outputs.since }}
+        run: |
+          if [ -z "$STAGES" ]; then
+            echo "### context-log check — SKIPPED (leg declares no context_stages)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if python "$GITHUB_WORKSPACE/env/Projects/aios/engine/tools/context_log.py" check \
+              --path "$GITHUB_WORKSPACE/env/state/context-log.jsonl" \
+              --stage "$STAGES" --since "$SINCE"; then
+            echo "### context-log check — OK (stages: $STAGES)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            code=$?
+            echo "### context-log check — FAILED (stages: $STAGES)" >> "$GITHUB_STEP_SUMMARY"
+            exit $code
+          fi
       - id: sync
         name: Commit + push (or export the dry-run patch)
-        if: steps.run.outcome == 'success'
+        if: steps.run.outcome == 'success' && steps.ctx.outcome == 'success'
         shell: bash
         env:
           LEG: ${{ inputs.leg }}
@@ -92,7 +117,10 @@ jobs:
             --message "aios $LEG: run ${{ github.run_id }}" \
             --artifact-dir "$RUNNER_TEMP/artifacts" ${{ inputs.dry_run && '--dry-run' || '' }}
       - name: Export diff artifact on failure (nothing to push, but capture the work)
-        if: steps.run.outcome != 'success'
+        # always(): `ctx` has no continue-on-error, so once it fails the job's own success()
+        # goes false and a bare `if:` (implicit success()-gated) would skip this step exactly
+        # when we need it most — force evaluation regardless of ctx's failure.
+        if: always() && (steps.run.outcome != 'success' || steps.ctx.outcome != 'success')
         continue-on-error: true
         shell: bash
         env:
