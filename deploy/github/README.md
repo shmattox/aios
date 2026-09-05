@@ -41,3 +41,29 @@ changes.
 **Calling it:** `uses: shmattox/aios/.github/workflows/leg.yml@main` with `leg` + `dry_run` and the
 three secrets (`secrets: inherit` from a repo that holds `CLAUDE_CODE_OAUTH_TOKEN`, `ENV_DEPLOY_KEY`,
 `VAULT_DEPLOY_KEY`).
+
+## Landing a change
+
+`main` carries a ruleset (`main: required checks`) requiring **`suite (ubuntu-latest)`**,
+**`suite (macos-latest)`**, **`suite (windows-latest)`** and **`actionlint`**, plus a
+non-fast-forward guard. Every change lands by pull request; the client-side pre-push hook
+(H158) and the ruleset now say the same thing from two directions.
+
+Because those checks are required, a PR sits in GitHub's `BLOCKED` state until they report —
+which is what **auto-merge** latches onto:
+
+```
+gh pr merge <n> --squash --auto --delete-branch
+```
+
+It merges the moment the required checks go green, so a PR no longer waits for a session to
+come back and press the button. Without required checks a PR with pending checks is merely
+`UNSTABLE`, and GitHub refuses to enable auto-merge at all — turning on the repo setting is
+only half the mechanism.
+
+**A required check must be a name that always reports.** A matrix job publishes its check
+under the expanded name (`suite (ubuntu-latest)`), but a matrix job skipped by an `if:`
+publishes the *unexpanded* literal instead, so the expanded name never appears and a required
+check waits on it forever (actions/runner#952). The `suite` matrix here is unconditional, so
+its expanded names are safe; add an `if:` to it and the ruleset must be revisited in the same
+change.
