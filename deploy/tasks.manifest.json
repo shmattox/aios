@@ -18,21 +18,21 @@
     {
       "id": "aios-gh-ingest",
       "substrate": "github",
-      "cron": "0 8 * * *",
+      "cron": "17 8 * * *",
       "enabled": false,
       "description": "Sub-project A: GitHub Actions substrate for aios-ingest (same body). enabled flips true in the cutover commit; cron is UTC."
     },
     {
       "id": "aios-gh-gate-auto",
       "substrate": "github",
-      "cron": "0 10 * * *",
+      "cron": "37 10 * * *",
       "enabled": false,
       "description": "Sub-project A: GitHub Actions substrate for aios-gate-auto (same body). enabled flips true in the cutover commit; cron is UTC."
     },
     {
       "id": "aios-gh-garden",
       "substrate": "github",
-      "cron": "0 12 * * 0",
+      "cron": "47 12 * * 0",
       "enabled": false,
       "description": "Sub-project A: GitHub Actions substrate for aios-garden (same body). enabled flips true in the cutover commit; cron is UTC."
     }
