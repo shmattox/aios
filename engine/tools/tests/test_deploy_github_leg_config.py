@@ -29,7 +29,12 @@ def test_merge_inherits_native_and_overrides_cron_enabled():
     r = lc.resolve("ingest", _manifest([NATIVE, GH]))
     assert r == {"leg": "ingest", "body_path": "deploy/tasks/ingest.md", "model": "",
                  "max_turns": 200, "allowed_tools": "Read,Bash(python:*)", "cron": "0 8 * * *",
-                 "enabled": False}
+                 "enabled": False, "context_stages": ""}
+
+
+def test_context_stages_absent_yields_empty_string():
+    r = lc.resolve("ingest", _manifest([NATIVE, GH]))
+    assert r["context_stages"] == ""
 
 
 def test_model_from_native_passes_through():
@@ -61,3 +66,4 @@ def test_real_manifest_has_all_wave1_legs_disabled_until_flip():
         assert r["max_turns"] > 0
         # Each flip commit (Tasks 8–10) changes this to True for its leg.
         assert r["enabled"] is False, leg
+    assert lc.resolve("ingest", _REAL)["context_stages"] == "capture+sort+ingest,ingest"

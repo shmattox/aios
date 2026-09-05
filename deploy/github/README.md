@@ -14,6 +14,15 @@ Exit code is derived from `result.json` by `run-agent/result_check.py`; **no res
 The runner never runs git; `gitsync.py` commits/rebases/pushes (vault first, then env), or with
 `--dry-run` exports patches and pushes nothing.
 
+**Context-log check (`ctx` step, A21 parity).** `result.json` is the model's own self-report of
+what it did — not evidence. After the runner returns, the workflow independently asks the engine's
+own ledger (`state/context-log.jsonl`) whether it carries a record for the leg's declared
+`context_stages` (from `leg_config.py`'s `context_stages`, comma-joined) with a `ts` inside the run
+window (run start minus 120s clock-rounding slack, through `context_log.py check`). **No push
+happens unless it does** — the `sync` step's condition includes `steps.ctx.outcome == 'success'`,
+so a failed check blocks the write exactly like a failed leg does. A leg with no declared
+`context_stages` skips the check (nothing to verify) and is treated as passing.
+
 **`result.json` schema.** `result_check.py` validates and enforces exactly five keys: `leg` (must
 match the leg being run), `run_id`, `status` (`ok`|`degraded`|`failed`), `summary` (string), and
 `verify` (a dict with `passed`/`notes`) — required, and `passed` must be exactly `true` whenever
