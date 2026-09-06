@@ -792,6 +792,37 @@ except ValueError as e:
     check("direction_bad_value_raises", True)
     check("direction_bad_value_names_it", "sideways" in str(e))
 
+# ── C1 Task 3: notion_ignored ─────────────────────────────────────────────────
+_ri, _sdi = _scratch_silo()
+(_sdi / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored:
+        Rollup Total: "Notion rollup - derived from Qty, never authored"
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+_ti = dm.load_silo_config(_ri, "demo")["tables"][0]
+check("ignored_parsed", _ti["ignored"] == {"Rollup Total": "Notion rollup - derived from Qty, never authored"})
+
+_rj, _sdj = _scratch_silo()
+(_sdj / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored:
+        Rollup Total: ""
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rj, "demo"); check("ignored_empty_reason_raises", False)
+except ValueError: check("ignored_empty_reason_raises", True)
+
+_rk, _sdk = _scratch_silo()
+check("ignored_absent_is_empty_dict", dm.load_silo_config(_rk, "demo")["tables"][0]["ignored"] == {})
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)

@@ -166,6 +166,13 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
         if clash:
             raise ValueError(f"[{tname}] state_native fields are also derived from the snapshot: "
                              f"{clash} — a field cannot be both unreproducible and computed")
+        # OPTIONAL `notion_ignored:` (C1) — Notion properties deliberately NOT mirrored, each with
+        # a one-line reason. The reason is the review surface, so a blank one is a schema error:
+        # an unexplained silence is what the coverage check exists to prevent.
+        ignored = dict(tdef.get("notion_ignored") or {})
+        blank = sorted(k for k, v in ignored.items() if not str(v).strip())
+        if blank:
+            raise ValueError(f"[{tname}] notion_ignored needs a reason for: {blank}")
         tables.append({"name": tname, "source_db": tdef["notion_source_db"],
                        # OPTIONAL `notion_db:` — the live Notion database/data-source id (or
                        # collection:// form) this table gathers from (Plan 3 domain_sync live path).
@@ -178,7 +185,8 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
                        # a table whose Notion DB was never built (e.g. FO people) — keeps its records
                        # intact without degrading the silo.
                        "local_only": bool(tdef.get("local_only")),
-                       "fields": fields, "computed": computed, "state_native": state_native})
+                       "fields": fields, "computed": computed, "state_native": state_native,
+                       "ignored": ignored})
     direction = schema.get("direction", "import")
     if direction not in ("import", "publish"):
         raise ValueError(f"[{silo}] direction must be 'import' or 'publish', got {direction!r}")
