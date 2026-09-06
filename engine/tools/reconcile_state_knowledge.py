@@ -111,7 +111,35 @@ def read_state_field(env_root, state_key, field):
         return None
     fm = _frontmatter(path)
     val = _coerce_num(fm.get(field))
-    return {"value": val, "last_synced": fm.get("last_synced"), "found": val is not None}
+    return {"value": val, "last_synced": _confirmed_date(Path(env_root), silo, fm),
+            "found": val is not None}
+
+
+def _confirmed_date(env_root, silo, fm):
+    """When was this row last CONFIRMED against Notion — not when its content last changed.
+
+    A7143. `evaluate()`'s stale branch re-dates a knowledge anchor whose value still MATCHES the
+    state row, using "the row was confirmed more recently than the anchor" as its evidence. That
+    only works while the row's date advances on every run. A7143 stopped rewriting a record whose
+    content did not change (~350 date-only rewrites a night), so the record's own `last_synced`
+    now means "date the content last differed" — a strictly weaker fact that would silently
+    disable this branch for exactly the unchanged rows it exists to serve.
+
+    The silo's `sync-status.json` already records the run-level answer (`last_good_utc`, written
+    per successful import), so read the confirmation date from there and fall back to the record's
+    own field when the sidecar is absent or unreadable. Later of the two wins, so a record that is
+    somehow ahead of the sidecar is never aged backwards.
+    """
+    row_date = str(fm.get("last_synced") or "")[:10] or None
+    status = env_root / "state" / "domains" / silo / "sync-status.json"
+    try:
+        good = json.loads(status.read_text(encoding="utf-8")).get("last_good_utc")
+    except (OSError, ValueError, AttributeError):
+        good = None
+    silo_date = str(good or "")[:10] or None
+    if row_date and silo_date:
+        return max(row_date, silo_date)  # ISO dates: lexical max == chronological max
+    return silo_date or row_date
 
 
 # ─────────────────────────── drift comparison (Task 3) ───────────────────────────
