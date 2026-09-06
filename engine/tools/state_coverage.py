@@ -68,12 +68,17 @@ def uncovered(table: dict, rows: list) -> list:
 def check_silo(env_root, silo, snapshot_dir=None, tasks_enabled=()) -> dict:
     cfg = dm.load_silo_config(Path(env_root), silo)
     snap = Path(snapshot_dir) if snapshot_dir else cfg["state_dir"] / "_snapshots"
-    result, total, checked, props_seen = {}, 0, 0, 0
+    result, total, checked, props_seen, missing = {}, 0, 0, 0, []
     for t in cfg["tables"]:
         if t.get("local_only"):
             continue
         hits = list(snap.rglob("%s-export.json" % t["source_db"]))
         if not hits:
+            # A missing snapshot is NOT a legitimately-empty table (that's `rows: []`, handled
+            # below) — it means this table's properties were never examined at all. Silent skip
+            # here is exactly the per-table form of the vacuous-pass hole this gate exists to
+            # close (spec §7: unreachable Notion must fail, not pass).
+            missing.append(t["name"])
             continue
         rows = json.loads(hits[0].read_text(encoding="utf-8")).get("rows", [])
         checked += 1
@@ -86,6 +91,10 @@ def check_silo(env_root, silo, snapshot_dir=None, tasks_enabled=()) -> dict:
             total += len(gaps)
     if checked == 0:
         raise CoverageError("no snapshots found for silo %r — refusing to report covered" % silo)
+    if missing:
+        raise CoverageError(
+            "silo %r: no snapshot for table(s) %s — the gate cannot see their properties, "
+            "refusing to report covered" % (silo, ", ".join(sorted(missing))))
     check_scanned_or_raise(props_seen, silo)
     out = {"silo": silo, "uncovered": result, "total": total, "tables_checked": checked}
     # direction/task-liveness coherence (Task 2's check_direction_coherent) lives here, not in
@@ -105,11 +114,22 @@ def main(argv=None):
     ap.add_argument("--env-root", default=".")
     ap.add_argument("--snapshot-dir")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--tasks-enabled", default="",
+                     help="comma-separated enabled scheduled-task ids (fact-free: the caller "
+                          "supplies these; omit to get direction_unchecked rather than a "
+                          "coherence check that always reads clean)")
     args = ap.parse_args(argv)
+    tasks_enabled = tuple(t for t in args.tasks_enabled.split(",") if t)
     try:
-        r = check_silo(args.env_root, args.silo, args.snapshot_dir)
+        r = check_silo(args.env_root, args.silo, args.snapshot_dir, tasks_enabled)
     except CoverageError as e:
         print("error: %s" % e, file=sys.stderr)
+        return 2
+    except OSError as e:
+        # a bad --silo/--env-root (no such schema.yaml) is an INVOCATION error, not a validation
+        # failure — must not masquerade as exit 1 or a bare traceback (state_validate.py:419-420
+        # convention: 2 = invocation error, 1 = validation failure).
+        print("usage error: %s" % e, file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(r, indent=2))
@@ -118,6 +138,11 @@ def main(argv=None):
             for p in props:
                 print("%s: %s" % (tname, p))
         print("%s — %d uncovered across %d table(s)." % (r["silo"], r["total"], r["tables_checked"]))
+        if r.get("direction_unchecked"):
+            print("direction: unchecked (no --tasks-enabled given)")
+        else:
+            problems = r.get("direction_problems", [])
+            print("direction: %s" % (problems if problems else "coherent"))
     return 1 if r["total"] else 0
 
 

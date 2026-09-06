@@ -5,6 +5,8 @@ module-level FAIL-list + unguarded sys.exit would abort pytest's import with an 
 see test_task_manifest.py / test_state_validate.py for the same shape). `suite_test.py` also runs
 this file as a subprocess and asserts exit 0 via the `__main__` runner below.
 """
+import contextlib
+import io
 import json
 import os
 import sys
@@ -101,6 +103,81 @@ def test_coherent_direction_is_not_reported():
     root, snap = _scratch_silo("import")
     r = sc.check_silo(root, "demo", snap, tasks_enabled=("domain-sync-demo",))
     assert r.get("direction_problems") == []
+
+
+def _scratch_two_table_silo(second_table_snapshot=None):
+    """A silo with two tables: `state-thing` always gets a real snapshot with one property; the
+    second table (`state-other`) gets whatever `second_table_snapshot` says — None means no
+    snapshot file at all (the missing-snapshot case), otherwise it's the `rows` list to write."""
+    root = Path(tempfile.mkdtemp()).resolve()
+    (root / "profile").mkdir()
+    (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
+    sd = root / "state" / "domains" / "demo"
+    (sd / "tables").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(textwrap.dedent("""\
+        direction: import
+        state-thing:
+          required: [name, type, notion_id]
+          notion_source_db: things
+          notion_fields:
+            name: [Name, title]
+        state-other:
+          required: [name, type, notion_id]
+          notion_source_db: others
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    snap = sd / "_snap"
+    snap.mkdir()
+    (snap / "things-export.json").write_text(
+        json.dumps({"_meta": {}, "url_to_slug": {}, "rows": [{"Name": "Widget", "url": "u1"}]}),
+        encoding="utf-8")
+    if second_table_snapshot is not None:
+        (snap / "others-export.json").write_text(
+            json.dumps({"_meta": {}, "url_to_slug": {}, "rows": second_table_snapshot}),
+            encoding="utf-8")
+    return root, snap
+
+
+def test_missing_snapshot_raises_even_though_other_table_is_clean():
+    # spec §7's per-table form: one table with one property is not enough to green a silo whose
+    # OTHER table's snapshot never showed up — props_seen > 0 must not paper over it.
+    root, snap = _scratch_two_table_silo(second_table_snapshot=None)
+    try:
+        sc.check_silo(root, "demo", snap)
+        assert False, "a missing snapshot for one table must raise, not report clean"
+    except sc.CoverageError as e:
+        assert "state-other" in str(e)
+
+
+def test_empty_rows_table_does_not_raise():
+    # the OTHER event: a snapshot file that exists and says `rows: []` is a legitimately empty
+    # table (personal `medications`), not a missing one — must NOT raise.
+    root, snap = _scratch_two_table_silo(second_table_snapshot=[])
+    r = sc.check_silo(root, "demo", snap)
+    assert r["tables_checked"] == 2
+
+
+def test_tasks_enabled_flag_reaches_check_silo():
+    # no capsys — this module runs both under pytest AND as a subprocess script via the __main__
+    # runner below, so capture manually to work in both.
+    root, snap = _scratch_silo("publish")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = sc.main(["--silo", "demo", "--env-root", str(root), "--snapshot-dir", str(snap),
+                      "--tasks-enabled", "domain-sync-demo", "--json"])
+    out = json.loads(buf.getvalue())
+    assert len(out.get("direction_problems", [])) == 1
+    assert rc == 0  # this scratch silo has nothing uncovered; only direction is being checked
+
+
+def test_bad_silo_is_invocation_error_not_traceback():
+    root, _ = _scratch_silo("import")
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        rc = sc.main(["--silo", "does-not-exist", "--env-root", str(root)])
+    assert rc == 2
+    assert "usage error" in buf.getvalue()
 
 
 def test_zero_mapping_silo_raises_not_a_vacuous_pass():
