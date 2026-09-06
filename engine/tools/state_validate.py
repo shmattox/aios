@@ -389,6 +389,22 @@ def validate_file(path, schema: dict) -> list[str]:
     return validate_frontmatter(fm, schema)
 
 
+IMPORT_TASK_MARKERS = ("domain-sync", "domain_mirror")
+
+
+def check_direction_coherent(schema: dict, tasks_enabled) -> list[str]:
+    """A silo on `direction: publish` must have no live import task — both directions at once
+    is a write loop. Returns human-readable problems; empty means coherent."""
+    if schema.get("direction", "import") != "publish":
+        return []
+    live = sorted(t for t in (tasks_enabled or ())
+                  if any(m in t for m in IMPORT_TASK_MARKERS))
+    if not live:
+        return []
+    return ["direction: publish but these import tasks are still enabled: %s "
+            "(both directions live is a write loop)" % ", ".join(live)]
+
+
 def main(argv: list[str]) -> int:
     """usage: state_validate.py --schema <schema.yaml> (<note.md> ... | --all <dir>)"""
     if "--schema" not in argv:

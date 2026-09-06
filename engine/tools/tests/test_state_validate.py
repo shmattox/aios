@@ -564,6 +564,23 @@ def test_multiline_does_not_strip_inner_hash():
     assert fm["n"] == "see item #38 for detail", repr(fm.get("n"))
 
 
+def test_direction_publish_with_live_import_is_an_error():
+    import state_validate as sv
+    problems = sv.check_direction_coherent({"direction": "publish"}, {"aios-domain-sync"})
+    assert problems, "publish + a live import task is a write loop and must be flagged"
+    assert "domain-sync" in " ".join(problems)
+
+
+def test_direction_publish_without_import_is_clean():
+    import state_validate as sv
+    assert sv.check_direction_coherent({"direction": "publish"}, set()) == []
+
+
+def test_direction_import_with_live_import_is_clean():
+    import state_validate as sv
+    assert sv.check_direction_coherent({"direction": "import"}, {"aios-domain-sync"}) == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
