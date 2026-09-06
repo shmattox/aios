@@ -179,7 +179,10 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
                        # intact without degrading the silo.
                        "local_only": bool(tdef.get("local_only")),
                        "fields": fields, "computed": computed, "state_native": state_native})
-    return {"state_dir": state_dir, "schema": schema, "tables": tables}
+    direction = schema.get("direction", "import")
+    if direction not in ("import", "publish"):
+        raise ValueError(f"[{silo}] direction must be 'import' or 'publish', got {direction!r}")
+    return {"state_dir": state_dir, "schema": schema, "tables": tables, "direction": direction}
 
 
 def compute_field(spec: dict, fm: dict, *, last_synced=None):

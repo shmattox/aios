@@ -770,6 +770,17 @@ check("a7143_helper_content", dm.only_last_synced_differs(_a43, _c43) is False)
 check("a7143_helper_gained_field",
       dm.only_last_synced_differs("type: x" + chr(10), _b43) is False)
 
+# ── C1 Task 1: the direction flag ─────────────────────────────────────────────
+_rd, _sdd = _scratch_silo()
+check("direction_defaults_to_import", dm.load_silo_config(_rd, "demo")["direction"] == "import")
+
+(_sdd / "schema.yaml").write_text(
+    "direction: publish\n" + (_sdd / "schema.yaml").read_text(encoding="utf-8"),
+    encoding="utf-8")
+_cfgd = dm.load_silo_config(_rd, "demo")
+check("direction_reads_publish", _cfgd["direction"] == "publish")
+check("direction_key_is_not_a_table", all(t["name"] != "direction" for t in _cfgd["tables"]))
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
