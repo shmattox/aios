@@ -169,8 +169,14 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
         # OPTIONAL `notion_ignored:` (C1) — Notion properties deliberately NOT mirrored, each with
         # a one-line reason. The reason is the review surface, so a blank one is a schema error:
         # an unexplained silence is what the coverage check exists to prevent.
-        ignored = dict(tdef.get("notion_ignored") or {})
-        blank = sorted(k for k, v in ignored.items() if not str(v).strip())
+        raw_ignored = tdef.get("notion_ignored") or {}
+        if not isinstance(raw_ignored, dict):
+            raise ValueError(f"[{tname}] notion_ignored must be a mapping of "
+                              f"{{property: reason}}, got {type(raw_ignored).__name__}: {raw_ignored!r}")
+        ignored = dict(raw_ignored)
+        # A null/`~`/bare `key:` reason parses to None, and str(None) == "None" is non-blank — so
+        # the None check must be explicit, not folded into the strip() truthiness check.
+        blank = sorted(k for k, v in ignored.items() if v is None or not str(v).strip())
         if blank:
             raise ValueError(f"[{tname}] notion_ignored needs a reason for: {blank}")
         tables.append({"name": tname, "source_db": tdef["notion_source_db"],

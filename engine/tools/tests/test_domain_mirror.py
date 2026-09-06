@@ -823,6 +823,63 @@ except ValueError: check("ignored_empty_reason_raises", True)
 _rk, _sdk = _scratch_silo()
 check("ignored_absent_is_empty_dict", dm.load_silo_config(_rk, "demo")["tables"][0]["ignored"] == {})
 
+# ── C1 Task 3 review fix-up: null/bare reasons must not pass as "has a reason" ──────────────────
+for _shape, _yaml_reason in (
+    ("null", "Rollup Total: null\n"),
+    ("tilde", "Rollup Total: ~\n"),
+    ("bare_key", "Rollup Total:\n"),
+):
+    _rn, _sdn = _scratch_silo()
+    (_sdn / "schema.yaml").write_text(textwrap.dedent(f"""\
+        state-thing:
+          required: [name, type, notion_id]
+          notion_source_db: things
+          notion_ignored:
+            {_yaml_reason.strip()}
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    try:
+        dm.load_silo_config(_rn, "demo")
+        check(f"ignored_{_shape}_reason_raises", False)
+    except ValueError as e:
+        check(f"ignored_{_shape}_reason_raises", True)
+        check(f"ignored_{_shape}_reason_names_property", "Rollup Total" in str(e))
+
+# `notion_ignored` given as a non-mapping shape must fail with an actionable message, not a raw
+# Python stdlib error (dict() on a string/list raises an unrelated ValueError with no context).
+_rl, _sdl = _scratch_silo()
+(_sdl / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored: "Rollup Total"
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rl, "demo")
+    check("ignored_string_shape_raises", False)
+except ValueError as e:
+    check("ignored_string_shape_raises", True)
+    check("ignored_string_shape_names_table", "state-thing" in str(e))
+
+_rm, _sdm = _scratch_silo()
+(_sdm / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored: ["Rollup Total"]
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rm, "demo")
+    check("ignored_list_shape_raises", False)
+except ValueError as e:
+    check("ignored_list_shape_raises", True)
+    check("ignored_list_shape_names_table", "state-thing" in str(e))
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
