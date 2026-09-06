@@ -211,13 +211,50 @@ def test_history_invalid_range_is_error_never_clean():
         shutil.rmtree(repo, ignore_errors=True)
 
 
-def test_history_empty_range_is_error():
+def test_history_empty_range_is_clean_not_an_error():
+    # H6047 (2026-09-06) REVERSES this case. It previously asserted returncode 2: an empty range
+    # was treated as a failed scan. That made every zero-commit push un-gateable, which is exactly
+    # the shape of a claim branch (env Scripts/claim/claim.sh pushes the branch at origin/main
+    # BEFORE any work, so the claim precedes the duplicate). The only way through was
+    # `git push --no-verify`, i.e. agents routinely bypassing the leak scanner. A push carrying
+    # zero commits carries zero added lines and cannot leak. The fail-closed case that DOES
+    # matter is covered by test_history_zero_parsed_commits_still_raises below.
     repo = _fixture_repo()
     try:
         _write(repo, "a.md", "x\n"); _git(repo, "add", "a.md"); _git(repo, "commit", "-qm", "c1")
         r = _cli("--history", "HEAD..HEAD", "--root", repo)
-        assert r.returncode == 2 and "clean" not in r.stdout
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "empty range" in r.stdout, r.stdout
         assert "unrecognized arguments" not in r.stderr
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_history_zero_parsed_commits_still_raises():
+    # The other direction, and the one a careless H6047 fix would silently disarm: when git says
+    # the range is NON-empty but the scan parses no commits out of it, the instrument is broken
+    # and must still refuse. Simulated by making the `log` pass return nothing while rev-list
+    # still reports a real count.
+    repo = _fixture_repo()
+    try:
+        _write(repo, "a.md", "x\n"); _git(repo, "add", "a.md"); _git(repo, "commit", "-qm", "c1")
+        real_git = sc._git
+
+        def fake_git(root, *args):
+            if args and args[0] == "log":
+                return ""
+            return real_git(root, *args)
+
+        sc._git = fake_git
+        try:
+            raised = ""
+            try:
+                sc.scan_history(repo, "HEAD", sc.structural_patterns())
+            except sc.ScanError as e:
+                raised = str(e)
+            assert "refusing to report clean" in raised, raised
+        finally:
+            sc._git = real_git
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
