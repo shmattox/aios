@@ -311,11 +311,14 @@ def run(env_root, vault_root, kb_map, today, emit=False):
     queue_path = env_root / "state" / "queue.json"
     knobs = _load_knobs(env_root)
     proposals, warnings, emitted = 0, 0, 0
+    pages_scanned, anchors_checked = 0, 0
     details = []
     for kb, folder in (kb_map or {}).items():
         for page in _iter_pages(vault_root, folder):
+            pages_scanned += 1
             warnings += len(parse_errors(page))
             for anchor in parse_anchors(page):
+                anchors_checked += 1
                 try:
                     state = read_state_field(env_root, anchor["state_key"], anchor["field"])
                     verdict = evaluate(anchor, state, today=today, **knobs)
@@ -335,19 +338,30 @@ def run(env_root, vault_root, kb_map, today, emit=False):
                             emitted += 1
                 except Exception:  # noqa: BLE001 — a single bad page never crashes the sweep
                     warnings += 1
-    return {"proposals": proposals, "emitted": emitted, "parse_warnings": warnings, "details": details}
+    return {"proposals": proposals, "emitted": emitted, "parse_warnings": warnings,
+            "pages_scanned": pages_scanned, "anchors_checked": anchors_checked, "details": details}
 
 
 from _util import utf8_stdio as _utf8_stdio
 
 
 def render(result):
-    """One-line health summary for the gather to lift (like standing_checks / pipeline_health)."""
+    """One-line health summary for the gather to lift (like standing_checks / pipeline_health).
+
+    A detector with no SUBJECT is not a passing detector. Silence on `proposals == 0` reads as "no
+    drift" when it can equally mean "nothing was checked" — the shape that hid this tool's empty
+    scan for seven weeks (H6803, 2026-09-06). So a zero denominator is reported LOUDLY and a
+    non-zero one is carried alongside the count, never implied.
+    """
     n, m = result["proposals"], result["parse_warnings"]
+    checked = result.get("anchors_checked", 0)
+    if not checked:
+        return ("♻ reconcile: NO SUBJECT — 0 `snapshots:` anchors across "
+                f"{result.get('pages_scanned', 0)} page(s); nothing is being checked")
     if n == 0 and m == 0:
         return ""
     warn = f" · {m} parse warning(s)" if m else ""
-    return f"♻ reconcile: {n} drift proposal(s) staged{warn}"
+    return f"♻ reconcile: {n} drift proposal(s) staged of {checked} anchor(s) checked{warn}"
 
 
 def main(argv=None):

@@ -152,8 +152,11 @@ ends by writing these two files, smallest first, atomic (write → re-read → v
 > `<vault>/<folder>/wiki/staging/` and enqueues a `review`-lane draft via `queue_tx add` — so the
 > item rides the EXISTING review panel and the gate ships it (the gate validates the figure vs Drive
 > at ship; economic KBs stay human-gated — this tool never auto-copies an economic value as truth).
-> Lift its one-line `♻ reconcile: N drift proposal(s) staged` health line like the others (silent at
-> steady state); its items surface as ordinary review-lane cards, not a header line.
+> Lift its one-line `♻ reconcile: N drift proposal(s) staged of K anchor(s) checked` health line
+> like the others (silent at steady state); its items surface as ordinary review-lane cards, not
+> a header line. **A run that checked ZERO anchors is NOT steady state** — it renders
+> `♻ reconcile: NO SUBJECT — 0 snapshots anchors across N page(s)` and must be lifted, because
+> silence there would mean "nothing to check" while reading as "no drift" (H6803).
 1. `<env_root>/state/brief-cache.json` — the structured payload + `generated_utc` + the source
    counts the delta check uses. **`source_counts` MUST carry the capability manifest** — the
    machine-readable truth the render flow's parity check reads (never prose): `notion_live` (true ONLY if
