@@ -281,3 +281,65 @@ def test_cli_emit_is_idempotent(tmp_path):
     from queue_tx import load
     q = load(str(Path(env["env_root"]) / "state" / "queue.json"))
     assert len([it for it in q["queue"] if it.get("source") == "reconcile"]) == 1
+
+
+# A7143: freshness comes from the silo's sync-status, not the record's own stamp.
+# A7143 stopped rewriting records whose content did not change, so a record's last_synced now
+# means 'date the content last differed'. The stale branch needs 'date the row was last
+# CONFIRMED', which is what sync-status.json's last_good_utc records.
+
+def _fm(*lines):
+    return chr(10).join(('---',) + lines + ('---', ''))
+
+
+def _status(tmp_path, silo, last_good):
+    d = tmp_path / 'state' / 'domains' / silo
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'sync-status.json').write_text(
+        json.dumps({'silo': silo, 'last_good_utc': last_good}), encoding='utf-8')
+
+
+def test_confirmed_date_prefers_sync_status(tmp_path):
+    _row(tmp_path, 'familyoffice', 'assets', 'loan',
+         _fm('type: state-asset', 'balance: 100', 'last_synced: 2026-07-19'))
+    _status(tmp_path, 'familyoffice', '2026-09-06T07:20:23Z')
+    got = R.read_state_field(tmp_path, 'familyoffice/assets/loan', 'balance')
+    assert got['last_synced'] == '2026-09-06'
+
+
+def test_confirmed_date_falls_back_to_record_when_no_status(tmp_path):
+    _row(tmp_path, 'familyoffice', 'assets', 'loan',
+         _fm('type: state-asset', 'balance: 100', 'last_synced: 2026-07-19'))
+    got = R.read_state_field(tmp_path, 'familyoffice/assets/loan', 'balance')
+    assert got['last_synced'] == '2026-07-19'
+
+
+def test_confirmed_date_never_ages_a_row_backwards(tmp_path):
+    # a row somehow ahead of the sidecar keeps its own, later date
+    _row(tmp_path, 'familyoffice', 'assets', 'loan',
+         _fm('type: state-asset', 'balance: 100', 'last_synced: 2026-09-20'))
+    _status(tmp_path, 'familyoffice', '2026-09-06T07:20:23Z')
+    got = R.read_state_field(tmp_path, 'familyoffice/assets/loan', 'balance')
+    assert got['last_synced'] == '2026-09-20'
+
+
+def test_confirmed_date_survives_corrupt_status(tmp_path):
+    _row(tmp_path, 'familyoffice', 'assets', 'loan',
+         _fm('type: state-asset', 'balance: 100', 'last_synced: 2026-07-19'))
+    d = tmp_path / 'state' / 'domains' / 'familyoffice'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'sync-status.json').write_text('{not json', encoding='utf-8')
+    got = R.read_state_field(tmp_path, 'familyoffice/assets/loan', 'balance')
+    assert got['last_synced'] == '2026-07-19'
+
+
+def test_stale_branch_still_fires_for_an_unchanged_row(tmp_path):
+    # the regression A7143 could have caused: content frozen since June, anchor older, sidecar
+    # confirms the row today -> the stale re-date must still fire.
+    _row(tmp_path, 'familyoffice', 'assets', 'loan',
+         _fm('type: state-asset', 'balance: 100', 'last_synced: 2026-06-01'))
+    _status(tmp_path, 'familyoffice', '2026-09-06T07:20:23Z')
+    state = R.read_state_field(tmp_path, 'familyoffice/assets/loan', 'balance')
+    anchor = {'track': True, 'value': 100.0, 'as_of': '2026-06-15'}
+    got = R.evaluate(anchor, state, today='2026-09-06')
+    assert got is not None and got['reason'] == 'stale'

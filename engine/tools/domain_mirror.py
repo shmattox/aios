@@ -9,7 +9,7 @@ stdlib only. Deterministic + idempotent. Values copied verbatim (Paper-Governs f
   python domain_mirror.py import --silo <silo> [--snapshot-dir DIR] [--out DIR] [--dry-run]
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, re, sys
 from pathlib import Path
 
 _CHECKBOX = {"__YES__": True, "__NO__": False}
@@ -232,6 +232,25 @@ def _read_state_native(dest, keys) -> dict:
     return {k: fm[k] for k in keys if k in fm}
 
 
+_LAST_SYNCED_PREFIX = "last_synced: "
+
+
+def only_last_synced_differs(old_text, new_text):
+    """True when `new_text` is byte-identical to `old_text` apart from the `last_synced:` line.
+
+    A7143. The mirror is a full rebuild: every record is re-emitted every run, and
+    `last_synced` is stamped unconditionally from the snapshot's export date. So a silo whose
+    Notion content did not change still produced a new date on every row — ~350 personal records
+    rewritten nightly with a one-line diff and nothing else, which is what made the daily sweeper
+    report ~360 "authored" edits and bury the ~10 real ones. Suppressing the write (rather than
+    the stamp) keeps the emitted format identical for every record that DID change, so this is a
+    write-side filter only — nothing downstream sees a different record shape.
+    """
+    def _strip(t):
+        return [l for l in t.split(chr(10)) if not l.startswith(_LAST_SYNCED_PREFIX)]
+    return _strip(old_text) == _strip(new_text)
+
+
 def build_record(table, row, url_to_slug, slug_maps, last_synced=None, preserved=None) -> tuple[str, str]:
     slug = url_to_slug[row["url"]]
     fm = {"type": table["name"]}
@@ -312,7 +331,18 @@ def import_silo(env_root, silo, snapshot_dir, out_dir=None, *, dry_run=False, la
             slug, text = build_record(table, row, url_to_slug, slug_maps,
                                       last_synced=eff_last_synced, preserved=preserved)
             dest = tdir / f"{slug}.md"
-            if not dry_run:
+            # A7143: a date-only rewrite is not a change. Read-compare before writing so an
+            # unchanged record keeps its existing bytes (and its existing `last_synced`, which
+            # then means "date this record's CONTENT was last confirmed different"). The silo's
+            # sync-status.json `last_good_utc` remains the authority on when the run last
+            # confirmed the whole silo, and reconcile_state_knowledge reads it for exactly that.
+            unchanged = False
+            if dest.is_file():
+                try:
+                    unchanged = only_last_synced_differs(dest.read_text(encoding="utf-8"), text)
+                except OSError:
+                    unchanged = False  # unreadable -> fall through and rewrite; never skip on error
+            if not dry_run and not unchanged:
                 tdir.mkdir(parents=True, exist_ok=True)
                 dest.write_text(text, encoding="utf-8")
             written.append(dest)

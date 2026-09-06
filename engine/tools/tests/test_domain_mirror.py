@@ -726,6 +726,50 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
 else:
     print("FO golden absent — skipping real regression (fixture proofs stand)")
 
+# ── A7143: a date-only rebuild must not rewrite the file ──────────────────────
+# The mirror re-emits every record every run and stamps last_synced from the snapshot's export
+# date, so an unchanged silo still produced a one-line diff per record (~350 nightly). Prove the
+# write is suppressed for an unchanged record and still happens for a changed one.
+_r43, _sd43 = _scratch_silo()
+_snap43 = _sd43 / "_snap"; _snap43.mkdir()
+
+def _export43(date_str, name):
+    (_snap43 / "things-export.json").write_text(json.dumps(
+        {"_meta": {"exported": date_str}, "url_to_slug": {"https://n/w1": "widget"},
+         "rows": [{"Name": name, "url": "https://n/w1"}]}), encoding="utf-8")
+
+_dest43 = _sd43 / "tables" / "things" / "widget.md"
+_export43("2026-07-01", "Widget")
+dm.import_silo(_r43, "demo", _snap43)
+_first43 = _dest43.read_text(encoding="utf-8")
+check("a7143_first_import_stamps", "last_synced: 2026-07-01" in _first43)
+
+# same content, NEW export date -> file must be byte-identical (no date-only rewrite)
+_export43("2026-09-06", "Widget")
+dm.import_silo(_r43, "demo", _snap43)
+check("a7143_date_only_no_rewrite", _dest43.read_text(encoding="utf-8") == _first43)
+
+# still returned as "written" so callers (sync status, reap scoping) see full coverage
+_w43 = dm.import_silo(_r43, "demo", _snap43)
+check("a7143_still_reported_written", _dest43 in _w43)
+
+# real content change on the SAME new date -> must rewrite, and carry the new date
+_export43("2026-09-06", "Widget Renamed")
+dm.import_silo(_r43, "demo", _snap43)
+_after43 = _dest43.read_text(encoding="utf-8")
+check("a7143_content_change_rewrites", "Widget Renamed" in _after43)
+check("a7143_content_change_carries_date", "last_synced: 2026-09-06" in _after43)
+
+# helper unit cases
+_a43 = "type: x" + chr(10) + "last_synced: 2026-01-01" + chr(10) + "name: bob" + chr(10)
+_b43 = "type: x" + chr(10) + "last_synced: 2026-09-06" + chr(10) + "name: bob" + chr(10)
+_c43 = "type: x" + chr(10) + "last_synced: 2026-09-06" + chr(10) + "name: alice" + chr(10)
+check("a7143_helper_date_only", dm.only_last_synced_differs(_a43, _b43) is True)
+check("a7143_helper_content", dm.only_last_synced_differs(_a43, _c43) is False)
+# a record that GAINS the field (absent -> present) is a real change, not a date-only one
+check("a7143_helper_gained_field",
+      dm.only_last_synced_differs("type: x" + chr(10), _b43) is False)
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
