@@ -18,6 +18,9 @@ Several agents drain this repo at once. Assume you are not alone in it.
 Refuses if a branch, a merged commit, or an open PR already covers the item; otherwise pushes your
 claim branch. Run it **before** writing code. Branch names start with the lowercase item id.
 
+Worktrees go in `.claude/worktrees/<slug>` — one location, every repo. **Delete your worktree and
+your branch when the work merges**; eight merged branches had accumulated here by 2026-09-06 (H7931).
+
 ## `main` is push-guarded
 
 A pre-push hook denies direct pushes to `main` and any rewrite of a branch with an open PR. Land
