@@ -343,3 +343,39 @@ def test_stale_branch_still_fires_for_an_unchanged_row(tmp_path):
     anchor = {'track': True, 'value': 100.0, 'as_of': '2026-06-15'}
     got = R.evaluate(anchor, state, today='2026-09-06')
     assert got is not None and got['reason'] == 'stale'
+
+
+# ─────────────── H6803: the detector must report its denominator ───────────────
+# A green run over an empty set is not a passing run. These pin the distinction between
+# "checked N, found no drift" (silent) and "checked nothing" (loud).
+
+def test_run_reports_pages_and_anchors_checked(tmp_path):
+    env = _mini_env(tmp_path)
+    r = R.run(env["env_root"], env["vault_root"],
+              {"familyoffice": "02_FamilyOffice"}, "2026-07-20")
+    assert r["pages_scanned"] == 1
+    assert r["anchors_checked"] == 3   # two tracked + one track:false; all three were READ
+
+
+def test_render_is_loud_when_nothing_was_checked():
+    line = R.render({"proposals": 0, "parse_warnings": 0,
+                             "pages_scanned": 146, "anchors_checked": 0})
+    assert "NO SUBJECT" in line and "146" in line
+
+
+def test_render_stays_silent_when_anchors_were_checked_and_clean():
+    assert R.render({"proposals": 0, "parse_warnings": 0,
+                             "pages_scanned": 3, "anchors_checked": 5}) == ""
+
+
+def test_render_carries_the_denominator_with_a_proposal():
+    line = R.render({"proposals": 1, "parse_warnings": 0,
+                             "pages_scanned": 3, "anchors_checked": 5})
+    assert "1 drift proposal(s)" in line and "5 anchor(s) checked" in line
+
+
+def test_render_no_subject_beats_a_parse_warning():
+    # Malformed anchors are not checked anchors — a page full of junk is still no subject.
+    line = R.render({"proposals": 0, "parse_warnings": 4,
+                             "pages_scanned": 2, "anchors_checked": 0})
+    assert "NO SUBJECT" in line
