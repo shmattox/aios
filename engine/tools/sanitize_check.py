@@ -188,12 +188,29 @@ def scan_tree(root, patterns):
     return findings, scanned
 
 
+def _range_is_empty(root, range_spec):
+    """True when git itself reports zero commits in `range_spec` — nothing to scan, not a failed scan.
+
+    Fail-closed on every uncertainty: an unparseable range, a git error, or the `--all` mode (where
+    zero commits means an empty repository, which IS the broken-instrument case) all return False so
+    the caller still raises."""
+    if range_spec == "--all":
+        return False
+    try:
+        out = _git(root, "rev-list", "--count", "--end-of-options", range_spec)
+    except ScanError:
+        return False
+    return out.strip() == "0"
+
+
 def scan_history(root, range_spec, patterns):
     """Scan the ADDED lines of every commit in `range_spec` (e.g. 'A..B', a sha, or '--all').
 
     Streams one `git log -p` pass and applies the SAME compiled patterns as the file tier.
     Returns (findings, commits, added_lines) with findings = [(sha7, file, match, name)].
-    Raises ScanError on git failure or when zero commits were scanned (empty range)."""
+    Raises ScanError on git failure, or when zero commits were scanned from a range that
+    git says is NON-empty (a broken instrument). A genuinely empty range returns no
+    findings — nothing was pushed, so nothing could leak. See _range_is_empty."""
     # --end-of-options stops a leading-dash range being parsed as a git option (argument-injection
     # hardening); it cannot wrap the literal --all mode, which IS an option by design.
     range_args = ["--all"] if range_spec == "--all" else ["--end-of-options", range_spec]
@@ -226,6 +243,17 @@ def scan_history(root, range_spec, patterns):
                     continue
                 findings.append((sha7, cur_file, match, name))
     if commits == 0:
+        # An empty range is NOT a failed scan. `git log -p` prints nothing in two very different
+        # situations: the range genuinely contains no commits, or the scan failed to parse what
+        # was there. Only the second is a broken instrument, and conflating them made every
+        # zero-commit push un-gateable — which is exactly the shape of a claim branch, pushed at
+        # origin/main with no commit on it *before* the work starts (env `Scripts/claim/claim.sh`).
+        # The practical cost was not a blocked claim but a normalised `--no-verify`: agents were
+        # being taught to bypass the leak scanner as routine. A push carrying zero commits carries
+        # zero added lines, so there is nothing it could leak. Ask git which case this is and keep
+        # the fail-closed raise for the one that matters. (H6047, 2026-09-06.)
+        if _range_is_empty(root, range_spec):
+            return findings, 0, 0
         raise ScanError("scanned 0 commits for range %r — refusing to report clean" % range_spec)
     return findings, commits, added
 
@@ -284,7 +312,9 @@ def main(argv=None):
             return 2
         for sha7, fname, match, name in findings:
             print("%s:%s: [%s] %s" % (sha7, fname, name, match))
-        summary = "scanned %d commit(s) / %d added line(s)" % (commits, added)
+        summary = ("empty range — no outgoing commits to scan"
+                   if commits == 0 else
+                   "scanned %d commit(s) / %d added line(s)" % (commits, added))
         if findings:
             print("\n%s — %d leak(s) in committed history (tree-clean does NOT clear this; "
                   "a purge or history rewrite is required)." % (summary, len(findings)),
