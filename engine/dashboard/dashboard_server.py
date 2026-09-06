@@ -252,8 +252,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     # --- security -----------------------------------------------------
     def _host_ok(self):
+        # D §3.2: still an EXACT-MATCH set, just a longer one. `tailscale serve` proxies with the
+        # tailnet hostname, so reach requires listing it; a wildcard would delete the
+        # DNS-rebinding defence outright and is refused at startup (see _extra_hosts).
+        #
+        # SAFE ONLY BECAUSE THE BIND IS LOOPBACK (make_server binds 127.0.0.1) and `tailscale serve`
+        # is the sole path in. If anyone ever binds 0.0.0.0, this allowlist stops being a proxy
+        # convenience and becomes real exposure. The bind and this set are ONE decision in two
+        # places — test_d_host_allowlist.py asserts both together for that reason.
         port = self.server.server_address[1]
-        return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+        host = self.headers.get("Host", "")
+        if host in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            return True
+        return host in getattr(self.server, "extra_hosts", frozenset())
 
     def _token_ok(self):
         # constant-time compare — this is the foundation the gated-action layer builds on
@@ -736,9 +747,58 @@ class Handler(SimpleHTTPRequestHandler):
         pass
 
 
+# A trailing :<digits> is a port. Anchored at the end so a bracketed IPv6 literal without a port
+# (`[fd7a:115c::1]`, colon-rich but portless) is correctly treated as having none — a plain
+# `":" in h` test misread those and produced an entry that could never match (review finding 3).
+_PORT_SUFFIX = re.compile(r":\d+$")
+
+
+def _extra_hosts(env_root, port):
+    """Host values allowed beyond loopback, from `profile/connectors.yaml` `dashboard.extra_hosts`.
+
+    Instance facts stay in the profile (the fact-free rule); the engine only enforces the shape.
+    Each entry is a bare hostname; the served port is appended, because a Host header carries it.
+
+    FAILS LOUD on a wildcard or an empty entry rather than honouring it: `*` here would silently
+    delete the DNS-rebinding defence, which is the exact failure D §7 names — three characters of
+    config that look like configuration and act like a hole.
+    """
+    path = Path(env_root) / "profile" / "connectors.yaml"
+    try:
+        data = _parse_yaml(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return frozenset()          # fail CLOSED: no file -> loopback only, today's behaviour
+    section = data.get("dashboard") or {}
+    if not isinstance(section, dict):
+        raise ValueError(f"dashboard: must be a mapping, got {type(section).__name__} — "
+                         f"refusing to start rather than guess what was meant")
+    raw = section.get("extra_hosts") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    out = set()
+    for h in raw:
+        h = str(h).strip()
+        if not h:
+            raise ValueError("dashboard.extra_hosts: empty entry — remove it rather than "
+                             "shipping a blank host")
+        if "*" in h:
+            raise ValueError(f"dashboard.extra_hosts: wildcard {h!r} refused — the Host check is "
+                             f"an exact-match DNS-rebinding defence; list each host explicitly")
+        out.add(h)
+        # A browser OMITS the default port, so `tailscale serve` on 443 sends a bare hostname —
+        # that is the common case and the bare form above covers it. Also accept the backend-port
+        # form for a direct-to-port setup. Both are exact strings; this adds one more member to the
+        # set, never a pattern. (Found in review: appending the port ONLY would have 403'd the
+        # very deployment this feature exists for.)
+        if _PORT_SUFFIX.search(h) is None:
+            out.add(f"{h}:{port}")
+    return frozenset(out)
+
+
 def make_server(env_root, port=0):
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.env_root = Path(env_root)
+    srv.extra_hosts = _extra_hosts(env_root, srv.server_address[1])
     srv.token = secrets.token_urlsafe(32)
     srv._pipeline_prev = {}   # per-process prev stage-by-id, for /api/pipeline flow diffs
     try:
