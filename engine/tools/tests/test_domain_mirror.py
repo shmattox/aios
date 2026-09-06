@@ -781,6 +781,17 @@ _cfgd = dm.load_silo_config(_rd, "demo")
 check("direction_reads_publish", _cfgd["direction"] == "publish")
 check("direction_key_is_not_a_table", all(t["name"] != "direction" for t in _cfgd["tables"]))
 
+_re, _sde = _scratch_silo()
+(_sde / "schema.yaml").write_text(
+    "direction: sideways\n" + (_sde / "schema.yaml").read_text(encoding="utf-8"),
+    encoding="utf-8")
+try:
+    dm.load_silo_config(_re, "demo")
+    check("direction_bad_value_raises", False)
+except ValueError as e:
+    check("direction_bad_value_raises", True)
+    check("direction_bad_value_names_it", "sideways" in str(e))
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)

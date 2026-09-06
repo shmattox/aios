@@ -444,6 +444,36 @@ def test_unknown_type_value_fails():
         assert "unknown type" in out, out
 
 
+def test_scalar_top_level_key_excluded_from_expected_types():
+    # A schema carrying a scalar top-level key (e.g. `direction: import`, as C1 Task 1 adds to
+    # the real silo schemas) must NOT list it in the "expected one of" enum message.
+    with tempfile.TemporaryDirectory() as d:
+        schema = os.path.join(d, "schema.yaml")
+        _write(schema, "direction: import\ndemo:\n  required: [type]\n")
+        note = os.path.join(d, "n.md")
+        _write(note, "---\ntype: bogus\n---\n")
+        code, out = _run(["--schema", schema, note])
+        assert code == 1, out
+        assert "unknown type" in out, out
+        assert "'direction'" not in out, out
+        assert "expected one of ['demo']" in out, out
+
+
+def test_record_typed_as_scalar_key_fails_cleanly():
+    # A record whose `type:` names a scalar top-level key (not a real type) must get the clean
+    # one-line "unknown type" FAIL, not an AttributeError from treating the scalar as a rules dict.
+    with tempfile.TemporaryDirectory() as d:
+        schema = os.path.join(d, "schema.yaml")
+        _write(schema, "direction: import\ndemo:\n  required: [type]\n")
+        note = os.path.join(d, "n.md")
+        _write(note, "---\ntype: direction\n---\n")
+        code, out = _run(["--schema", schema, note])
+        assert code == 1, out
+        assert "unknown type: 'direction'" in out, out
+        assert "AttributeError" not in out, out
+        assert "Traceback" not in out, out
+
+
 def test_no_frontmatter_fails():
     with tempfile.TemporaryDirectory() as d:
         schema = _schema(d)

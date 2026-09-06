@@ -311,10 +311,13 @@ def _check_relation(key: str, value) -> list[str]:
 
 def validate_frontmatter(fm: dict, schema: dict) -> list[str]:
     errors: list[str] = []
+    # Only dict-valued top-level keys are types — a scalar (e.g. `direction:`, `sweep:`) is
+    # schema config, not a record type. Same filter as domain_mirror.load_silo_config.
+    types = {k: v for k, v in schema.items() if isinstance(v, dict)}
     ptype = fm.get("type")
-    if ptype not in schema:
-        return [f"unknown type: {ptype!r} (expected one of {sorted(schema)})"]
-    rules = schema[ptype] or {}
+    if ptype not in types:
+        return [f"unknown type: {ptype!r} (expected one of {sorted(types)})"]
+    rules = types[ptype] or {}
 
     for key in rules.get("required", []):
         if fm.get(key) is None:
