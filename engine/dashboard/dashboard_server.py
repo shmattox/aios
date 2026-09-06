@@ -152,17 +152,36 @@ def _git_repo_ok(env, rel):
     return p.is_dir() and (p / ".git").exists() and (p == env or env in p.parents)
 
 
+# Module-level so a test can point it at a stub, the way `srv.tools_dir` is injectable. Without
+# this seam the gate_ship action would execute the REAL authoring script inside the test suite.
+PR_AUTHOR = HERE / "pr_author.py"
+
 # action id -> (param validators, argv builder(env, tools_dir, params)).
+# D rev B classification (2026-09-06, ruling 4). The line is: the cockpit may write DECISION
+# LEDGERS; it may not apply a canonical VAULT write.
+#   gate_ship    -> PR-authored (pr_author.py). staging -> canonical wiki IS the gated write.
+#   gate_edit    -> stays direct. `ship.py amend` edits an UNAPPROVED draft in staging, not
+#                   canonical content; routing it through a PR would mean a PR to edit a proposal
+#                   before the PR that approves it - two per decision, against Task 2's
+#                   one-PR-per-station call.
+#   gate_reject  -> stays direct. Writes queue.json only; a reject produces no vault diff, so a
+#                   PR would be empty.
+#   dismiss      -> stays direct. queue_tx.py, queue only.
+#   walk_decision / reply -> stay direct. brief-session.json, the walk ledger, not the vault.
+#   veto_revert  -> UNRESOLVED, deliberately left alone. It runs `git -C <repo> revert` and so
+#                   writes repo HISTORY directly, which ruling 4 arguably covers - but it is an
+#                   undo path, out of D's scope, and converting it on a guess is worse than
+#                   naming it. Decide separately.
 # This dict is the ONLY write path; everything else is 403.  # see A63 spec
 ACTIONS = {
+    # D rev B (ruling 4): a vault write is authored as a PR, never applied here. pr_author
+    # groups by station (Task 2 Q2) and leaves the revert pointer in state/revert (Task 2 Q1).
     "gate_ship": (
         {"id": SAFE_ID},
-        lambda env, tools, p: (lambda vr, km: [
-            sys.executable, str(tools / "ship.py"), "ship",
-            "--queue", str(env / "state" / "queue.json"), "--id", p["id"],
-            "--vault-root", str(vr), "--kb-map", json.dumps(km),
-            "--approved-by", "dashboard", "--human-approved",
-        ])(*_connectors(env)),
+        lambda env, tools, p: [
+            sys.executable, str(PR_AUTHOR),
+            "--env", str(env), "--id", p["id"], "--tools-dir", str(tools),
+        ],
     ),
     "gate_reject": (
         {"id": SAFE_ID, "reason": SAFE_TEXT},

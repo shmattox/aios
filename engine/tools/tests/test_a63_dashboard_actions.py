@@ -20,7 +20,7 @@ def env_root(tmp_path):
         encoding="utf-8")
     tools = tmp_path / "stub_tools"
     tools.mkdir()
-    for name in ("ship.py", "brief_session.py"):
+    for name in ("ship.py", "brief_session.py", "pr_author.py"):
         (tools / name).write_text(STUB, encoding="utf-8")
     return tmp_path
 
@@ -57,13 +57,21 @@ def test_bad_param_400(server):
     assert e.value.code == 400
 
 
-def test_gate_ship_builds_real_argv(server, env_root):
+def test_gate_ship_authors_a_pr_instead_of_shipping(server, env_root, monkeypatch):
+    """D rev B: gate_ship no longer applies a vault write — it invokes pr_author, which produces a
+    branch + PR (ruling 4). Updated rather than deleted: this test is the regression proof that the
+    cockpit stopped writing the vault directly.
+
+    PR_AUTHOR is pointed at the stub so the suite never runs the real authoring script.
+    """
+    import dashboard_server
+    monkeypatch.setattr(dashboard_server, "PR_AUTHOR", env_root / "stub_tools" / "pr_author.py")
     out = _post(server, "/api/action/gate_ship", {"id": "q1"})
     argv = json.loads(out["stdout"])["argv"]
-    assert argv[0] == "ship"
     assert "--id" in argv and "q1" in argv
-    assert "--human-approved" in argv
-    assert str(env_root / "SecondBrain") in argv
+    assert "--env" in argv, "pr_author needs the env root"
+    assert "ship" not in argv, "gate_ship must NOT invoke ship.py directly any more"
+    assert "--human-approved" not in argv, "approval is the PR now, not a ship flag"
     assert out["ok"] is True
 
 
