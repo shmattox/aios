@@ -23,6 +23,21 @@ THE PR IS THE APPROVAL UNIT; THE POINTER IS THE UNDO UNIT. They are deliberately
 granularities. To undo ONE item out of a merged multi-item PR, use `rewind.py undo-ship <id>` —
 never `git revert`, which would take the whole station's batch with it. Do not "fix" this mismatch.
 
+THE LIFECYCLE (P1-1, 2026-09-07 assessment). Preparing a PR is not approval, so preparation must
+not finalize canonical queue state:
+
+    author_ship        ship --proposal <branch>: files into the worktree, item stays `awaiting`
+                       carrying a proposal ref. A dry run, a push failure and a `gh` failure all
+                       leave it exactly there — actionable, and re-preparable on a fresh branch.
+    PR merged          finalize_proposals(..., "merged")  -> `shipped`
+    PR closed unmerged finalize_proposals(..., "closed")  -> proposal + revert pointer dropped,
+                       item still `awaiting`
+
+`ship.py finalize` is the SOLE writer of `shipped` on this path, and it is driven by an OBSERVED
+outcome, never by a cockpit click — which is why it is not in the dashboard ACTIONS registry.
+Before this, the ship call below passed the LIVE queue with `--human-approved`, so merely PREPARING
+a PR (even `dry_run=True`) flipped the item to `shipped` with `pr_url: null`.
+
 This module is the ONLY place the cockpit touches git or gh. Everything else stays read-only.
 """
 import json
@@ -90,11 +105,15 @@ def author_ship(env, item_ids, *, branch, dry_run=False, tools_dir=None) -> dict
     for cid in item_ids:
         # NOTE: no --revert-dir. ship.py's default is <queue dir>/revert = state/revert, which is
         # exactly where Task 2 decided the pointer lives and where rewind.py reads it.
+        # P1-1 (2026-09-07): --proposal. Preparing a PR is not approval, so this writes the files
+        # into the worktree and records `branch` as the item's proposal — it does NOT flip the live
+        # queue to `shipped`. Only `finalize_proposals(..., "merged")` does, off an observed merge.
         _run([sys.executable, str(tools / "ship.py"), "ship",
               "--queue", str(env / "state" / "queue.json"),
               "--vault-root", str(wt),
               "--kb-map", json.dumps(kb_map),
-              "--id", cid, "--approved-by", "cockpit", "--human-approved"])
+              "--id", cid, "--approved-by", "cockpit", "--human-approved",
+              "--proposal", branch])
         shipped.append(cid)
 
     _run(["git", "-C", str(wt), "add", "-A"])
@@ -112,6 +131,23 @@ def author_ship(env, item_ids, *, branch, dry_run=False, tools_dir=None) -> dict
                           "revert pointer is per-item and lives in `state/revert/`."],
                cwd=wt).strip()
     return {"branch": branch, "worktree": str(wt), "shipped": shipped, "pr_url": url}
+
+
+def finalize_proposals(env, item_ids, outcome, *, ref=None, tools_dir=None) -> list:
+    """P1-1: apply an OBSERVED PR outcome to the queue. The explicit authority for the
+    compensating change, so no accidental direct-write path has to be inferred.
+
+    This is deliberately NOT a dashboard ACTION. A cockpit button would finalize on a click rather
+    than on a merge, which is the defect being fixed. Its caller is whatever OBSERVES the outcome
+    (`gh pr view --json state,mergedAt`, a merge webhook, a sync pass). Idempotent, so re-running
+    an observer over settled state is free.
+    """
+    tools = Path(tools_dir) if tools_dir else Path(env) / "Projects" / "aios" / "engine" / "tools"
+    return [json.loads(_run([sys.executable, str(tools / "ship.py"), "finalize",
+                             "--queue", str(Path(env) / "state" / "queue.json"),
+                             "--id", cid, "--outcome", outcome]
+                            + (["--ref", ref] if ref else [])).strip().splitlines()[-1])
+            for cid in item_ids]
 
 
 def author_by_station(env, item_ids, *, dry_run=False, tools_dir=None, stamp=None) -> list:
