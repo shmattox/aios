@@ -110,6 +110,17 @@ def _ck_path(vault_root, ck, kb_map):
     return os.path.join(vault_root, ck or "")
 
 
+def _rel_to_root(rel, vault_root):
+    """P1-2: resolve a ship pointer's vault-RELATIVE identity against the live root. None for a
+    missing/absolute/escaping value, so the caller falls back to the legacy absolute field."""
+    if not (isinstance(rel, str) and rel.strip()) or not vault_root:
+        return None
+    rel = rel.strip().replace("/", os.sep)
+    if os.path.isabs(rel) or rel.split(os.sep)[0] == os.pardir:
+        return None
+    return os.path.join(vault_root, rel)
+
+
 def _default_snap_dir(queue_path):
     """<install>/state/rewind/ - sibling of the queue's dir."""
     return os.path.join(os.path.dirname(os.path.abspath(queue_path)), "rewind")
@@ -241,7 +252,14 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
     if _file_present(rp):
         try:
             pointer = json.load(open(rp, encoding="utf-8"))
-            shipped_path = pointer.get("shipped_path")
+            # P1-2 (2026-09-07): PREFER the vault-relative identity, resolved against the LIVE
+            # vault_root we were given. A ship authored as a PR proposal (pr_author.py) runs
+            # against a throwaway git worktree, so its absolute `shipped_path` names a checkout
+            # that is the wrong destination the moment the PR merges — undo would delete the
+            # worktree copy and leave the canonical page standing — and no destination at all once
+            # that worktree is removed. `shipped_path` stays the fallback for pre-P1 pointers.
+            shipped_path = (_rel_to_root(pointer.get("shipped_rel"), vault_root)
+                            or pointer.get("shipped_path"))
         except (OSError, ValueError):
             pointer = {}
     d = queue_tx.load(queue_path)
@@ -263,9 +281,14 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
                     shipped_path += ".md"
             if shipped_path and _file_present(shipped_path):
                 prev = pointer.get("prev_content_path")
-                if pointer.get("merged") and prev and _file_present(prev):
-                    # a MERGED daily-note ship: restore the pre-merge incumbent, never delete
-                    # the note (the promise both gate bodies make — ship.py pointer parity)
+                if prev and _file_present(prev):
+                    # The ship REPLACED prior content, so undo restores it — never deletes the
+                    # page. Was `pointer.get("merged") and …`, i.e. journal merges only, which
+                    # left the other half of A6719 unfinished: ship.py backs up ANY existing
+                    # target ("the MERGE BEHAVIOUR stays journal-only by design, but the BACKUP
+                    # must not be"), but undo never read that backup for a non-journal page and
+                    # deleted the incumbent instead. A page with no prior content still falls
+                    # through to the remove below — that IS its correct undo.
                     try:
                         with open(_win_long(prev), encoding="utf-8") as f:
                             incumbent = f.read()
@@ -283,7 +306,11 @@ def undo_ship(queue_path, cid, vault_root, revert_dir, to_stage="awaiting", snap
             # state again (reconcile expects an awaiting item to carry its draft). Backward-compatible:
             # pre-A30 pointers lack staging_archived -> nothing to restore (the husk was left in place
             # by the old leak). Never clobber an existing draft on disk.
-            sa, fs = pointer.get("staging_archived"), pointer.get("from_staging")
+            # P1-2: same re-resolution for the husk destination. `staging_archived` needs none —
+            # it lives in revert_dir (state/revert), which is the live root's, never a worktree's.
+            sa = pointer.get("staging_archived")
+            fs = (_rel_to_root(pointer.get("from_staging_rel"), vault_root)
+                  or pointer.get("from_staging"))
             if sa and fs and _file_present(sa) and not _file_present(fs):
                 try:
                     os.makedirs(os.path.dirname(_win_long(fs)) or ".", exist_ok=True)

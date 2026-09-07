@@ -65,7 +65,7 @@ def _live_tree(env):
 def test_dry_run_ships_into_the_worktree_and_never_the_live_vault(env):
     before = _live_tree(env)
     r = pr_author.author_ship(env, ["i1"], branch="h8104-t1", dry_run=True, tools_dir=TOOLS)
-    assert r["shipped"] == ["i1"]
+    assert r["proposed"] == ["i1"]
     assert r["pr_url"] is None, "a dry run must not open a PR"
     wt = Path(r["worktree"])
     assert (wt / "03_Dev" / "wiki" / "note.md").is_file(), "the ship did not land in the worktree"
