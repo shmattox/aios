@@ -311,10 +311,13 @@ def _check_relation(key: str, value) -> list[str]:
 
 def validate_frontmatter(fm: dict, schema: dict) -> list[str]:
     errors: list[str] = []
+    # Only dict-valued top-level keys are types — a scalar (e.g. `direction:`, `sweep:`) is
+    # schema config, not a record type. Same filter as domain_mirror.load_silo_config.
+    types = {k: v for k, v in schema.items() if isinstance(v, dict)}
     ptype = fm.get("type")
-    if ptype not in schema:
-        return [f"unknown type: {ptype!r} (expected one of {sorted(schema)})"]
-    rules = schema[ptype] or {}
+    if ptype not in types:
+        return [f"unknown type: {ptype!r} (expected one of {sorted(types)})"]
+    rules = types[ptype] or {}
 
     for key in rules.get("required", []):
         if fm.get(key) is None:
@@ -384,6 +387,22 @@ def validate_file(path, schema: dict) -> list[str]:
     except ValueError as exc:
         return [str(exc)]
     return validate_frontmatter(fm, schema)
+
+
+IMPORT_TASK_MARKERS = ("domain-sync", "domain_mirror")
+
+
+def check_direction_coherent(schema: dict, tasks_enabled) -> list[str]:
+    """A silo on `direction: publish` must have no live import task — both directions at once
+    is a write loop. Returns human-readable problems; empty means coherent."""
+    if schema.get("direction", "import") != "publish":
+        return []
+    live = sorted(t for t in (tasks_enabled or ())
+                  if any(m in t for m in IMPORT_TASK_MARKERS))
+    if not live:
+        return []
+    return ["direction: publish but these import tasks are still enabled: %s "
+            "(both directions live is a write loop)" % ", ".join(live)]
 
 
 def main(argv: list[str]) -> int:

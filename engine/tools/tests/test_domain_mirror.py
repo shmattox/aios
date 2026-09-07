@@ -770,6 +770,116 @@ check("a7143_helper_content", dm.only_last_synced_differs(_a43, _c43) is False)
 check("a7143_helper_gained_field",
       dm.only_last_synced_differs("type: x" + chr(10), _b43) is False)
 
+# ── C1 Task 1: the direction flag ─────────────────────────────────────────────
+_rd, _sdd = _scratch_silo()
+check("direction_defaults_to_import", dm.load_silo_config(_rd, "demo")["direction"] == "import")
+
+(_sdd / "schema.yaml").write_text(
+    "direction: publish\n" + (_sdd / "schema.yaml").read_text(encoding="utf-8"),
+    encoding="utf-8")
+_cfgd = dm.load_silo_config(_rd, "demo")
+check("direction_reads_publish", _cfgd["direction"] == "publish")
+check("direction_key_is_not_a_table", all(t["name"] != "direction" for t in _cfgd["tables"]))
+
+_re, _sde = _scratch_silo()
+(_sde / "schema.yaml").write_text(
+    "direction: sideways\n" + (_sde / "schema.yaml").read_text(encoding="utf-8"),
+    encoding="utf-8")
+try:
+    dm.load_silo_config(_re, "demo")
+    check("direction_bad_value_raises", False)
+except ValueError as e:
+    check("direction_bad_value_raises", True)
+    check("direction_bad_value_names_it", "sideways" in str(e))
+
+# ── C1 Task 3: notion_ignored ─────────────────────────────────────────────────
+_ri, _sdi = _scratch_silo()
+(_sdi / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored:
+        Rollup Total: "Notion rollup - derived from Qty, never authored"
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+_ti = dm.load_silo_config(_ri, "demo")["tables"][0]
+check("ignored_parsed", _ti["ignored"] == {"Rollup Total": "Notion rollup - derived from Qty, never authored"})
+
+_rj, _sdj = _scratch_silo()
+(_sdj / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored:
+        Rollup Total: ""
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rj, "demo"); check("ignored_empty_reason_raises", False)
+except ValueError: check("ignored_empty_reason_raises", True)
+
+_rk, _sdk = _scratch_silo()
+check("ignored_absent_is_empty_dict", dm.load_silo_config(_rk, "demo")["tables"][0]["ignored"] == {})
+
+# ── C1 Task 3 review fix-up: null/bare reasons must not pass as "has a reason" ──────────────────
+for _shape, _yaml_reason in (
+    ("null", "Rollup Total: null\n"),
+    ("tilde", "Rollup Total: ~\n"),
+    ("bare_key", "Rollup Total:\n"),
+):
+    _rn, _sdn = _scratch_silo()
+    (_sdn / "schema.yaml").write_text(textwrap.dedent(f"""\
+        state-thing:
+          required: [name, type, notion_id]
+          notion_source_db: things
+          notion_ignored:
+            {_yaml_reason.strip()}
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    try:
+        dm.load_silo_config(_rn, "demo")
+        check(f"ignored_{_shape}_reason_raises", False)
+    except ValueError as e:
+        check(f"ignored_{_shape}_reason_raises", True)
+        check(f"ignored_{_shape}_reason_names_property", "Rollup Total" in str(e))
+
+# `notion_ignored` given as a non-mapping shape must fail with an actionable message, not a raw
+# Python stdlib error (dict() on a string/list raises an unrelated ValueError with no context).
+_rl, _sdl = _scratch_silo()
+(_sdl / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored: "Rollup Total"
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rl, "demo")
+    check("ignored_string_shape_raises", False)
+except ValueError as e:
+    check("ignored_string_shape_raises", True)
+    check("ignored_string_shape_names_table", "state-thing" in str(e))
+
+_rm, _sdm = _scratch_silo()
+(_sdm / "schema.yaml").write_text(textwrap.dedent("""\
+    state-thing:
+      required: [name, type, notion_id]
+      notion_source_db: things
+      notion_ignored: ["Rollup Total"]
+      notion_fields:
+        name: [Name, title]
+    """), encoding="utf-8")
+try:
+    dm.load_silo_config(_rm, "demo")
+    check("ignored_list_shape_raises", False)
+except ValueError as e:
+    check("ignored_list_shape_raises", True)
+    check("ignored_list_shape_names_table", "state-thing" in str(e))
+
 # ---- harness footer (exactly once, at end of file) ----
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)

@@ -166,6 +166,19 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
         if clash:
             raise ValueError(f"[{tname}] state_native fields are also derived from the snapshot: "
                              f"{clash} — a field cannot be both unreproducible and computed")
+        # OPTIONAL `notion_ignored:` (C1) — Notion properties deliberately NOT mirrored, each with
+        # a one-line reason. The reason is the review surface, so a blank one is a schema error:
+        # an unexplained silence is what the coverage check exists to prevent.
+        raw_ignored = tdef.get("notion_ignored") or {}
+        if not isinstance(raw_ignored, dict):
+            raise ValueError(f"[{tname}] notion_ignored must be a mapping of "
+                              f"{{property: reason}}, got {type(raw_ignored).__name__}: {raw_ignored!r}")
+        ignored = dict(raw_ignored)
+        # A null/`~`/bare `key:` reason parses to None, and str(None) == "None" is non-blank — so
+        # the None check must be explicit, not folded into the strip() truthiness check.
+        blank = sorted(k for k, v in ignored.items() if v is None or not str(v).strip())
+        if blank:
+            raise ValueError(f"[{tname}] notion_ignored needs a reason for: {blank}")
         tables.append({"name": tname, "source_db": tdef["notion_source_db"],
                        # OPTIONAL `notion_db:` — the live Notion database/data-source id (or
                        # collection:// form) this table gathers from (Plan 3 domain_sync live path).
@@ -178,8 +191,12 @@ def load_silo_config(env_root: Path, silo: str) -> dict:
                        # a table whose Notion DB was never built (e.g. FO people) — keeps its records
                        # intact without degrading the silo.
                        "local_only": bool(tdef.get("local_only")),
-                       "fields": fields, "computed": computed, "state_native": state_native})
-    return {"state_dir": state_dir, "schema": schema, "tables": tables}
+                       "fields": fields, "computed": computed, "state_native": state_native,
+                       "ignored": ignored})
+    direction = schema.get("direction", "import")
+    if direction not in ("import", "publish"):
+        raise ValueError(f"[{silo}] direction must be 'import' or 'publish', got {direction!r}")
+    return {"state_dir": state_dir, "schema": schema, "tables": tables, "direction": direction}
 
 
 def compute_field(spec: dict, fm: dict, *, last_synced=None):

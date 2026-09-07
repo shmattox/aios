@@ -444,6 +444,36 @@ def test_unknown_type_value_fails():
         assert "unknown type" in out, out
 
 
+def test_scalar_top_level_key_excluded_from_expected_types():
+    # A schema carrying a scalar top-level key (e.g. `direction: import`, as C1 Task 1 adds to
+    # the real silo schemas) must NOT list it in the "expected one of" enum message.
+    with tempfile.TemporaryDirectory() as d:
+        schema = os.path.join(d, "schema.yaml")
+        _write(schema, "direction: import\ndemo:\n  required: [type]\n")
+        note = os.path.join(d, "n.md")
+        _write(note, "---\ntype: bogus\n---\n")
+        code, out = _run(["--schema", schema, note])
+        assert code == 1, out
+        assert "unknown type" in out, out
+        assert "'direction'" not in out, out
+        assert "expected one of ['demo']" in out, out
+
+
+def test_record_typed_as_scalar_key_fails_cleanly():
+    # A record whose `type:` names a scalar top-level key (not a real type) must get the clean
+    # one-line "unknown type" FAIL, not an AttributeError from treating the scalar as a rules dict.
+    with tempfile.TemporaryDirectory() as d:
+        schema = os.path.join(d, "schema.yaml")
+        _write(schema, "direction: import\ndemo:\n  required: [type]\n")
+        note = os.path.join(d, "n.md")
+        _write(note, "---\ntype: direction\n---\n")
+        code, out = _run(["--schema", schema, note])
+        assert code == 1, out
+        assert "unknown type: 'direction'" in out, out
+        assert "AttributeError" not in out, out
+        assert "Traceback" not in out, out
+
+
 def test_no_frontmatter_fails():
     with tempfile.TemporaryDirectory() as d:
         schema = _schema(d)
@@ -532,6 +562,23 @@ def test_multiline_does_not_strip_inner_hash():
     text = "---\nn: 'see\n  item #38 for detail'\n---\n"
     fm = sv._extract_frontmatter(text)
     assert fm["n"] == "see item #38 for detail", repr(fm.get("n"))
+
+
+def test_direction_publish_with_live_import_is_an_error():
+    import state_validate as sv
+    problems = sv.check_direction_coherent({"direction": "publish"}, {"aios-domain-sync"})
+    assert problems, "publish + a live import task is a write loop and must be flagged"
+    assert "domain-sync" in " ".join(problems)
+
+
+def test_direction_publish_without_import_is_clean():
+    import state_validate as sv
+    assert sv.check_direction_coherent({"direction": "publish"}, set()) == []
+
+
+def test_direction_import_with_live_import_is_clean():
+    import state_validate as sv
+    assert sv.check_direction_coherent({"direction": "import"}, {"aios-domain-sync"}) == []
 
 
 if __name__ == "__main__":
