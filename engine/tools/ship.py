@@ -22,6 +22,7 @@ Usage:
   python ship.py ship     --queue Q --vault-root V --kb-map '…' --id ID --approved-by WHO
                           [--revert-dir D] [--proposal BRANCH]
   python ship.py finalize --queue Q --id ID --outcome merged|closed [--ref R] [--revert-dir D]
+                          [--vault-root V]
   python ship.py reject   --queue Q --id ID --reason "…"
 
 A kb missing from --kb-map is an ERROR (hold + flag), never a fallback vault.
@@ -446,18 +447,26 @@ def ship(queue_path, vault_root, kb_map, cid, approved_by, revert_dir, human_app
                       "index_journal_count": counts_reconciled}, ensure_ascii=False))
 
 
-def finalize(queue_path, cid, outcome, revert_dir, ref=None):
+def finalize(queue_path, cid, outcome, revert_dir, ref=None, vault_root=None):
     """P1-1: the SOLE authority that turns a proposal into canonical queue state.
 
     Preparation (`ship --proposal`) records a reference; only an OBSERVED merge outcome finalizes.
     Both outcomes are idempotent, because whatever observes a merge (CI, a sync pass, a human
     re-running the cockpit) will re-run this on state it has already settled:
 
-      merged  item -> `shipped`. Already shipped -> no-op ok.
+      merged  item -> `shipped`. Already shipped -> no-op ok. Refuses any other stage than
+              `awaiting` (2026-09-07 review, MEDIUM): a rejected item still carries its stale
+              proposal (`reject` does not clear it), and a late-arriving "merged" observation must
+              not silently override a human REJECT and resurrect it.
       closed  the PR was closed UNMERGED: drop the proposal record and the revert pointer it
               wrote, leaving an `awaiting` item that is fully actionable again. No proposal ->
               no-op ok. Refuses on a `shipped` item — un-shipping is `rewind.py undo-ship`, which
               also removes the canonical file; silently dropping the pointer here would strand it.
+              Also refuses (2026-09-07 review, HIGH) when `--vault-root` shows the branch actually
+              MERGED: a real close never touches the staging draft `ship()` consumed, a real merge
+              always retires it, so its disappearance from the LIVE vault is the tell that "closed"
+              is being called on a PR that landed — dropping the proposal/pointer here would orphan
+              a live canonical write with no revertible record.
     """
     if outcome not in ("merged", "closed"):
         _die("outcome must be 'merged' or 'closed'")
@@ -468,6 +477,10 @@ def finalize(queue_path, cid, outcome, revert_dir, ref=None):
             print(json.dumps({"ok": True, "id": cid, "stage": "shipped", "idempotent": True},
                              ensure_ascii=False))
             return
+        if stage != "awaiting":
+            _die(f"id {cid!r} is at stage {stage!r}, not `awaiting` — finalize merged refuses to "
+                 f"flip it to `shipped` (a rejected/reverted item must never be resurrected by a "
+                 f"late-arriving merge observation)")
         if not prop:
             _die(f"id {cid!r} has no proposal to finalize (stage {stage!r}) — prepare one with "
                  f"`ship --proposal`, or ship directly")
@@ -490,6 +503,17 @@ def finalize(queue_path, cid, outcome, revert_dir, ref=None):
     # exist. Leaving it would arm `undo-ship` against a page nobody shipped.
     dropped = []
     ptr_path = prop.get("revert_pointer") or os.path.join(revert_dir, f"{cid}.json")
+    if vault_root:
+        try:
+            with open(_win_long(ptr_path), encoding="utf-8") as f:
+                from_staging_rel = json.load(f).get("from_staging_rel")
+        except (OSError, ValueError):
+            from_staging_rel = None
+        if from_staging_rel and not _present(
+                os.path.join(vault_root, from_staging_rel.replace("/", os.sep))):
+            _die(f"id {cid!r}: outcome=closed but the staging draft is gone from the LIVE vault — "
+                 f"the branch actually MERGED. Refusing to drop the proposal/pointer and disown a "
+                 f"landed ship; call finalize with --outcome merged instead.")
     for p in (ptr_path, os.path.join(revert_dir, f"{cid}.prev.md"),
               os.path.join(revert_dir, f"{cid}.staging.md")):
         try:
@@ -660,6 +684,9 @@ def main(argv=None):
                     help="the OBSERVED outcome of the proposal's PR")
     pf.add_argument("--ref", default=None, help="branch or PR url the observation came from")
     pf.add_argument("--revert-dir", default=None, help="default: <queue dir>/revert")
+    pf.add_argument("--vault-root", default=None,
+                    help="2026-09-07: when set, `closed` refuses if the staging draft is already "
+                         "gone from the live vault (the branch actually merged)")
     pa = sub.add_parser("amend"); common(pa)
     pa.add_argument("--approved-by", required=True)
     pa.add_argument("--revert-dir", default=None, help="default: <queue dir>/revert")
@@ -697,7 +724,8 @@ def main(argv=None):
     if args.op == "finalize":
         finalize(args.queue, args.id, args.outcome,
                  args.revert_dir or os.path.join(
-                     os.path.dirname(os.path.abspath(args.queue)), "revert"), ref=args.ref)
+                     os.path.dirname(os.path.abspath(args.queue)), "revert"), ref=args.ref,
+                 vault_root=args.vault_root)
         return 0
     try:
         kb_map = json.loads(args.kb_map)

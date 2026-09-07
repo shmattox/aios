@@ -124,7 +124,7 @@ def test_a_prepare_that_fails_to_push_leaves_the_item_actionable(env):
     # actionable: the draft is still in the live vault, so a fresh prepare can run
     assert (env / "SecondBrain" / "03_Dev" / "wiki" / "staging" / "note.md").is_file()
     r = pr_author.author_ship(env, ["i1"], branch="p1-push-retry", dry_run=True, tools_dir=TOOLS)
-    assert r["shipped"] == ["i1"] and _item(env)["proposal"]["ref"] == "p1-push-retry"
+    assert r["proposed"] == ["i1"] and _item(env)["proposal"]["ref"] == "p1-push-retry"
 
 
 def test_a_pr_closed_unmerged_leaves_the_item_actionable(env):
@@ -145,6 +145,29 @@ def test_a_pr_closed_unmerged_leaves_the_item_actionable(env):
     assert _finalize(env, "closed")["idempotent"] is True, "closed must be idempotent"
 
 
+def test_finalize_closed_refuses_when_the_branch_actually_merged(env):
+    """HIGH (2026-09-07 review): `closed` called on a PR that in fact MERGED must not drop the
+    proposal/pointer and disown the landed canonical write — the exact inverse of the original
+    P1-1 defect. The signal: a real close never touches the staging draft `ship()` consumed
+    (proven above); a real merge always retires it."""
+    pr_author.author_ship(env, ["i1"], branch="p1-merge-not-closed", dry_run=True, tools_dir=TOOLS)
+    _merge_into_the_live_vault(env, "p1-merge-not-closed")
+    assert _canonical(env).read_text(encoding="utf-8") != INCUMBENT, "the merge landed"
+
+    with pytest.raises(pr_author.AuthorError, match="actually MERGED"):
+        _finalize(env, "closed", ref="p1-merge-not-closed")
+
+    it = _item(env)
+    assert it["stage"] == "awaiting", "must not silently disown the landed write as still-pending"
+    assert it["proposal"]["ref"] == "p1-merge-not-closed", "the proposal record must survive"
+    assert (env / "state" / "revert" / "i1.json").exists(), "the undo pointer must survive"
+    assert _canonical(env).read_text(encoding="utf-8") != INCUMBENT, "canonical write untouched"
+
+    # the guard must not also block the LEGITIMATE path: finalizing it the right way still works.
+    out = _finalize(env, "merged", ref="p1-merge-not-closed")
+    assert out["ok"] and out["stage"] == "shipped"
+
+
 # ------------------------------------------------------ 4. merge  5. retry
 
 
@@ -159,11 +182,14 @@ def test_only_an_observed_merge_finalizes_and_it_is_idempotent(env):
     it = _item(env)
     assert it["stage"] == "shipped"
     assert it["history"][-1]["approved_by"] == "pr-merge"
+    hist_len = len(it["history"])
 
     second = _finalize(env, "merged", ref="p1-merge")
     assert second["stage"] == "shipped" and second["idempotent"] is True, (
         "an observer re-running over settled state must be free")
-    assert _item(env)["history"][-1]["approved_by"] == "pr-merge", "no duplicate flip"
+    # length, not just the last entry's content — a duplicate flip appends a SECOND entry that
+    # would satisfy an equality check on [-1] just as well (2026-09-07 review).
+    assert len(_item(env)["history"]) == hist_len, "no duplicate flip"
 
 
 def test_finalize_merged_refuses_an_item_with_no_proposal(env):
@@ -176,11 +202,34 @@ def test_finalize_merged_refuses_an_item_with_no_proposal(env):
     assert _item(env)["stage"] == "awaiting"
 
 
+def test_finalize_merged_refuses_a_rejected_item(env):
+    """MEDIUM (2026-09-07 review): `reject` does not clear the stale proposal, so a late-arriving
+    "merged" observation (the PR merged anyway, after Seth changed his mind) must not silently
+    override the human REJECT and resurrect the item as `shipped`."""
+    pr_author.author_ship(env, ["i1"], branch="p1-reject", dry_run=True, tools_dir=TOOLS)
+    assert _item(env)["proposal"]["ref"] == "p1-reject"
+    r = subprocess.run([sys.executable, str(TOOLS / "ship.py"), "reject",
+                        "--queue", str(env / "state" / "queue.json"),
+                        "--id", "i1", "--reason", "changed my mind"],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stdout + r.stderr
+    it = _item(env)
+    assert it["stage"] == "rejected"
+    assert it["proposal"]["ref"] == "p1-reject", "reject leaves the stale proposal record in place"
+
+    _merge_into_the_live_vault(env, "p1-reject")
+    with pytest.raises(pr_author.AuthorError, match="not `awaiting`"):
+        _finalize(env, "merged", ref="p1-reject")
+    assert _item(env)["stage"] == "rejected", "a rejected item must never be flipped to shipped"
+
+
 def test_finalize_closed_refuses_to_un_ship(env):
     pr_author.author_ship(env, ["i1"], branch="p1-noun", dry_run=True, tools_dir=TOOLS)
     _merge_into_the_live_vault(env, "p1-noun")
     _finalize(env, "merged")
-    with pytest.raises(pr_author.AuthorError):
+    # match, not just any nonzero exit — any ship.py failure raises AuthorError, so an unrelated
+    # crash would pass this test just as well without `match` (2026-09-07 review).
+    with pytest.raises(pr_author.AuthorError, match="cannot un-ship"):
         _finalize(env, "closed")
     assert _item(env)["stage"] == "shipped"
     assert (env / "state" / "revert" / "i1.json").exists(), "the undo pointer must survive"

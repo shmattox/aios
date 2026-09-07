@@ -121,7 +121,7 @@ def author_ship(env, item_ids, *, branch, dry_run=False, tools_dir=None) -> dict
           "gate: ship %s (authored from the cockpit)" % ", ".join(shipped)])
 
     if dry_run:
-        return {"branch": branch, "worktree": str(wt), "shipped": shipped, "pr_url": None}
+        return {"branch": branch, "worktree": str(wt), "proposed": shipped, "pr_url": None}
 
     _run(["git", "-C", str(wt), "push", "-u", "origin", branch])
     url = _run(["gh", "pr", "create",
@@ -130,7 +130,7 @@ def author_ship(env, item_ids, *, branch, dry_run=False, tools_dir=None) -> dict
                           "Undo ONE item with `rewind.py undo-ship <id>`, not `git revert` — the "
                           "revert pointer is per-item and lives in `state/revert/`."],
                cwd=wt).strip()
-    return {"branch": branch, "worktree": str(wt), "shipped": shipped, "pr_url": url}
+    return {"branch": branch, "worktree": str(wt), "proposed": shipped, "pr_url": url}
 
 
 def finalize_proposals(env, item_ids, outcome, *, ref=None, tools_dir=None) -> list:
@@ -143,9 +143,10 @@ def finalize_proposals(env, item_ids, outcome, *, ref=None, tools_dir=None) -> l
     an observer over settled state is free.
     """
     tools = Path(tools_dir) if tools_dir else Path(env) / "Projects" / "aios" / "engine" / "tools"
+    vault_root, _kb_map = _connectors(env)
     return [json.loads(_run([sys.executable, str(tools / "ship.py"), "finalize",
                              "--queue", str(Path(env) / "state" / "queue.json"),
-                             "--id", cid, "--outcome", outcome]
+                             "--id", cid, "--outcome", outcome, "--vault-root", str(vault_root)]
                             + (["--ref", ref] if ref else [])).strip().splitlines()[-1])
             for cid in item_ids]
 
