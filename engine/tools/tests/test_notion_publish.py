@@ -225,7 +225,34 @@ def test_plan_publish_dry_run():
     assert plan["fresh"]["operation"] == "create"
     assert plan["fresh"]["notion_id"] is None
     assert plan["widget"]["properties"]["Name"] == "Widget"
-    assert not list((sd / "tables" / "things").glob("*.tmp"))  # dry run wrote nothing
+
+
+def _tree_hashes(root: _P) -> dict:
+    return {str(p.relative_to(root)): (p.stat().st_size, p.read_bytes())
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_dry_run_writes_nothing_real_check():
+    # The old check (`not glob("*.tmp")`) can't fail: nothing in this codebase writes .tmp
+    # files, so it passes even if plan_publish rewrites every file in the silo (verified by
+    # wrapping plan_publish to clobber a record, write a new file, and overwrite schema.yaml --
+    # the old assertion still passed). Hash the whole silo tree before/after instead.
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo3"
+    (sd / "tables" / "things").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-thing:
+          required: [name, type, notion_id]
+          notion_source_db: things
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    (sd / "tables" / "things" / "widget.md").write_text(
+        "---\ntype: state-thing\nname: Widget\nnotion_id: abc123\n---\n", encoding="utf-8")
+
+    before = _tree_hashes(sd)
+    np.plan_publish(root, "demo3")
+    assert _tree_hashes(sd) == before  # every file: same size, same bytes, nothing added/removed
 
 
 def test_plan_publish_resolves_relations_and_flags_dates():
@@ -266,12 +293,90 @@ def test_plan_publish_resolves_relations_and_flags_dates():
     assert plan["holding"]["properties"]["Asset"] == ["https://www.notion.so/pxid1"]
     assert plan["holding"]["properties"]["date:Acquired:start"] == "2026-05-29"
     assert any("date-only by design" in n for n in plan["holding"]["notes"])
-    assert plan["orphan"]["properties"]["Asset"] == ["UNRESOLVED:prices/nope"]
+    assert plan["orphan"]["properties"]["Asset"] == [f"{np._UNRESOLVED_MARK}:prices/nope"]
     assert any("not resolvable" in n for n in plan["orphan"]["notes"])
     # the diff artifact itself must be plain text a human can skim, not a repr dump
     text = np.format_diff(list(plan.values()))
     assert "## holding" in text and "## orphan" in text
-    assert "UNRESOLVED:prices/nope" in text
+    assert f"{np._UNRESOLVED_MARK}:prices/nope" in text
+
+
+def test_unresolved_marker_does_not_collide_with_the_bare_word():
+    # A bare "UNRESOLVED" string collides with the literal word inside real record prose
+    # (verified: 3 hits in familyoffice session-log narrative, zero of them a real marker).
+    # The marker itself must not be the plain word.
+    assert np._UNRESOLVED_MARK != "UNRESOLVED"
+    assert "UNRESOLVED" in np._UNRESOLVED_MARK  # still human-readable, just not bare
+
+
+def test_date_note_only_fires_on_real_truncation():
+    # MEDIUM fix: the note used to fire on mere presence of the date key, not on whether
+    # truncation actually dropped anything -- measured 239 false-positive notes in personal
+    # against 3 real ones, burying the genuine unresolved-relation warnings under the same `!`
+    # prefix. A plain "YYYY-MM-DD" value truncates to itself, so no note should fire.
+    table = {"fields": [("due", "date", None, "Due", None)], "ignored": {}}
+    p = np.to_properties({"due": "2026-06-01"}, table)
+    assert p["date:Due:start"] == "2026-06-01"
+
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo4"
+    (sd / "tables" / "things").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-thing:
+          required: [name, type]
+          notion_source_db: things
+          notion_fields:
+            name: [Name, title]
+            due: [Due, date]
+        """), encoding="utf-8")
+    (sd / "tables" / "things" / "plain.md").write_text(
+        '---\ntype: state-thing\nname: Plain\ndue: "2026-06-01"\n---\n', encoding="utf-8")
+    plan = {e["slug"]: e for e in np.plan_publish(root, "demo4")}
+    assert plan["plain"]["properties"]["date:Due:start"] == "2026-06-01"
+    assert plan["plain"]["notes"] == []  # date-only-by-design note must NOT fire — no loss occurred
+
+
+def test_date_key_handles_the_end_shape_too():
+    # MEDIUM fix: _date_key's old predicate only recognized an already-flattened ":start" key.
+    # state/domains/familyoffice/schema.yaml:290 (state-session's date_end) declares the third
+    # real shape, "date:Date:end" -- unfixed, this corrupts into "date:date:Date:end:start"
+    # exactly like the :start bug did (latent in prod only because every date_end is null today).
+    assert np._date_key("date:Date:end") == "date:Date:end"
+    assert np._date_key("date:Due:start") == "date:Due:start"
+    assert np._date_key("Created") == "date:Created:start"
+
+
+def test_elide_result_never_exceeds_the_cap():
+    # A naive line[:500] + suffix leaves the RESULT over 500 chars too (verified: FO's real
+    # artifact still showed 408/408 lines over the cap after a first-pass fixed cut, because
+    # the suffix itself wasn't budgeted for). The elided line must actually fit.
+    long_line = "x" * 10000
+    out = np._elide(long_line)
+    assert len(out) <= np._MAX_LINE
+    assert "chars elided" in out
+    assert np._elide("short") == "short"
+
+
+def test_plan_publish_reports_a_missing_table_dir():
+    # "Also fix" from review: a mapped table whose tables/<source_db> dir doesn't exist used to
+    # be silently skipped -- in the sub-project whose whole stated risk is silent loss, that
+    # table's absence from the artifact must be a visible line, not nothing.
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo5"
+    sd.mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-ghost:
+          required: [name, type]
+          notion_source_db: ghosts
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    plan = np.plan_publish(root, "demo5")
+    assert len(plan) == 1
+    assert plan[0]["operation"] == "skip"
+    assert "tables/ghosts" in plan[0]["notes"][0]
+    text = np.format_diff(plan)
+    assert "tables/ghosts not found" in text
 
 
 if __name__ == "__main__":

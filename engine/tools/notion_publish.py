@@ -21,13 +21,18 @@ def _prop_key(prop: str) -> str:
 
 
 def _date_key(prop: str) -> str:
-    """34 of 35 real `date` fields across state/domains/*/schema.yaml already declare `prop`
-    as the flattened wire key domain_sync._flatten_date produces on gather/import, e.g.
-    "date:Due:start" (see stable_slugs.py / domain_sync.py, same convention). Re-wrapping that
-    verified-against-real-data — was silently corrupting every real date field into
-    "date:date:Due:start:start". Wrap only the one schema outlier (personal `created`, a bare
-    "Created") and Task 7's own synthetic test props, which use plain display names."""
-    return prop if prop.startswith("date:") and prop.endswith(":start") else "date:%s:start" % prop
+    """Of the 35 real `date` fields across state/domains/*/schema.yaml, 33 already declare
+    `prop` as the flattened wire key domain_sync._flatten_date produces on gather/import, e.g.
+    "date:Due:start" (see stable_slugs.py / domain_sync.py, same convention); 1 uses its ":end"
+    counterpart (state-session's `date_end`, "date:Date:end" —
+    state/domains/familyoffice/schema.yaml:290); 1 is the schema outlier (personal `created`,
+    a bare "Created"). Re-wrapping an already-flattened key — verified against real data — was
+    silently corrupting every real date field into "date:date:Due:start:start"; the predicate
+    below accepts both flattened suffixes so `date_end` doesn't suffer the same corruption.
+    Wrap only the bare-name outlier and Task 7's own synthetic test props, which use plain
+    display names."""
+    return (prop if prop.startswith("date:") and prop.endswith((":start", ":end"))
+            else "date:%s:start" % prop)
 
 
 def to_properties(fm: dict, table: dict) -> dict:
@@ -64,6 +69,7 @@ def to_properties(fm: dict, table: dict) -> dict:
 # ── Task 8: publish-OUT dry run ─────────────────────────────────────────────
 # Everything below reads local state and builds a plan; nothing here ever opens a network
 # connection or a file in write mode. That is the whole point of a dry run.
+import datetime as _dt
 import os as _os
 import sys as _sys
 from pathlib import Path
@@ -75,19 +81,26 @@ from state_validate import _extract_frontmatter  # noqa: E402
 _REL_KINDS = ("relation", "json_relation")
 
 
+# Bracketed with a symbol pair that plain-English record prose does not produce (a bare
+# "UNRESOLVED" collides with the literal word inside real session-log narrative -- verified:
+# 3 hits in familyoffice, zero of them a real marker), so grepping this exact string on the
+# rendered artifact finds only genuine unresolved relations.
+_UNRESOLVED_MARK = "⟦UNRESOLVED⟧"
+
+
 def _resolve_relation(state_dir: Path, rel_path: str) -> tuple:
     """`rel_path` is a stripped wikilink like "prices/btc" -- exactly what to_properties()
     already leaves after removing the `[[ ]]` brackets, which doubles as the record's location
     on disk (state_dir/tables/<rel_path>.md). Resolve it to the TARGET record's own notion_url,
     using the same "https://www.notion.so/<id>" shape domain_mirror.py derives on import --
     read straight off disk, no network call. A target that doesn't exist yet or hasn't been
-    published (no notion_id) comes back UNRESOLVED rather than as a fabricated URL."""
+    published (no notion_id) comes back marked unresolved rather than as a fabricated URL."""
     target = state_dir / "tables" / f"{rel_path}.md"
     if target.is_file():
         nid = _extract_frontmatter(target.read_text(encoding="utf-8")).get("notion_id")
         if nid:
             return "https://www.notion.so/" + nid, True
-    return f"UNRESOLVED:{rel_path}", False
+    return f"{_UNRESOLVED_MARK}:{rel_path}", False
 
 
 def plan_publish(env_root, silo) -> list:
@@ -97,18 +110,33 @@ def plan_publish(env_root, silo) -> list:
     Each entry: {"slug", "table", "notion_id", "operation", "properties", "notes"}.
     `notes` carries the two Task-7-documented gaps inline, so a reader sees them as expected
     behavior rather than mistaking them for real drift: a `date` field is truncated to
-    YYYY-MM-DD by design (never "this record changed"), and an unresolved relation is called
-    out by name (its target hasn't been published yet) rather than silently sent as a slug."""
+    YYYY-MM-DD by design ONLY when that truncation actually drops something (never "this
+    record changed" when it doesn't), and an unresolved relation is called out by name (its
+    target hasn't been published yet) rather than silently sent as a slug.
+
+    Iteration order is sorted everywhere it touches output (`rel_props`/`date_fields` were
+    sets keyed by Python's per-process-randomized string hash -- same input, different note
+    order every run; verified: 6 consecutive personal runs diffed 24/0/22/20/32 lines against
+    the first). A dry-run artifact's only use is diffing today's against yesterday's, so
+    non-determinism here defeats the point."""
     cfg = dm.load_silo_config(Path(env_root), silo)
     plan = []
     for t in cfg["tables"]:
         tdir = cfg["state_dir"] / "tables" / t["source_db"]
         if not tdir.is_dir():
+            # Not a data-loss risk today (no records means nothing is being dropped), but a
+            # mapped table that silently stops resolving would otherwise vanish from the
+            # artifact with no line saying so -- in the one sub-project whose whole stated
+            # risk is silent loss. Say so.
+            plan.append({"slug": f"<{t['source_db']}>", "table": t["name"], "notion_id": None,
+                         "operation": "skip", "properties": {},
+                         "notes": [f"table dir tables/{t['source_db']} not found -- "
+                                   f"nothing in this table published"]})
             continue
-        rel_props = {_prop_key(prop) for _f, kind, _tmpl, prop, _rel in t["fields"]
-                     if kind in _REL_KINDS}
-        date_keys = {_date_key(prop) for _f, kind, _tmpl, prop, _rel in t["fields"]
-                     if kind == "date"}
+        rel_props = sorted({_prop_key(prop) for _f, kind, _tmpl, prop, _rel in t["fields"]
+                            if kind in _REL_KINDS})
+        date_fields = sorted((field, _date_key(prop)) for field, kind, _tmpl, prop, _rel
+                              in t["fields"] if kind == "date")
         for path in sorted(tdir.glob("*.md")):
             fm = _extract_frontmatter(path.read_text(encoding="utf-8"))
             nid = fm.get("notion_id")
@@ -126,8 +154,11 @@ def plan_publish(env_root, silo) -> list:
                         notes.append(f"{prop_key}: {v!r} not resolvable "
                                       f"(target not published yet)")
                 props[prop_key] = resolved
-            for date_key in date_keys:
-                if date_key in props:
+            for field, date_key in date_fields:
+                if date_key not in props:
+                    continue
+                raw = fm.get(field)
+                if raw is not None and str(raw)[:10] != str(raw):
                     notes.append(f"{date_key} is date-only by design "
                                   f"(Notion drops time-of-day/offset here)")
             plan.append({"slug": path.stem, "table": t["name"], "notion_id": nid,
@@ -136,20 +167,55 @@ def plan_publish(env_root, silo) -> list:
     return plan
 
 
-def format_diff(plan: list) -> str:
+_MAX_LINE = 500
+
+
+def _elide(line: str) -> str:
+    """A whole session-log narrative repr'd onto one line can run thousands of characters --
+    verified: familyoffice's real artifact had 408 lines over 500 chars, longest 8279. Cut
+    long lines with an explicit marker rather than let one record's prose swamp the diff.
+    The cut point backs off until content+suffix together still fit under the cap -- a
+    first-pass fixed cut (line[:500] + suffix) leaves the RESULT over 500 chars too, since the
+    suffix itself takes space the cap didn't budget for."""
+    if len(line) <= _MAX_LINE:
+        return line
+    cut = _MAX_LINE
+    while cut > 0:
+        suffix = f"…[+{len(line) - cut} chars elided]"
+        if cut + len(suffix) <= _MAX_LINE:
+            return line[:cut] + suffix
+        cut -= 1
+    return line[:_MAX_LINE]
+
+
+def format_diff(plan: list, *, silo: str = None, generated_at: str = None) -> str:
     """Render plan_publish()'s output as a human-skimmable diff artifact. One block per
     record; `notes` are printed inline so the known-lossy/unresolved cases read as
-    documented behavior, not alarming drift."""
+    documented behavior, not alarming drift.
+
+    `silo`/`generated_at` are optional purely for the CLI's header line (silo, generation
+    date, record count, create/update tally) -- callers doing the byte-stability comparison
+    (this is otherwise a pure function of `plan`) should omit them, or pass a fixed
+    `generated_at`, to keep the header itself comparable run to run. Day-granularity (not a
+    full timestamp) by design: the header states when the snapshot was taken, and the whole
+    point of this artifact is comparing same-day runs byte-for-byte."""
     lines = []
+    if silo is not None:
+        creates = sum(1 for e in plan if e["operation"] == "create")
+        updates = sum(1 for e in plan if e["operation"] == "update")
+        ts = generated_at if generated_at is not None else _dt.date.today().isoformat()
+        lines.append(f"# silo={silo} generated={ts} records={len(plan)} "
+                     f"create={creates} update={updates}")
+        lines.append("")
     for e in plan:
         header = f"## {e['slug']}  [{e['operation']}]"
         if e["notion_id"]:
             header += f"  notion_id={e['notion_id']}"
         lines.append(header)
         for k, v in sorted(e["properties"].items()):
-            lines.append(f"    {k}: {v!r}")
+            lines.append(_elide(f"    {k}: {v!r}"))
         for note in e.get("notes", []):
-            lines.append(f"    ! {note}")
+            lines.append(_elide(f"    ! {note}"))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -163,7 +229,7 @@ def main(argv=None):
     ap.add_argument("--silo", required=True)
     args = ap.parse_args(argv)
     plan = plan_publish(Path(args.env_root), args.silo)
-    print(format_diff(plan))
+    print(format_diff(plan, silo=args.silo))
 
 
 if __name__ == "__main__":
