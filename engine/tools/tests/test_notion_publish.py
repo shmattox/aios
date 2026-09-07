@@ -145,6 +145,38 @@ def test_roundtrip_relation_CANNOT_reconstruct_a_page_url():
     assert p["Asset"] == ["prices/btc"]  # NOT the original page URL
 
 
+def test_unknown_kind_raises():
+    table = {"fields": [("f", "totally_bogus_kind", None, "Weird", None)], "ignored": {}}
+    try:
+        np.to_properties({"f": "value"}, table)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "totally_bogus_kind" in str(e)
+
+
+def test_all_eleven_real_kinds_accepted():
+    # The eleven kinds domain_mirror.coerce() supports must all still pass without raising.
+    table = {"fields": [
+        ("title_f", "title", None, "Name", None),
+        ("text_f", "text", None, "Notes", None),
+        ("select_f", "select", None, "Status", None),
+        ("url_f", "url", None, "Link", None),
+        ("multi_f", "multi_select", None, "Tags", None),
+        ("jmulti_f", "json_multi_select", None, "JTags", None),
+        ("num_f", "number", None, "Qty", None),
+        ("date_f", "date", None, "Due", None),
+        ("chk_f", "checkbox", None, "Active", None),
+        ("rel_f", "relation", "prices/{slug}", "Asset", "prices"),
+        ("jrel_f", "json_relation", "prices/{slug}", "Asset2", "prices"),
+    ], "ignored": {}}
+    fm = {"title_f": "X", "text_f": "n", "select_f": "Open", "url_f": "https://a.test",
+          "multi_f": ["a"], "jmulti_f": ["b"], "num_f": 1, "date_f": "2026-01-01",
+          "chk_f": True, "rel_f": "[[prices/btc]]", "jrel_f": "[[prices/eth]]"}
+    p = np.to_properties(fm, table)  # must not raise
+    assert set(p.keys()) == {"Name", "Notes", "Status", "Link", "Tags", "JTags",
+                              "Qty", "date:Due:start", "Active", "Asset", "Asset2"}
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
