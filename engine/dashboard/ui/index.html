@@ -1,11 +1,23 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="aios-token" content="{{TOKEN}}">
 <title>AIOS</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0c0d0f">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="stylesheet" href="/tokens.css">
 </head><body>
 <div id="root"></div>
 <script type="module" src="/app.js"></script>
+<script>
+// Registration needs a secure context: https, or localhost. Over `tailscale serve --http=` it is
+// neither, so this is a no-op there and the page works exactly as before — the install prompt is
+// what's missing, not the cockpit. Enable HTTPS Certificates on the tailnet and it starts working
+// with no code change. See Scripts/tailscale-serve/README.md in the env repo.
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+</script>
 </body></html>

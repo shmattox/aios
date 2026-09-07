@@ -247,6 +247,12 @@ def resolve_env_root(start=None):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # Python's mimetypes table has no `.webmanifest`, so the guess is application/octet-stream and
+    # every browser then IGNORES the manifest — the page renders, the install prompt just never
+    # appears, and nothing logs an error. Map it explicitly.  # see D plan Task 5
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map,
+                      ".webmanifest": "application/manifest+json"}
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(UI_DIR), **kw)
 
