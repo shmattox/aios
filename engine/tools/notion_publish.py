@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""notion_publish.py — C1: build a Notion property map from a state record. PURE.
+"""notion_publish.py — C1: build a Notion property map from a state record, plus a read-only
+dry-run planner over local state. The property builder (to_properties) is PURE; the planner
+below it (plan_publish onward) reads the filesystem but never opens anything in write mode.
 
 One-way only: this module never reads Notion, and `notion_id` stays a back-reference set by a
 publish, never a read source (GM's invariant). Transport lives elsewhere so the interactive
@@ -220,9 +222,13 @@ def format_diff(plan: list, *, silo: str = None, generated_at: str = None) -> st
     return "\n".join(lines).rstrip() + "\n"
 
 
+from _util import utf8_stdio as _utf8_stdio
+
+
 def main(argv=None):
     """CLI: preview a publish. Prints the diff artifact to stdout. Never writes anything --
     there is no flag on this command that sends anything to Notion."""
+    _utf8_stdio()
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env-root", default=".")

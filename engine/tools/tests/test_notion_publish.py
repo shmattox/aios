@@ -379,6 +379,41 @@ def test_plan_publish_reports_a_missing_table_dir():
     assert "tables/ghosts not found" in text
 
 
+def test_cli_survives_redirected_stdout_on_a_non_utf8_console():
+    # Review HIGH: `print()` to a REDIRECTED stream uses the platform codec (cp1252 on native
+    # Windows), not the console's. `format_diff()`-in-process tests above never touch print()
+    # and stayed green while the real CLI crashed on `> out.txt` -- even on an all-ASCII silo,
+    # because the module's own ⟦UNRESOLVED⟧ marker isn't cp1252-encodable either. Reproduce the
+    # actual boundary: subprocess, real file redirect, and strip any UTF-8 opt-in from the env
+    # so this fails the same way on a stock Windows console.
+    import subprocess
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo6"
+    (sd / "tables" / "assets").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-asset:
+          required: [name, type]
+          notion_source_db: assets
+          notion_fields:
+            name: [Name, title]
+            asset: [Asset, relation, "prices/{slug}"]
+        """), encoding="utf-8")
+    (sd / "tables" / "assets" / "orphan.md").write_text(
+        '---\ntype: state-asset\nname: Orphan\nasset: "[[prices/nope]]"\n---\n',
+        encoding="utf-8")
+
+    out_file = root / "out.txt"
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    script = os.path.join(_TOOLS, "notion_publish.py")
+    with open(out_file, "wb") as fh:
+        proc = subprocess.run([sys.executable, script, "--env-root", str(root),
+                                "--silo", "demo6"], stdout=fh, stderr=subprocess.PIPE, env=env)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    text = out_file.read_text(encoding="utf-8")
+    assert np._UNRESOLVED_MARK in text
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

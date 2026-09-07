@@ -108,7 +108,11 @@ def check_silo(env_root, silo, snapshot_dir=None, tasks_enabled=()) -> dict:
     return out
 
 
+from _util import utf8_stdio as _utf8_stdio
+
+
 def main(argv=None):
+    _utf8_stdio()
     ap = argparse.ArgumentParser(description="Fail while any Notion property is uncovered.")
     ap.add_argument("--silo", required=True)
     ap.add_argument("--env-root", default=".")
