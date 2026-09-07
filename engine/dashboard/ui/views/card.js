@@ -181,13 +181,16 @@ export function Card({ item, station, onAction, vaultRel }) {
     let alive = true;
     setDraft(null);
     setEditing(false);   // never carry edit mode across a card switch
-    if (item.draft_index != null) {
-      api.get(`/api/draft?i=${item.draft_index}`)
+    if (item.draft_path != null) {
+      // A6142: by id, not by position. draft_path is the discriminator because it is real data —
+      // a gate item has a staged draft, a backlog card does not — where draft_index was a
+      // synthetic row number that only existed while the list was a frozen cache.
+      api.get(`/api/draft?id=${encodeURIComponent(item.id)}`)
         .then((d) => { if (alive) setDraft(d); })
         .catch(() => { if (alive) setDraft({ markdown: "(draft file missing on disk — cannot approve blind)" }); });
     }
     return () => { alive = false; };
-  }, [item.id, item.draft_index]);
+  }, [item.id, item.draft_path]);
 
   useEffect(() => { if (respondKind && taRef.current) taRef.current.focus(); }, [respondKind]);
 
@@ -264,7 +267,7 @@ export function Card({ item, station, onAction, vaultRel }) {
         </div>` : null}
     ` : null}
 
-    ${item.draft_index != null ? html`
+    ${item.draft_path != null ? html`
       <div class="sect">
         ${(draft && draft.diff && draft.diff.length && !editing) ? html`
           <div class="label">Proposed change${draft.target ? html` · ${shortPath(draft.target)}` : ""}</div>

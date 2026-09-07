@@ -15,11 +15,13 @@ from dashboard_server import make_server  # noqa: E402
 def env_root(tmp_path):
     (tmp_path / "state" / "factory").mkdir(parents=True)
     (tmp_path / "profile").mkdir()
-    # brief cache with one held row → FamilyOffice needs_you card
-    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({
-        "held": [{"id": "q1", "kb": "familyoffice", "lane": "review",
-                  "title": "Bayview refi terms", "draft_path": "x.md"}],
-    }), encoding="utf-8")
+    # A6142: the gate row lives in the QUEUE → FamilyOffice needs_you card. It used to be
+    # written into brief-cache["held"] with no queue at all, which is the defect this board
+    # inherited: an empty overnight cache emptied the board's needs_you cells too.
+    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({"held": []}), encoding="utf-8")
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": [
+        {"id": "q1", "stage": "awaiting", "kb": "familyoffice", "lane": "review",
+         "title": "Bayview refi terms", "draft_path": "x.md"}]}), encoding="utf-8")
     (tmp_path / "state" / "factory" / "standup.json").write_text(json.dumps({
         "groups": {"needs-you": [{"repo": "demo", "id": "D2", "title": "t"}]},
     }), encoding="utf-8")
@@ -65,7 +67,9 @@ def test_board_station_placement(server):
     assert [c["id"] for c in demo["incoming"]] == ["D3"]
     assert [c["id"] for c in lanes["env-ops"]["cells"]["needs_you"]] == ["H1"]
     fo = lanes["familyoffice"]["cells"]["needs_you"]
-    assert fo and fo[0]["title"] == "Bayview refi terms" and fo[0]["draft_index"] == 0
+    # A6142: no draft_index — the card fetches its draft by id, so position carries no meaning
+    assert fo and fo[0]["title"] == "Bayview refi terms" and fo[0]["id"] == "q1"
+    assert "draft_index" not in fo[0]
 
 
 def test_board_backlog_cards_are_readonly_dev(server):
