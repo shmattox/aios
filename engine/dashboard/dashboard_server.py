@@ -374,9 +374,12 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/gate-metrics":
             return self._file_with_age(env / WATCHED["gate_metrics"])
         if route == "/api/held":
-            brief = _read_json_file(env / WATCHED["brief"]) or {}
-            return self._send_json({"held": brief.get("held", []),
-                                    "generated_utc": brief.get("generated_utc")})
+            # A6142: this served brief-cache["held"] — a NIGHTLY artifact — while the gate badge
+            # beside it read live state. An empty cache then rendered as an empty world: "nothing
+            # in gate right now" is what a healthy queue looks like, so nobody investigates it.
+            # Three surfaces read this (the AIOS drill-in, the nav gate badge in app.js, and the
+            # board's needs_you cells), which is why the fix is here and not at one caller.
+            return self._send_json({"held": self._gate_items()})
         if route == "/api/draft":
             return self._draft()
         if route == "/api/board":
@@ -471,18 +474,25 @@ class Handler(SimpleHTTPRequestHandler):
         data["_age_s"] = (time.time() - mt) if mt else None
         return self._send_json(data)
 
+    def _gate_items(self):
+        """The live gate queue — the SAME rows, from the same function, that paint the gate
+        badge. `stage_detail` returns None only for an unknown stage id, which "gate" is not."""
+        d = content_state.stage_detail(str(self.server.env_root), "gate") or {}
+        return d.get("items", [])
+
     def _draft(self):
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        try:
-            idx = int(q.get("i", ["-1"])[0])
-        except ValueError:
-            idx = -1
-        brief = _read_json_file(self.server.env_root / WATCHED["brief"]) or {}
-        held = brief.get("held", [])
-        # index into the live held list = data-derived allowlist; never accept a
-        # caller-supplied path.  # see A63 spec
-        if not (0 <= idx < len(held)):
-            return self._deny(404, "no such held row")
+        # Addressed by ID, not by position. The allowlist property is unchanged — the id is
+        # resolved against a server-computed list and an arbitrary path is still never accepted —
+        # but a positional index over a LIVE list is a race the cached list did not have: if the
+        # queue shifts between the panel's fetch and the card's, row N is a different item, so you
+        # would read one draft while approving another. The ship was always by id; now the preview
+        # agrees with it.  # A6142; was `?i=<n>` into brief-cache["held"], see A63 spec
+        want = q.get("id", [""])[0]
+        held = self._gate_items()
+        idx = next((n for n, r in enumerate(held) if r.get("id") == want), -1)
+        if idx < 0:
+            return self._deny(404, "no such gate item")
         # draft_path is stored RELATIVE to the vault root ("02_FamilyOffice/…"); resolve it there,
         # not against the server's cwd. (An absolute path — e.g. in tests — is used as-is.)
         raw = held[idx].get("draft_path", "")
@@ -560,7 +570,7 @@ class Handler(SimpleHTTPRequestHandler):
                     standup_ids[r["id"]] = group
         lanes = []
         brief = _read_json_file(env / WATCHED["brief"]) or {}
-        held = brief.get("held", [])
+        held = self._gate_items()   # A6142: live, not brief-cache["held"]
         for key, name in self.SILOS:
             cells = {s: [] for s in self.STATIONS}
             for i, row in enumerate(held):
@@ -570,7 +580,7 @@ class Handler(SimpleHTTPRequestHandler):
                     card = {
                         "id": row.get("id", f"held-{i}"), "title": row.get("title", ""),
                         "station": "needs_you", "source": "held",
-                        "gate_human": True, "draft_index": i,
+                        "gate_human": True,   # A6142: draft_index dropped — the card fetches by id
                         "kb": row.get("kb"), "lane": row.get("lane"),
                         "recommended": row.get("recommended"), "rec_reason": row.get("rec_reason"),
                         "papered_source": row.get("papered_source"), "state_path": row.get("state_path"),
@@ -604,8 +614,7 @@ class Handler(SimpleHTTPRequestHandler):
                     title, badge = clean_dev_title(it["headline"], standup_ids.get(it["id"]))
                     cells[st].append({"id": it["id"], "title": title, "_kind": "dev",
                                       "station": st, "source": "backlog", "repo": key,
-                                      "state_badge": badge, "gate_human": it["gate_human"],
-                                      "draft_index": None})
+                                      "state_badge": badge, "gate_human": it["gate_human"]})
             flags = sorted({standup_ids[i["id"]] for i in items if i["id"] in standup_ids})
             lanes.append({"kind": "repo", "key": key, "name": key,
                           "badge": "active" + ("·" + ",".join(flags) if flags else ""),

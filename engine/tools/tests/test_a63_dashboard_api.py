@@ -32,8 +32,13 @@ def env_root(tmp_path):
                     "date": "2026-07-20"}), encoding="utf-8")
     (tmp_path / "state" / "factory" / "gate-metrics.json").write_text(
         json.dumps({"generated": "2026-07-20", "windows": {}}), encoding="utf-8")
-    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}),
-                                                  encoding="utf-8")
+    # A6142: the gate item lives in the QUEUE. It used to exist only in brief-cache["held"]
+    # above, with the queue left empty — so these tests passed while proving the endpoint could
+    # serve an item that did not exist. That fixture WAS the defect, in miniature.
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": [
+        {"id": "q1", "stage": "awaiting", "kb": "personal", "lane": "review",
+         "recommended": "ship", "title": "Held item", "draft_path": str(draft)}]}),
+        encoding="utf-8")
     (tmp_path / "state" / "standing-checks").mkdir(parents=True)
     (tmp_path / "state" / "standing-checks" / "results.json").write_text(json.dumps({
         "generated_utc": "2026-08-21T10:00:00+00:00", "watching_clear": [], "findings": [],
@@ -113,7 +118,7 @@ def test_spend_aggregates(server):
 def test_held_and_draft(server):
     h = _get_json(server, "/api/held")
     assert h["held"][0]["id"] == "q1"
-    d = _get_json(server, "/api/draft?i=0")
+    d = _get_json(server, "/api/draft?id=q1")
     assert d["markdown"] == "# Draft body"
 
 
@@ -121,11 +126,13 @@ def test_draft_surfaces_paper_evidence(server, env_root):
     # A75 Paper-Governs — the pipeline attaches a paper_evidence packet to the
     # queue item; /api/draft surfaces it (render-only) so the card can show it.
     (env_root / "state" / "queue.json").write_text(json.dumps({"queue": [
-        {"id": "q1", "stage": "awaiting", "paper_evidence": {
+        {"id": "q1", "stage": "awaiting", "draft_path": str(
+            env_root / "SecondBrain" / "01_Personal" / "wiki" / "staging" / "d.md"),
+         "paper_evidence": {
             "verdict": "matches", "quote": "rate of 6.875%",
             "doc": "Loan Mod.pdf", "section": "2.1",
             "checked_utc": "2026-07-29T04:10:00Z"}}]}), encoding="utf-8")
-    d = _get_json(server, "/api/draft?i=0")
+    d = _get_json(server, "/api/draft?id=q1")
     assert d["paper_evidence"]["verdict"] == "matches"
     assert d["paper_evidence"]["doc"] == "Loan Mod.pdf"
 
@@ -138,13 +145,14 @@ def test_draft_resolves_relative_path_against_vault(tmp_path):
     rel = "02_FamilyOffice/wiki/staging/x.md"
     dp = tmp_path / "SecondBrain" / "02_FamilyOffice" / "wiki" / "staging" / "x.md"
     dp.parent.mkdir(parents=True); dp.write_text("# Relative draft", encoding="utf-8")
-    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({
-        "held": [{"id": "x", "draft_path": rel, "conflict_key": "familyoffice/wiki/sources/x.md"}]}), encoding="utf-8")
-    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}), encoding="utf-8")
+    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({"held": []}), encoding="utf-8")
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": [
+        {"id": "x", "stage": "awaiting", "draft_path": rel,
+         "conflict_key": "familyoffice/wiki/sources/x.md"}]}), encoding="utf-8")
     srv = make_server(str(tmp_path), port=0)
     t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?i=0", timeout=5) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?id=x", timeout=5) as r:
             body = json.loads(r.read())
         assert body["markdown"] == "# Relative draft"
     finally:
@@ -157,29 +165,30 @@ def test_draft_relative_path_traversal_rejected(tmp_path):
     (tmp_path / "profile" / "connectors.yaml").write_text("vault:\n  live_root: SecondBrain\n", encoding="utf-8")
     (tmp_path / "SecondBrain").mkdir()
     (tmp_path / "secret.md").write_text("TOP SECRET", encoding="utf-8")   # outside the vault
-    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({
-        "held": [{"id": "x", "draft_path": "../secret.md", "conflict_key": "familyoffice/wiki/x.md"}]}), encoding="utf-8")
-    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": []}), encoding="utf-8")
+    (tmp_path / "state" / "brief-cache.json").write_text(json.dumps({"held": []}), encoding="utf-8")
+    (tmp_path / "state" / "queue.json").write_text(json.dumps({"queue": [
+        {"id": "x", "stage": "awaiting", "draft_path": "../secret.md",
+         "conflict_key": "familyoffice/wiki/x.md"}]}), encoding="utf-8")
     srv = make_server(str(tmp_path), port=0)
     t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
     try:
         with pytest.raises(urllib.error.HTTPError) as e:
-            urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?i=0", timeout=5)
+            urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/draft?id=x", timeout=5)
         assert e.value.code == 404
     finally:
         srv.shutdown()
 
 
 def test_draft_no_paper_evidence_key_when_absent(server):
-    # queue item has no packet (fixture queue is empty) → key simply omitted.
-    d = _get_json(server, "/api/draft?i=0")
+    # the fixture's queue item carries no packet → key simply omitted.
+    d = _get_json(server, "/api/draft?id=q1")
     assert "paper_evidence" not in d
 
 
-def test_draft_bad_index_404(server):
+def test_draft_unknown_id_404(server):
     port = server.server_address[1]
     with pytest.raises(urllib.error.HTTPError) as e:
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/draft?i=99", timeout=5)
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/draft?id=nope", timeout=5)
     assert e.value.code == 404
 
 

@@ -98,8 +98,15 @@ def summary(env_root):
 
 
 def _row(it):
-    """A light drill-in row for a queue item — enough to list and open a read-only info card.
-    (Gate items are richer via /api/held; this covers the pre-gate stages.)"""
+    """A drill-in row for a queue item — enough to list it AND to render the rich gate card.
+
+    A6142: gate items used to come from a separate, richer source (`/api/held`, read out of the
+    nightly brief cache), which is how the panel came to show "nothing in gate" against a live
+    queue of 13. There is now one row shape from one function, so a gate count and a gate list
+    cannot disagree. The last four fields are what the rich card needs beyond a listing:
+    `rec_reason` (why the pipeline recommends what it does), `conflict_key` (resolves the
+    canonical page a draft would replace — see `_target_path`), and the two optional
+    Paper-Governs pointers."""
     return {
         "id": it.get("id"),
         "title": it.get("title") or _title_from_id(it.get("id")),
@@ -110,6 +117,10 @@ def _row(it):
         "draft_path": it.get("draft_path"),
         "payload_path": it.get("payload_path"),
         "recommended": it.get("recommended"),
+        "rec_reason": it.get("rec_reason"),
+        "conflict_key": it.get("conflict_key"),
+        "papered_source": it.get("papered_source"),
+        "state_path": it.get("state_path"),
     }
 
 

@@ -93,13 +93,13 @@ export function AiosView() {
     const done = (items) => { if (g !== gen.current) return; setDetail({ items });
       const r = wantSel.current; wantSel.current = null;
       setSel(items.find((i) => i.id === r)?.id || items[0]?.id || null); };
-    if (stage === "gate") {
-      api.get("/api/held").then((d) => done((d.held || []).map((h, i) => ({ ...h, _kind: "held", draft_index: h.draft_index != null ? h.draft_index : i }))))
-        .catch(() => { if (g === gen.current) { setDetail({ items: [] }); setSel(null); } });
-    } else {
-      api.get(`/api/content/stage/${stage}`).then((d) => done(d.items || []))
-        .catch(() => { if (g === gen.current) { setDetail({ items: [] }); setSel(null); } });
-    }
+    // A6142: gate used to be special-cased onto /api/held, which the server served out of the
+    // NIGHTLY brief cache — so this panel said "nothing in gate" beside a badge reading 13 live
+    // items. Every stage now reads its own live endpoint, so the list and the badge come from one
+    // function and cannot disagree. (The `_kind: "held"` tag that rode along was never read by
+    // card.js, and draft_index is gone — the card fetches its draft by id.)
+    api.get(`/api/content/stage/${stage}`).then((d) => done(d.items || []))
+      .catch(() => { if (g === gen.current) { setDetail({ items: [] }); setSel(null); } });
   };
   useEffect(() => { if (stage != null) loadStage(); }, [stage]);
 
