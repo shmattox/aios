@@ -145,6 +145,18 @@ def test_roundtrip_relation_CANNOT_reconstruct_a_page_url():
     assert p["Asset"] == ["prices/btc"]  # NOT the original page URL
 
 
+def test_date_prop_already_flattened_is_not_rewrapped():
+    # 34 of 35 real `date` fields in state/domains/*/schema.yaml declare `prop` as the wire
+    # key gather already flattens it to (e.g. "date:Due:start", domain_sync._flatten_date) --
+    # NOT a bare display name. Running plan_publish against real `personal` data surfaced that
+    # to_properties() was re-wrapping it into "date:date:Due:start:start". The one schema
+    # outlier (personal `created`, a bare "Created") still needs the wrap.
+    table = {"fields": [("due", "date", None, "date:Due:start", None),
+                         ("created", "date", None, "Created", None)], "ignored": {}}
+    p = np.to_properties({"due": "2026-06-01", "created": "2026-01-01"}, table)
+    assert p == {"date:Due:start": "2026-06-01", "date:Created:start": "2026-01-01"}
+
+
 def test_unknown_kind_raises():
     table = {"fields": [("f", "totally_bogus_kind", None, "Weird", None)], "ignored": {}}
     try:
@@ -175,6 +187,91 @@ def test_all_eleven_real_kinds_accepted():
     p = np.to_properties(fm, table)  # must not raise
     assert set(p.keys()) == {"Name", "Notes", "Status", "Link", "Tags", "JTags",
                               "Qty", "date:Due:start", "Active", "Asset", "Asset2"}
+
+
+# ── Task 8: dry-run planner ───────────────────────────────────────────────────
+import tempfile as _tf
+import textwrap as _tw
+from pathlib import Path as _P
+
+
+def _new_root():
+    root = _P(_tf.mkdtemp()).resolve()
+    (root / "profile").mkdir()
+    (root / "profile" / "domains.yaml").write_text("brief:\n  trigger: go\n", encoding="utf-8")
+    return root
+
+
+def test_plan_publish_dry_run():
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo"
+    (sd / "tables" / "things").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-thing:
+          required: [name, type, notion_id]
+          notion_source_db: things
+          notion_fields:
+            name: [Name, title]
+        """), encoding="utf-8")
+    (sd / "tables" / "things" / "widget.md").write_text(
+        "---\ntype: state-thing\nname: Widget\nnotion_id: abc123\n---\n", encoding="utf-8")
+    (sd / "tables" / "things" / "fresh.md").write_text(
+        "---\ntype: state-thing\nname: Fresh\n---\n", encoding="utf-8")
+
+    plan = {e["slug"]: e for e in np.plan_publish(root, "demo")}
+    assert set(plan) == {"widget", "fresh"}
+    assert plan["widget"]["operation"] == "update"
+    assert plan["widget"]["notion_id"] == "abc123"
+    assert plan["fresh"]["operation"] == "create"
+    assert plan["fresh"]["notion_id"] is None
+    assert plan["widget"]["properties"]["Name"] == "Widget"
+    assert not list((sd / "tables" / "things").glob("*.tmp"))  # dry run wrote nothing
+
+
+def test_plan_publish_resolves_relations_and_flags_dates():
+    # Task 7 left two documented gaps for Task 8 to own: a relation can't become a real page
+    # URL inside the pure builder, and a `date` truncation must not look like drift. This
+    # covers both: `holding` links a published target (resolves to a notion.so URL) and an
+    # unpublished one (comes back UNRESOLVED, never a fake URL); `acquired` is a full timestamp
+    # that must survive as a plain date with an explanatory note, not a silent change.
+    root = _new_root()
+    sd = root / "state" / "domains" / "demo2"
+    (sd / "tables" / "prices").mkdir(parents=True)
+    (sd / "tables" / "assets").mkdir(parents=True)
+    (sd / "schema.yaml").write_text(_tw.dedent("""\
+        state-price:
+          required: [name, type]
+          notion_source_db: prices
+          notion_fields:
+            name: [Name, title]
+        state-asset:
+          required: [name, type]
+          notion_source_db: assets
+          notion_fields:
+            name: [Name, title]
+            acquired: [Acquired, date]
+            asset: [Asset, relation, "prices/{slug}"]
+        """), encoding="utf-8")
+    (sd / "tables" / "prices" / "btc.md").write_text(
+        "---\ntype: state-price\nname: BTC\nnotion_id: pxid1\n---\n", encoding="utf-8")
+    (sd / "tables" / "assets" / "holding.md").write_text(
+        '---\ntype: state-asset\nname: Holding\n'
+        'acquired: "2026-05-29T19:10:00.000+00:00"\n'
+        'asset: "[[prices/btc]]"\n---\n', encoding="utf-8")
+    (sd / "tables" / "assets" / "orphan.md").write_text(
+        '---\ntype: state-asset\nname: Orphan\nasset: "[[prices/nope]]"\n---\n',
+        encoding="utf-8")
+
+    plan = {e["slug"]: e for e in np.plan_publish(root, "demo2")}
+    assert plan["holding"]["properties"]["Asset"] == ["https://www.notion.so/pxid1"]
+    assert plan["holding"]["properties"]["date:Acquired:start"] == "2026-05-29"
+    assert any("date-only by design" in n for n in plan["holding"]["notes"])
+    assert plan["orphan"]["properties"]["Asset"] == ["UNRESOLVED:prices/nope"]
+    assert any("not resolvable" in n for n in plan["orphan"]["notes"])
+    # the diff artifact itself must be plain text a human can skim, not a repr dump
+    text = np.format_diff(list(plan.values()))
+    assert "## holding" in text and "## orphan" in text
+    assert "UNRESOLVED:prices/nope" in text
 
 
 if __name__ == "__main__":
