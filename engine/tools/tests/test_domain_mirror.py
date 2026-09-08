@@ -1,4 +1,4 @@
-import os, re, sys
+import os, re, sys, tempfile
 from pathlib import Path
 _TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _TOOLS)
@@ -542,6 +542,18 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
     _CURATED = {"owner_entity", "asset"}             # still golden-only: A80 covers `wiki`, and
                                                      # these two are REPRODUCIBLE (a ruleset / a
                                                      # decode) so they are Plan 2b's, not A80's.
+    # The mirror image of _CURATED: fields the ENGINE now emits that the GOLDEN can never contain.
+    # The golden is extracted from env history at PROVENANCE (81aaf14) and is frozen on purpose, so
+    # a mapping added after that commit has no counterpart to compare against — re-running
+    # extract_golden.py cannot help, because the field did not exist in those records either.
+    # Keep this set SMALL and dated; every entry is a field whose correctness is proven somewhere
+    # other than this fixture, and say where.
+    _NEW_SINCE_GOLDEN = {
+        # 2026-09-08, H160/relations: `Project` was `notion_ignored` as a deferred cross-export
+        # relation until state-project existed. Verified against REAL data instead: 188 links
+        # emitted across notes+tasks, 0 dangling (every target resolves to a record on disk).
+        "project",
+    }
     _mism, _bad_extra, _counts, _fm_by_key = [], [], {}, {}
     for _gen in _written:
         # The table is the record's parent dir relative to _out, as a posix string — this yields
@@ -556,7 +568,8 @@ if _GOLDEN.is_dir() and (_FO_SCHEMA_DIR / "schema.yaml").is_file():
         _g = _norm(_load_fm(_gen.read_text(encoding="utf-8")))
         _s = _norm(_load_fm(_gold.read_text(encoding="utf-8")))
         _fm_by_key[(_tbl, _gen.name)] = _g            # used by the body-passthrough check below
-        _diffs = {k: (_g.get(k), _s.get(k)) for k in _g if _g.get(k) != _s.get(k)}
+        _diffs = {k: (_g.get(k), _s.get(k)) for k in _g
+                  if _g.get(k) != _s.get(k) and not (k in _NEW_SINCE_GOLDEN and k not in _s)}
         _unexpected = (set(_s) - set(_g)) - _CURATED  # a golden field we forgot to map
         if _unexpected:
             _bad_extra.append((_tbl, _gen.name, sorted(_unexpected)))
@@ -881,5 +894,34 @@ except ValueError as e:
     check("ignored_list_shape_names_table", "state-thing" in str(e))
 
 # ---- harness footer (exactly once, at end of file) ----
+
+
+# ── H6218 — a preserved state_native scalar must keep its TYPE, not just its value ──────────
+# `_parse_yaml` is a YAML-SUBSET reader: it returns real bool/None but leaves every number a
+# STRING. `_emit_scalar` then quotes anything `_looks_number`, so a preserved number round-tripped
+# as `spot: 78720.42` -> `spot: "78720.42"` on every sync — value kept, type silently lost.
+# Invisible until 2026-09-08 because `owner_entity` and `wiki` were the only state_native fields
+# and both are wikilink text, which is quoted anyway. `spot` is the first numeric one.
+check("h6218_float_keeps_type", dm._retype_scalar("78720.42") == 78720.42)
+check("h6218_int_keeps_type", isinstance(dm._retype_scalar("100"), int))
+check("h6218_bool_untouched", dm._retype_scalar(True) is True)
+check("h6218_none_untouched", dm._retype_scalar(None) is None)
+check("h6218_wikilink_stays_str", dm._retype_scalar("[[entities/x]]") == "[[entities/x]]")
+# The guard: coerce ONLY when the number's own repr is byte-identical to the source text, so a
+# string that merely LOOKS numeric is never widened into one.
+check("h6218_leading_zero_stays_str", dm._retype_scalar("02134") == "02134")
+check("h6218_exponent_stays_str", dm._retype_scalar("1e5") == "1e5")
+check("h6218_padded_stays_str", dm._retype_scalar("  7") == "  7")
+check("h6218_date_stays_str", dm._retype_scalar("2026-09-08") == "2026-09-08")
+
+# End-to-end, in the shape the defect actually took: read a record's state_native fields back and
+# re-emit them. This is the assertion that fails against the pre-fix emitter.
+_h6218_dir = Path(tempfile.mkdtemp())
+_h6218_rec = _h6218_dir / "btc.md"
+_h6218_rec.write_text("---\ntype: state-price\nspot: 78720.42\nas_of: 2026-09-08\n---\n", encoding="utf-8")
+_h6218_out = dm.emit_frontmatter(dm._read_state_native(_h6218_rec, ["spot", "as_of"]))
+check("h6218_roundtrip_unquoted", "spot: 78720.42" in _h6218_out)
+check("h6218_roundtrip_not_restringified", 'spot: "78720.42"' not in _h6218_out)
+check("h6218_roundtrip_date_intact", "as_of: 2026-09-08" in _h6218_out)
 print("FAILURES:", FAIL)
 sys.exit(1 if FAIL else 0)
