@@ -246,7 +246,33 @@ def _read_state_native(dest, keys) -> dict:
     if not keys or not dest.is_file():
         return {}
     fm = _extract_frontmatter(dest.read_text(encoding="utf-8"))
-    return {k: fm[k] for k in keys if k in fm}
+    return {k: _retype_scalar(fm[k]) for k in keys if k in fm}
+
+
+def _retype_scalar(v):
+    """Give a parsed frontmatter scalar back its natural type before it is re-emitted.
+
+    `_parse_yaml` is a permissive YAML SUBSET reader: it returns real `bool`/`None` but leaves
+    every number as a STRING. `_emit_scalar` then quotes anything `_looks_number`, so a preserved
+    `state_native` number round-trips as `spot: 78720.42` -> `spot: "78720.42"` — the value kept,
+    the type silently lost, on every sync. Invisible until now only because `owner_entity` and
+    `wiki` were the sole state_native fields and both are wikilink text, which is quoted anyway.
+
+    Coerce ONLY when the number's own repr is byte-identical to the source text. That guard is
+    what makes this safe for a string that merely looks numeric: `"02134"` -> int 2134 -> "2134"
+    != "02134", so it stays a string, as do "1e5", "+3" and " 7 ". Nothing widens except values
+    that were already written in canonical form.
+    """
+    if not isinstance(v, str):
+        return v
+    for cast in (int, float):
+        try:
+            n = cast(v)
+        except (TypeError, ValueError):
+            continue
+        if str(n) == v:
+            return n
+    return v
 
 
 _LAST_SYNCED_PREFIX = "last_synced: "
