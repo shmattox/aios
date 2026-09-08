@@ -581,6 +581,73 @@ def test_direction_import_with_live_import_is_clean():
     assert sv.check_direction_coherent({"direction": "import"}, {"aios-domain-sync"}) == []
 
 
+
+
+# ── Referential integrity (env H8471, spec 2026-08-22 §5) ────────────────────────────────────
+# The validator used to check a relation's SHAPE only, so a wikilink pointing at nothing passed.
+# `build_link_index` derives the answer from the tree being validated - never a hardcoded prefix
+# list, or this stops being fact-free. A target whose first segment names a directory in the tree
+# is INTERNAL and must resolve; anything else leaves the silo (`wiki:`/`owner_entity:` into the
+# SecondBrain vault, `unit_file:` into another repo) and is legitimate-but-unresolvable BY DESIGN.
+
+
+def _index(paths):
+    return sv.build_link_index(paths)
+
+
+def test_refint_index_keys_every_path_suffix():
+    # Obsidian resolves [[a/b]] against any file whose PATH ENDS WITH a/b.md, so index by suffix.
+    suffix, dirs = _index(["silo/tables/projects/alpha.md"])
+    assert "projects/alpha" in suffix
+    assert "tables/projects/alpha" in suffix
+    assert "alpha" in suffix
+    assert "projects" in dirs and "tables" in dirs
+
+
+def test_refint_internal_target_that_resolves_passes():
+    idx = _index(["silo/tables/projects/alpha.md"])
+    assert sv._check_relation("project", "[[projects/alpha]]", idx) == []
+
+
+def test_refint_internal_target_that_resolves_nowhere_fails():
+    idx = _index(["silo/tables/projects/alpha.md"])
+    errs = sv._check_relation("project", "[[projects/does-not-exist]]", idx)
+    assert len(errs) == 1 and "does not resolve" in errs[0]
+
+
+def test_refint_external_prefix_is_not_a_failure():
+    # `companies/` and `business-units/` are not directories in this tree, so these links leave
+    # the silo. Unresolvable here is their normal state, not a defect.
+    idx = _index(["silo/tables/projects/alpha.md"])
+    assert sv._check_relation("wiki", "[[companies/acme-holdings]]", idx) == []
+    assert sv._check_relation("unit_file", "[[business-units/thing/UNIT.md]]", idx) == []
+
+
+def test_refint_bare_name_is_skipped():
+    # A bare `[[name]]` carries no first segment, so it cannot be classified internal or external
+    # (gm writes its `venture:` relations this way). Skipped deliberately rather than guessed at.
+    idx = _index(["silo/tables/ventures/widget.md"])
+    assert sv._check_relation("venture", "[[not-in-the-tree]]", idx) == []
+
+
+def test_refint_list_valued_relation_checks_every_element():
+    idx = _index(["silo/tables/projects/a.md", "silo/tables/projects/b.md"])
+    errs = sv._check_relation("project", ["[[projects/a]]", "[[projects/nope]]", "[[projects/b]]"], idx)
+    assert len(errs) == 1 and "projects/nope" in errs[0]
+
+
+def test_refint_alias_and_heading_are_stripped_before_resolving():
+    idx = _index(["silo/tables/projects/alpha.md"])
+    assert sv._check_relation("project", "[[projects/alpha|Alpha]]", idx) == []
+    assert sv._check_relation("project", "[[projects/alpha#Status]]", idx) == []
+
+
+def test_refint_no_index_means_no_resolution_check():
+    # Single-file mode has no tree, so shape is all that can be checked - and must still be.
+    assert sv._check_relation("project", "[[projects/anything]]", None) == []
+    assert sv._check_relation("project", "not-a-wikilink", None) != []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
