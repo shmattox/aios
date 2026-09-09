@@ -72,6 +72,10 @@ Windows+Mac+Linux scheduling. Installed plugins are pinned snapshots — distrib
 
 ## Open (order is priority)
 
+- [ ] **A5729** — **`test_events_fingerprint_reacts_to_activity` is thread-starved under full-suite load and flakes the ubuntu `suite` check.** *(filed 2026-09-09 — red on aios #31 ubuntu-latest, green on macos+windows and on rerun; `engine/tools/tests/test_a63_dashboard_api.py:342` — the SSE readline saw only `: ping` keepalives before the `activity` event within its 20s timeout. The test's own comment already names the cause: the dashboard poll loop is thread-starved under full-suite load.)* A required check that flakes teaches the fleet to rerun-until-green, which is how a real failure rides through. Fix at the source: give the SSE endpoint's poll loop its own thread (or space the test's readline budget so a starved loop still delivers), not a blanket timeout bump.
+  - acceptance: verify: `python -m pytest engine/tools/tests/test_a63_dashboard_api.py::test_events_fingerprint_reacts_to_activity -q`
+  - *(2026-09-09 — also owed here: the AGENTS.md pointer line telling agents where `verify:` lines go, which open-place's AGENTS.md already carries. It is BLOCKED from a worktree commit by a driftcheck false positive — `AGENTS.md:3`'s `../../CLAUDE.md` resolves from the primary checkout but not from `.worktrees/<name>/` two levels deeper. Add the line from a primary-checkout PR, or teach driftcheck to resolve worktree paths against the real repo root.)*
+
 - [ ] **A100** — **UN-PARKED 2026-09-07 (Seth): the prove-need trigger FIRED, and it fired before the park was last extended.** *Durable synthetic-id thread linkage (A59 follow-up).*
   - **The occurrence, verified in `state/brief-cache.json`'s own git history rather than argued.** One live operational-silo act item — a synthetic id with no `OI-N` and no `conflict_key`, so it linked only through A59's ephemeral gather-judgment `thread_id`:
     ```
