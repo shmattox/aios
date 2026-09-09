@@ -301,15 +301,46 @@ def load_schema(path: Path) -> dict:
         return _parse_yaml(fh.read())
 
 
-def _check_relation(key: str, value) -> list[str]:
+def build_link_index(paths) -> tuple:
+    """(suffix_index, top_dirs) for a set of record paths — the tree's own answer to "does this
+    relation resolve", with no hardcoded knowledge of any silo (Stage Contract: fact-free).
+
+    Obsidian resolves `[[a/b]]` against any file whose PATH ENDS WITH `a/b.md`, so the index is
+    keyed by every path SUFFIX, not by basename. `top_dirs` is every directory name appearing in
+    the tree; it is what separates a relation that stays inside the silo from one that leaves it.
+    """
+    suffix, dirs = set(), set()
+    for p in paths:
+        parts = tuple(Path(p).with_suffix("").parts)
+        for i in range(len(parts)):
+            suffix.add("/".join(parts[i:]))
+        dirs.update(parts[:-1])
+    return suffix, dirs
+
+
+def _check_relation(key: str, value, index=None) -> list[str]:
     items = value if isinstance(value, list) else [value]
+    errors = []
     for item in items:
         if not isinstance(item, str) or not _WIKILINK.match(item):
             return [f"{key}: relation must be a wikilink '[[...]]' (got {item!r})"]
-    return []
+        if index is None:
+            continue                      # single-file mode: no tree, so nothing to resolve against
+        suffix, dirs = index
+        target = item[2:-2].split("|")[0].split("#")[0].strip()
+        if "/" not in target or target in suffix:
+            continue
+        # A target whose first segment is NOT a directory in this tree points OUT of the silo —
+        # `wiki:`/`owner_entity:` into the SecondBrain vault, `unit_file:` into another repo. Those
+        # are legitimate by design and unresolvable here BY DESIGN, so they are not failures. The
+        # rule is derived from the tree, never a prefix allowlist, or this stops being fact-free.
+        if target.split("/", 1)[0] not in dirs:
+            continue
+        errors.append(f"{key}: relation target does not resolve in this tree: [[{target}]]")
+    return errors
 
 
-def validate_frontmatter(fm: dict, schema: dict) -> list[str]:
+def validate_frontmatter(fm: dict, schema: dict, link_index=None) -> list[str]:
     errors: list[str] = []
     # Only dict-valued top-level keys are types — a scalar (e.g. `direction:`, `sweep:`) is
     # schema config, not a record type. Same filter as domain_mirror.load_silo_config.
@@ -336,7 +367,7 @@ def validate_frontmatter(fm: dict, schema: dict) -> list[str]:
     for key in rules.get("relations", []):
         val = fm.get(key)
         if val is not None:
-            errors.extend(_check_relation(key, val))
+            errors.extend(_check_relation(key, val, link_index))
 
     for key in rules.get("dates", []):
         val = fm.get(key)
@@ -360,7 +391,7 @@ def _extract_frontmatter(text: str) -> dict:
     raise ValueError("unterminated YAML frontmatter")
 
 
-def validate_ndjson(path, schema: dict) -> list[str]:
+def validate_ndjson(path, schema: dict, link_index=None) -> list[str]:
     errors: list[str] = []
     with open(path, "r", encoding="utf-8") as fh:
         for i, line in enumerate(fh, 1):
@@ -371,22 +402,22 @@ def validate_ndjson(path, schema: dict) -> list[str]:
             except json.JSONDecodeError as exc:
                 errors.append(f"line {i}: invalid JSON ({exc})")
                 continue
-            for e in validate_frontmatter(row, schema):
+            for e in validate_frontmatter(row, schema, link_index):
                 errors.append(f"line {i}: {e}")
     return errors
 
 
-def validate_file(path, schema: dict) -> list[str]:
+def validate_file(path, schema: dict, link_index=None) -> list[str]:
     # Routes .md vs .ndjson so main() can treat every target uniformly.
     if str(path).endswith(".ndjson"):
-        return validate_ndjson(path, schema)
+        return validate_ndjson(path, schema, link_index)
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
     try:
         fm = _extract_frontmatter(text)
     except ValueError as exc:
         return [str(exc)]
-    return validate_frontmatter(fm, schema)
+    return validate_frontmatter(fm, schema, link_index)
 
 
 IMPORT_TASK_MARKERS = ("domain-sync", "domain_mirror")
@@ -441,11 +472,15 @@ def main(argv: list[str]) -> int:
     if not targets and not all_mode:
         print("usage error: no targets given and no --all <dir>")
         return 2
+    # Referential integrity (env H8471, spec 2026-08-22 §5) only has a subject in --all mode:
+    # a single file cannot say whether its relation targets exist. Built from the SAME target set
+    # that is about to be validated, so the check and its index can never disagree.
+    link_index = build_link_index(targets) if all_mode else None
     # An empty target set under a VALID --all is a clean, successful empty tree (exit 0), not usage error.
     failures = 0
     for path in targets:
         try:
-            errs = validate_file(path, schema)
+            errs = validate_file(path, schema, link_index)
         except Exception as exc:  # noqa: BLE001 - one malformed record must never abort the batch
             errs = [f"could not validate ({type(exc).__name__}: {exc})"]
         if errs:
