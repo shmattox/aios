@@ -66,6 +66,46 @@ jobs:
             exit 1
           fi
 
+  # H157 / B1: run the PR item's declared `verify:` commands OFF the author's machine, from the
+  # acceptance chain at the merge-base (a PR cannot soften what it is graded against). An item
+  # with no verify: line is reported `unproven` in the job summary and passes; an id absent from
+  # this repo's ledger (an env-ops H-id on an aios branch) is a warning. Advisory (PROVE_STRICT=0)
+  # until items carry runnable claims; flip to 1 to make it bite. Same parser as open-place's
+  # scripts/prove_item.py and the env repo's Scripts/prove/checks.py - keep the grammar in step.
+  prove:
+    name: prove
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Self-test the parser
+        run: python deploy/github/prove_item.py --self-test
+      - name: Run the item's verify lines at the merge-base
+        env:
+          BRANCH: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          PROVE_STRICT: "0"
+        shell: bash
+        run: |
+          set -uo pipefail
+          ID=$(printf '%s' "$BRANCH" | sed -E 's#^(codex/|factory/)?([A-Za-z]+[0-9]+).*#\2#' | grep -E '^[A-Za-z]+[0-9]+$' || true)
+          if [ -z "$ID" ]; then
+            echo "### prove - no item id in branch name, nothing to prove" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          BASE=$(git merge-base "origin/${BASE_REF}" HEAD)
+          FLAG=""; [ "$PROVE_STRICT" = "1" ] && FLAG="--strict"
+          python deploy/github/prove_item.py "$ID" --base "$BASE" $FLAG
+
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
