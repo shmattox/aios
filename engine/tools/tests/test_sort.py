@@ -159,7 +159,7 @@ try:
     # must be enforced by scanning the raw block (else an entity-linked capture leaks to `reference`).
     b_ents = os.path.join(vault, "03_Dev", "raw", "inbox", "x", "b-ents.md")
     open(b_ents, "w", encoding="utf-8").write(
-        "---\ntype: bookmark\nsource_tier: tertiary\ntitle: Ents\nentities:\n  - Largo\n  - Jenkins\n---\n\nshort.\n")
+        "---\ntype: bookmark\nsource_tier: tertiary\ntitle: Ents\nentities:\n  - Acme\n  - Globex\n---\n\nshort.\n")
     q5 = os.path.join(d, "q5.json")
     json.dump({"queue": [{"id": "f-ents", "stage": "captured", "kb": "dev",
                           "payload_path": "03_Dev/raw/inbox/x/b-ents.md", "history": []}]},
